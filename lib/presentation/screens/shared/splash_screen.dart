@@ -1,0 +1,281 @@
+// lib/presentation/screens/shared/splash_screen.dart
+
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:fixify/core/theme/app_theme.dart';
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..forward();
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        // Navigate based on auth state
+        // Navigator.of(context).pushReplacementNamed('/auth');
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF082218),
+              Color(0xFF0F3D2E),
+              Color(0xFF1A5C43),
+              Color(0xFF0F3D2E),
+            ],
+            stops: [0.0, 0.35, 0.65, 1.0],
+          ),
+        ),
+        child: Stack(
+          children: [
+            // Background decorative circles
+            Positioned(
+              top: -80,
+              right: -60,
+              child: Container(
+                width: 280,
+                height: 280,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.04),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -100,
+              left: -80,
+              child: Container(
+                width: 350,
+                height: 350,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.03),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 120,
+              left: -40,
+              child: Container(
+                width: 180,
+                height: 180,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF2E7D5E).withOpacity(0.3),
+                ),
+              ),
+            ),
+
+            // Glass overlay cards
+            Positioned(
+              bottom: 200,
+              right: -30,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.1),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // Main content
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // Logo icon
+                  Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(28),
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF2E7D5E),
+                          Color(0xFF34C759),
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF34C759).withOpacity(0.4),
+                          blurRadius: 30,
+                          spreadRadius: 5,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.construction_rounded,
+                      color: Colors.white,
+                      size: 52,
+                    ),
+                  ).animate().fadeIn(delay: 200.ms, duration: 600.ms).scale(
+                      begin: const Offset(0.6, 0.6),
+                      end: const Offset(1, 1),
+                      delay: 200.ms,
+                      duration: 800.ms,
+                      curve: Curves.elasticOut),
+
+                  const SizedBox(height: 28),
+
+                  // App name
+                  Text(
+                    'Fixify',
+                    style: const TextStyle(
+                      fontSize: 48,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: -1.5,
+                      height: 1.0,
+                    ),
+                  ).animate().fadeIn(delay: 600.ms, duration: 600.ms).slideY(
+                      begin: 0.3,
+                      end: 0,
+                      delay: 600.ms,
+                      duration: 600.ms,
+                      curve: Curves.easeOutCubic),
+
+                  const SizedBox(height: 10),
+
+                  // Tagline
+                  Text(
+                    'Trusted Home Repairs, On Demand',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.white.withOpacity(0.65),
+                      letterSpacing: 0.3,
+                    ),
+                  ).animate().fadeIn(delay: 900.ms, duration: 600.ms).slideY(
+                      begin: 0.2, end: 0, delay: 900.ms, duration: 600.ms),
+
+                  const SizedBox(height: 60),
+
+                  // Service icons row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildServiceIcon(Icons.water_drop_rounded, 'Plumbing'),
+                      const SizedBox(width: 20),
+                      _buildServiceIcon(
+                          Icons.electrical_services_rounded, 'Electric'),
+                      const SizedBox(width: 20),
+                      _buildServiceIcon(Icons.kitchen_rounded, 'Appliances'),
+                    ],
+                  ).animate().fadeIn(delay: 1200.ms, duration: 600.ms),
+                ],
+              ),
+            ),
+
+            // Bottom loading indicator
+            Positioned(
+              bottom: 60,
+              left: 0,
+              right: 0,
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: CircularProgressIndicator(
+                      valueColor:
+                          AlwaysStoppedAnimation(Colors.white.withOpacity(0.6)),
+                      strokeWidth: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Loading your experience...',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.4),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ).animate().fadeIn(delay: 1500.ms, duration: 600.ms),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildServiceIcon(IconData icon, String label) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.15),
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: Colors.white.withOpacity(0.9), size: 26),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
