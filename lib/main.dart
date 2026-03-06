@@ -1,6 +1,5 @@
 // lib/main.dart
 
-import 'package:fixify/presentation/screens/shared/splash_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -12,10 +11,15 @@ import 'package:fixify/data/models/models.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/screens/shared/splash_screen.dart';
 import 'package:fixify/presentation/screens/auth/login_screen.dart';
-import 'package:fixify/presentation/screens/customer/home_screen.dart';
-import 'package:fixify/presentation/screens/customer/professional_profile_screen.dart';
+import 'package:fixify/presentation/screens/customer/dashboard_customer.dart';
+import 'package:fixify/presentation/screens/customer/profile_customer.dart';
+import 'package:fixify/presentation/screens/customer/professional_profile_screen.dart'
+    as customer;
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
-import 'package:fixify/presentation/screens/professional/professional_dashboard.dart';
+import 'package:fixify/presentation/screens/professional/dashboard_professional.dart';
+import 'package:fixify/presentation/screens/professional/profile_professional.dart';
+import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
+import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -238,12 +242,58 @@ class _MainAppState extends State<MainApp> {
 
     if (_user == null) return const AuthFlow();
 
+    // ── Admin flow
+    if (_user!.role == 'admin') {
+      final userEntity = _user!.toEntity();
+      if (_navIndex == 3) {
+        return AdminProfileScreen(
+          adminName: userEntity.name,
+          adminEmail: userEntity.email,
+          adminPhone: userEntity.phone,
+          accessLevel: 'SUPERADMIN',
+          lastLogin: DateTime.now(),
+          twoFactorEnabled: false,
+          onBack: () => setState(() => _navIndex = 0),
+          onLogout: () async {
+            await Supabase.instance.client.auth.signOut();
+          },
+        );
+      }
+      return AdminDashboardScreen(
+        adminName: userEntity.name,
+        pendingApprovals:
+            _professionals.where((p) => p.verified == false).length,
+        totalUsers: _professionals.length,
+        totalEarnings: _bookings
+            .where((b) => b.status == BookingStatus.completed)
+            .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0)),
+        completedBookings:
+            _bookings.where((b) => b.status == BookingStatus.completed).length,
+        currentNavIndex: _navIndex,
+        onNavTap: (i) => setState(() => _navIndex = i),
+        onHandymanApprovals: () => setState(() => _navIndex = 1),
+        onAnalytics: () => setState(() => _navIndex = 2),
+      );
+    }
+
     // ── Professional flow
     if (_user!.isProfessional) {
       // Convert models to entities for the screen
       final userEntity = _user!.toEntity();
       final proEntity = _pro?.toEntity();
       final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
+
+      // Show profile screen when nav index 3 is tapped
+      if (_navIndex == 3) {
+        return ProfessionalProfileScreen(
+          user: userEntity,
+          professional: proEntity,
+          onBack: () => setState(() => _navIndex = 0),
+          onLogout: () async {
+            await Supabase.instance.client.auth.signOut();
+          },
+        );
+      }
 
       return ProfessionalDashboardScreen(
         user: userEntity,
@@ -252,6 +302,9 @@ class _MainAppState extends State<MainApp> {
         currentNavIndex: _navIndex,
         onNavTap: (i) => setState(() => _navIndex = i),
         onUpdateStatus: _updateStatus,
+        onViewRequests: () => setState(() => _navIndex = 1),
+        onViewEarnings: () => setState(() => _navIndex = 2),
+        onToggleAvailability: (_) {},
       );
     }
 
@@ -263,7 +316,7 @@ class _MainAppState extends State<MainApp> {
     switch (_screen) {
       case 'professional_profile':
         if (_selectedPro == null) return _home();
-        return ProfessionalProfileScreen(
+        return customer.ProfessionalProfileScreen(
           professional: _selectedPro!.toEntity(),
           reviews: const [],
           onBack: () => setState(() => _screen = 'home'),
@@ -272,7 +325,7 @@ class _MainAppState extends State<MainApp> {
 
       case 'booking':
         if (_selectedPro == null) return _home();
-        return BookingScreen(
+        return customer.BookingScreen(
           professional: _selectedPro!.toEntity(),
           onBack: () => setState(() => _screen = 'professional_profile'),
           onConfirmBooking: _createBooking,
@@ -300,17 +353,36 @@ class _MainAppState extends State<MainApp> {
           onSubmitReview: _submitReview,
         );
 
+      case 'profile':
+        return CustomerProfileScreen(
+          user: _user?.toEntity(),
+          onBack: () => setState(() => _screen = 'home'),
+          onLogout: () async {
+            await Supabase.instance.client.auth.signOut();
+          },
+        );
+
       default:
         return _home();
     }
   }
 
   Widget _home() {
-    return CustomerHomeScreen(
+    return CustomerDashboardScreen(
       user: _user?.toEntity(),
       professionals: _professionals.map((p) => p.toEntity()).toList(),
+      recentBookings: _bookings.map((b) => b.toEntity()).toList(),
       currentNavIndex: _navIndex,
-      onNavTap: (i) => setState(() => _navIndex = i),
+      onNavTap: (i) {
+        setState(() {
+          _navIndex = i;
+          if (i == 3)
+            _screen = 'profile';
+          else if (i == 0) _screen = 'home';
+        });
+      },
+      onRequestService: () =>
+          setState(() => _screen = 'professional_profile_browse'),
       onFilterBySkill: (skill) async {
         try {
           final list = await _ds.getProfessionals(skill: skill);
