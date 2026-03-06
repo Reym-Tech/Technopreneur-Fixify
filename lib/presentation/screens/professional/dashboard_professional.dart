@@ -30,10 +30,13 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   final UserEntity? user;
   final ProfessionalEntity? professional;
   final List<BookingEntity> bookings;
+  final int pendingApplications;
   final Function(BookingEntity, BookingStatus)? onUpdateStatus;
   final VoidCallback? onViewRequests;
   final VoidCallback? onViewHistory;
   final VoidCallback? onViewEarnings;
+  final VoidCallback? onApplyCredentials;
+  final VoidCallback? onViewVerification;
   final Function(bool)? onToggleAvailability;
   final Function(int)? onNavTap;
   final int currentNavIndex;
@@ -43,10 +46,13 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.user,
     this.professional,
     this.bookings = const [],
+    this.pendingApplications = 0,
     this.onUpdateStatus,
     this.onViewRequests,
     this.onViewHistory,
     this.onViewEarnings,
+    this.onApplyCredentials,
+    this.onViewVerification,
     this.onToggleAvailability,
     this.onNavTap,
     this.currentNavIndex = 0,
@@ -104,6 +110,14 @@ class _ProfessionalDashboardScreenState
               child: _buildStatsRow(),
             ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
           ),
+          // Verification banner — shown when pro is not yet verified
+          if (!(widget.professional?.verified ?? false))
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                child: _buildVerificationBanner(),
+              ).animate().fadeIn(delay: 180.ms),
+            ),
           if (_pendingCount > 0)
             SliverToBoxAdapter(
               child: Padding(
@@ -422,6 +436,100 @@ class _ProfessionalDashboardScreenState
     );
   }
 
+  // ── VERIFICATION BANNER ───────────────────────────────────
+
+  Widget _buildVerificationBanner() {
+    final hasPending = widget.pendingApplications > 0;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: hasPending
+              ? [
+                  const Color(0xFFFF9500).withOpacity(0.12),
+                  const Color(0xFFFFCC00).withOpacity(0.08)
+                ]
+              : [
+                  const Color(0xFF5856D6).withOpacity(0.10),
+                  const Color(0xFF007AFF).withOpacity(0.06)
+                ],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: hasPending
+              ? const Color(0xFFFF9500).withOpacity(0.35)
+              : const Color(0xFF5856D6).withOpacity(0.3),
+        ),
+      ),
+      child: Row(children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color:
+                (hasPending ? const Color(0xFFFF9500) : const Color(0xFF5856D6))
+                    .withOpacity(0.15),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(
+            hasPending
+                ? Icons.hourglass_top_rounded
+                : Icons.workspace_premium_rounded,
+            color:
+                hasPending ? const Color(0xFFFF9500) : const Color(0xFF5856D6),
+            size: 22,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(
+            hasPending
+                ? 'Application Under Review'
+                : 'Get Verified to Receive Bookings',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: hasPending
+                  ? const Color(0xFFFF9500)
+                  : const Color(0xFF5856D6),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            hasPending
+                ? 'Your credentials are being reviewed by the admin (24–48 hrs).'
+                : 'Submit your credentials and valid ID to get approved.',
+            style: const TextStyle(fontSize: 11, color: AppColors.textMedium),
+          ),
+        ])),
+        const SizedBox(width: 10),
+        GestureDetector(
+          onTap: hasPending
+              ? widget.onViewVerification
+              : widget.onApplyCredentials,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: hasPending
+                  ? const Color(0xFFFF9500)
+                  : const Color(0xFF5856D6),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              hasPending ? 'Track' : 'Apply',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
   // ── PENDING BANNER ────────────────────────────────────────
 
   Widget _buildPendingBanner() {
@@ -520,6 +628,15 @@ class _ProfessionalDashboardScreenState
           title: 'Earnings Summary',
           subtitle: 'View your earnings and job history',
           onTap: widget.onViewEarnings,
+        ),
+        const SizedBox(height: 12),
+        _menuCard(
+          icon: Icons.workspace_premium_rounded,
+          title: 'My Credentials',
+          subtitle: 'Submit credentials & track verification',
+          badge: widget.pendingApplications > 0 ? 'Pending' : null,
+          badgeColor: const Color(0xFFFF9500),
+          onTap: widget.onViewVerification,
         ),
       ],
     );

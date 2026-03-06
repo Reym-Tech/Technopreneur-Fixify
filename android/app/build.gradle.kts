@@ -19,6 +19,8 @@ android {
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
+    val mapsApiKey: String = project.findProperty("MAPS_API_KEY") as String? ?: ""
+
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.fixify"
@@ -28,6 +30,8 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = mapsApiKey
     }
 
     buildTypes {

@@ -3,7 +3,7 @@
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/models.dart';
-import '../../core/constants/supabase_config.dart';
+import '../../core/constants/app_config.dart';
 import '../../domain/entities/entities.dart';
 
 class SupabaseDataSource {
@@ -22,7 +22,7 @@ class SupabaseDataSource {
     final res = await _client.auth.signUp(email: email, password: password);
     if (res.user == null) throw Exception('Sign up failed');
 
-    await _client.from(SupabaseConfig.usersTable).insert({
+    await _client.from(AppConfig.usersTable).insert({
       'id': res.user!.id,
       'name': name,
       'email': email,
@@ -32,7 +32,7 @@ class SupabaseDataSource {
     });
 
     final data = await _client
-        .from(SupabaseConfig.usersTable)
+        .from(AppConfig.usersTable)
         .select()
         .eq('id', res.user!.id)
         .single();
@@ -48,7 +48,7 @@ class SupabaseDataSource {
     if (res.user == null) throw Exception('Sign in failed');
 
     final data = await _client
-        .from(SupabaseConfig.usersTable)
+        .from(AppConfig.usersTable)
         .select()
         .eq('id', res.user!.id)
         .single();
@@ -61,7 +61,7 @@ class SupabaseDataSource {
     final user = _client.auth.currentUser;
     if (user == null) return null;
     final data = await _client
-        .from(SupabaseConfig.usersTable)
+        .from(AppConfig.usersTable)
         .select()
         .eq('id', user.id)
         .single();
@@ -76,7 +76,7 @@ class SupabaseDataSource {
     bool? verified,
   }) async {
     var query = _client
-        .from(SupabaseConfig.professionalsTable)
+        .from(AppConfig.professionalsTable)
         .select('*, users(id, name, avatar_url)')
         .eq('available', true);
 
@@ -97,7 +97,7 @@ class SupabaseDataSource {
 
   Future<ProfessionalModel?> getProfessionalById(String id) async {
     final data = await _client
-        .from(SupabaseConfig.professionalsTable)
+        .from(AppConfig.professionalsTable)
         .select('*, users(id, name, avatar_url, phone, email)')
         .eq('id', id)
         .single();
@@ -106,7 +106,7 @@ class SupabaseDataSource {
 
   Future<ProfessionalModel?> getProfessionalByUserId(String userId) async {
     final data = await _client
-        .from(SupabaseConfig.professionalsTable)
+        .from(AppConfig.professionalsTable)
         .select('*, users(id, name, avatar_url)')
         .eq('user_id', userId)
         .maybeSingle();
@@ -125,7 +125,7 @@ class SupabaseDataSource {
     int yearsExperience = 0,
   }) async {
     final data = await _client
-        .from(SupabaseConfig.professionalsTable)
+        .from(AppConfig.professionalsTable)
         .insert({
           'user_id': userId,
           'skills': skills,
@@ -158,7 +158,7 @@ class SupabaseDataSource {
     String? notes,
   }) async {
     final data = await _client
-        .from(SupabaseConfig.bookingsTable)
+        .from(AppConfig.bookingsTable)
         .insert({
           'customer_id': customerId,
           'professional_id': professionalId,
@@ -177,7 +177,7 @@ class SupabaseDataSource {
 
   Future<List<BookingModel>> getCustomerBookings(String customerId) async {
     final response = await _client
-        .from(SupabaseConfig.bookingsTable)
+        .from(AppConfig.bookingsTable)
         .select('*, professionals(*, users(name, avatar_url))')
         .eq('customer_id', customerId)
         .order('created_at', ascending: false);
@@ -189,7 +189,7 @@ class SupabaseDataSource {
   Future<List<BookingModel>> getProfessionalBookings(
       String professionalId) async {
     final response = await _client
-        .from(SupabaseConfig.bookingsTable)
+        .from(AppConfig.bookingsTable)
         .select('*, users!customer_id(name, avatar_url, phone)')
         .eq('professional_id', professionalId)
         .order('created_at', ascending: false);
@@ -200,7 +200,7 @@ class SupabaseDataSource {
 
   Future<void> updateBookingStatus(
       String bookingId, BookingStatus status) async {
-    await _client.from(SupabaseConfig.bookingsTable).update(
+    await _client.from(AppConfig.bookingsTable).update(
         {'status': BookingModel.statusToString(status)}).eq('id', bookingId);
   }
 
@@ -215,7 +215,7 @@ class SupabaseDataSource {
         .onPostgresChanges(
           event: PostgresChangeEvent.update,
           schema: 'public',
-          table: SupabaseConfig.bookingsTable,
+          table: AppConfig.bookingsTable,
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
             column: 'id',
@@ -237,7 +237,7 @@ class SupabaseDataSource {
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
-          table: SupabaseConfig.bookingsTable,
+          table: AppConfig.bookingsTable,
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
             column: 'professional_id',
@@ -263,7 +263,7 @@ class SupabaseDataSource {
     String? comment,
   }) async {
     final data = await _client
-        .from(SupabaseConfig.reviewsTable)
+        .from(AppConfig.reviewsTable)
         .insert({
           'booking_id': bookingId,
           'customer_id': customerId,
@@ -279,7 +279,7 @@ class SupabaseDataSource {
   Future<List<ReviewModel>> getProfessionalReviews(
       String professionalId) async {
     final response = await _client
-        .from(SupabaseConfig.reviewsTable)
+        .from(AppConfig.reviewsTable)
         .select('*, users!customer_id(name, avatar_url)')
         .eq('professional_id', professionalId)
         .order('created_at', ascending: false);
@@ -300,20 +300,15 @@ class SupabaseDataSource {
     if (name != null) updates['name'] = name;
     if (phone != null) updates['phone'] = phone;
     if (avatarUrl != null) updates['avatar_url'] = avatarUrl;
-    await _client
-        .from(SupabaseConfig.usersTable)
-        .update(updates)
-        .eq('id', userId);
+    await _client.from(AppConfig.usersTable).update(updates).eq('id', userId);
   }
 
   Future<String> uploadAvatar(
       String userId, List<int> fileBytes, String fileName) async {
     final path = '$userId/$fileName';
     await _client.storage
-        .from(SupabaseConfig.avatarsBucket)
+        .from(AppConfig.avatarsBucket)
         .uploadBinary(path, Uint8List.fromList(fileBytes));
-    return _client.storage
-        .from(SupabaseConfig.avatarsBucket)
-        .getPublicUrl(path);
+    return _client.storage.from(AppConfig.avatarsBucket).getPublicUrl(path);
   }
 }

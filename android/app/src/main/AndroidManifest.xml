@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- image_picker Android permission -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    
     <application
         android:label="fixify"
         android:name="${applicationName}"
@@ -18,8 +24,14 @@
                  to determine the Window background behind the Flutter UI. -->
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
-              android:resource="@style/NormalTheme"
-              />
+              android:resource="@style/NormalTheme"             
+                />
+
+            <meta-data
+                android:name="com.google.android.geo.API_KEY"
+                android:value="${GOOGLE_MAPS_API_KEY}"
+                />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
