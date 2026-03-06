@@ -16,11 +16,22 @@
 //   currentNavIndex  → int              — active nav index
 
 import 'dart:ui';
+import 'package:fixify/presentation/screens/customer/serviceoffers/cabinetinstallation.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/ceilingpainting.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/doorrepair.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/draincleaning.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/dryerrepair.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/outlet.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/pipeleak.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/wallpainting.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/washerrepair.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/wiringrepair.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/widgets/shared_widgets.dart';
+// Add these imports at the top of your file with the other imports
 
 class CustomerDashboardScreen extends StatefulWidget {
   final UserEntity? user;
@@ -171,6 +182,9 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             ? 'Good Afternoon'
             : 'Good Evening';
 
+    // Get the actual count of professionals
+    final professionalCount = widget.professionals.length;
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -269,7 +283,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                           ],
                         ),
                       ),
-                      // Stats chip
+                      // Stats chip with REAL-TIME count
                       ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: BackdropFilter(
@@ -284,8 +298,8 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                                   color: Colors.white.withOpacity(0.18)),
                             ),
                             child: Column(children: [
-                              const Text('500+',
-                                  style: TextStyle(
+                              Text('$professionalCount+',
+                                  style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 20,
                                       fontWeight: FontWeight.w800)),
@@ -435,7 +449,95 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   // ── CATEGORIES ────────────────────────────────────────────
 
+  // ── CATEGORIES & SERVICES ────────────────────────────────────
+
+  // ── CATEGORIES & SERVICES ────────────────────────────────────
+
   Widget _buildCategoryRow() {
+    // Hardcoded service data - ready to be replaced with database
+    final Map<String, List<Map<String, dynamic>>> servicesByCategory = {
+      'Plumbing': [
+        {
+          'id': 'p1',
+          'name': 'Pipe Leak Repair',
+          'description': 'Fix leaking pipes and faucets',
+          'image': 'assets/images/pipeleakrepair.png',
+          'screen': const PipeLeakRepairScreen(), // Add this
+        },
+        {
+          'id': 'p2',
+          'name': 'Drain Cleaning',
+          'description': 'Unclog drains and pipes',
+          'image': 'assets/images/draincleaning.png',
+          'screen': const DrainCleaningScreen(), // Add this
+        },
+      ],
+      'Electrical': [
+        {
+          'id': 'e1',
+          'name': 'Wiring Repair',
+          'description': 'Fix electrical wiring issues',
+          'image': 'assets/images/wirerepair.png',
+          'screen': const WiringRepairScreen(), // Add this
+        },
+        {
+          'id': 'e2',
+          'name': 'Outlet Installation',
+          'description': 'Install new electrical outlets',
+          'image': 'assets/images/outletinstallation.png',
+          'screen': const OutletInstallationScreen(), // Add this
+        },
+      ],
+      'Appliances': [
+        {
+          'id': 'a1',
+          'name': 'Washer Repair',
+          'description': 'Fix washing machine issues',
+          'image': 'assets/images/washerrepair.png',
+          'screen': const WasherRepairScreen(), // Add this
+        },
+        {
+          'id': 'a2',
+          'name': 'Dryer Repair',
+          'description': 'Fix dryer not heating',
+          'image': 'assets/images/dryerrepair.png',
+          'screen': const DryerRepairScreen(), // Add this
+        },
+      ],
+      'Carpentry': [
+        {
+          'id': 'c1',
+          'name': 'Cabinet Installation',
+          'description': 'Install new kitchen cabinets',
+          'image': 'assets/images/cabenitinstallation.png',
+          'screen': const CabinetInstallationScreen(), // Add this
+        },
+        {
+          'id': 'c2',
+          'name': 'Door Repair',
+          'description': 'Fix squeaky doors',
+          'image': 'assets/images/doorrepair.png',
+          'screen': const DoorRepairScreen(), // Add this
+        },
+      ],
+      'Painting': [
+        {
+          'id': 'pa1',
+          'name': 'Wall Painting',
+          'description': 'Interior wall painting',
+          'image': 'assets/images/wallpainting.png',
+          'screen': const WallPaintingScreen(), // Add this
+        },
+        {
+          'id': 'pa2',
+          'name': 'Ceiling Painting',
+          'description': 'Paint ceilings and trim',
+          'image': 'assets/images/ceillingpainting.png',
+          'screen': const CeilingPaintingScreen(), // Add this
+        },
+      ],
+    };
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 0, 24),
       child: Column(
@@ -446,63 +548,158 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             child: SectionHeader(title: 'Service Offers'),
           ),
           const SizedBox(height: 16),
+
+          // Category filter chips
           SizedBox(
-            height: 88,
+            height: 40,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _categories.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
               itemBuilder: (context, i) {
                 final cat = _categories[i];
                 final label = cat['label'] as String;
                 final selected = _selectedSkill == label;
-                return GestureDetector(
-                  onTap: () {
+                return FilterChip(
+                  label: Text(label),
+                  selected: selected,
+                  onSelected: (val) {
                     setState(() => _selectedSkill = label);
                     widget.onFilterBySkill?.call(label);
                   },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: 72,
-                    decoration: BoxDecoration(
-                      color: selected ? (cat['color'] as Color) : Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: selected
-                              ? (cat['color'] as Color).withOpacity(0.3)
-                              : Colors.black.withOpacity(0.05),
-                          blurRadius: selected ? 12 : 6,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+                  backgroundColor: Colors.white,
+                  selectedColor: cat['color'] as Color,
+                  labelStyle: TextStyle(
+                    color: selected ? Colors.white : AppColors.textDark,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                  avatar: Icon(
+                    cat['icon'] as IconData,
+                    size: 16,
+                    color: selected ? Colors.white : (cat['color'] as Color),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                      color:
+                          selected ? Colors.transparent : Colors.grey.shade300,
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          cat['icon'] as IconData,
-                          color:
-                              selected ? Colors.white : (cat['color'] as Color),
-                          size: 26,
+                  ),
+                );
+              },
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          // Services list with onPressed redirections
+          SizedBox(
+            height: 210,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _selectedSkill == 'All'
+                  ? _getAllServices(servicesByCategory).length
+                  : servicesByCategory[_selectedSkill]?.length ?? 0,
+              itemBuilder: (context, index) {
+                final service = _selectedSkill == 'All'
+                    ? _getAllServices(servicesByCategory)[index]
+                    : servicesByCategory[_selectedSkill]![index];
+
+                return Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: SizedBox(
+                    width: 160,
+                    child: Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: InkWell(
+                        onTap: () {
+                          // This is the "onPressed" redirection
+                          if (service.containsKey('screen')) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    service['screen'] as Widget,
+                              ),
+                            );
+                          } else {
+                            // Fallback if screen not defined
+                            print('No screen defined for: ${service['name']}');
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Image
+                            ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(16),
+                              ),
+                              child: Container(
+                                height: 120,
+                                width: double.infinity,
+                                color: Colors.grey.shade200,
+                                child: Image.asset(
+                                  service['image'] ??
+                                      'assets/images/placeholder.jpg',
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      color: _getCategoryColor(_selectedSkill)
+                                          .withOpacity(0.1),
+                                      child: Icon(
+                                        _getCategoryIcon(_selectedSkill),
+                                        size: 40,
+                                        color:
+                                            _getCategoryColor(_selectedSkill),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+
+                            // Content
+                            Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    service['name'] ?? 'Service Name',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.textDark,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    service['description'] ??
+                                        'Service description',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textLight,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 1),
+                                  // Arrow indicator
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          label,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: selected ? Colors.white : AppColors.textDark,
-                          ),
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+                      ),
                     ),
-                  )
-                      .animate(target: selected ? 1 : 0)
-                      .scaleXY(begin: 1, end: 1.05, duration: 200.ms),
+                  ),
                 );
               },
             ),
@@ -512,6 +709,50 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     );
   }
 
+// Helper method to get all services for 'All' category
+  List<Map<String, dynamic>> _getAllServices(
+      Map<String, List<Map<String, dynamic>>> servicesByCategory) {
+    List<Map<String, dynamic>> allServices = [];
+    servicesByCategory.forEach((category, services) {
+      allServices.addAll(services);
+    });
+    return allServices;
+  }
+
+// Helper methods for colors and icons
+  Color _getCategoryColor(String category) {
+    switch (category) {
+      case 'Plumbing':
+        return const Color(0xFF007AFF);
+      case 'Electrical':
+        return const Color(0xFFFF9500);
+      case 'Appliances':
+        return const Color(0xFF5856D6);
+      case 'Carpentry':
+        return const Color(0xFFFF3B30);
+      case 'Painting':
+        return const Color(0xFF34C759);
+      default:
+        return const Color(0xFF0F3D2E);
+    }
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category) {
+      case 'Plumbing':
+        return Icons.water_drop_rounded;
+      case 'Electrical':
+        return Icons.electrical_services_rounded;
+      case 'Appliances':
+        return Icons.kitchen_rounded;
+      case 'Carpentry':
+        return Icons.handyman_rounded;
+      case 'Painting':
+        return Icons.format_paint_rounded;
+      default:
+        return Icons.build_rounded;
+    }
+  }
   // ── RECENT BOOKINGS ───────────────────────────────────────
 
   Widget _buildRecentBookings() {

@@ -29,6 +29,17 @@ import 'package:fixify/presentation/screens/professional/booking_history_profess
 import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
 import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
+// Add these imports at the top of your file with the other imports
+import 'package:fixify/presentation/screens/customer/serviceoffers/cabinetinstallation.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/ceilingpainting.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/doorrepair.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/draincleaning.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/dryerrepair.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/outlet.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/pipeleak.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/wallpainting.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/washerrepair.dart';
+import 'package:fixify/presentation/screens/customer/serviceoffers/wiringrepair.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
