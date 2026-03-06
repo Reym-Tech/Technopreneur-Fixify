@@ -82,21 +82,26 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
-      body: Column(children: [
-        _buildHeader(),
-        _buildTabBar(),
-        Expanded(
-            child: TabBarView(
-          controller: _tab,
-          children: ['All', 'Ongoing', 'Completed', 'Cancelled']
-              .map((f) => _buildList(f))
-              .toList(),
-        )),
-      ]),
-      bottomNavigationBar: _buildBottomNav(),
-    );
+    return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) widget.onBack?.call(); // back → Dashboard
+        },
+        child: Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          body: Column(children: [
+            _buildHeader(),
+            _buildTabBar(),
+            Expanded(
+                child: TabBarView(
+              controller: _tab,
+              children: ['All', 'Ongoing', 'Completed', 'Cancelled']
+                  .map((f) => _buildList(f))
+                  .toList(),
+            )),
+          ]),
+          bottomNavigationBar: _buildBottomNav(),
+        ));
   }
 
   Widget _buildHeader() => Container(

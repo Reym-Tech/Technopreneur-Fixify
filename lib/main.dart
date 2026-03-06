@@ -29,17 +29,6 @@ import 'package:fixify/presentation/screens/professional/booking_history_profess
 import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
 import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
-// Add these imports at the top of your file with the other imports
-import 'package:fixify/presentation/screens/customer/serviceoffers/cabinetinstallation.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/ceilingpainting.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/doorrepair.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/draincleaning.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/dryerrepair.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/outlet.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/pipeleak.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/wallpainting.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/washerrepair.dart';
-import 'package:fixify/presentation/screens/customer/serviceoffers/wiringrepair.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -290,6 +279,8 @@ class _MainAppState extends State<MainApp> {
   late final SupabaseDataSource _ds;
   late final ApplicationDataSource _appDs;
 
+  DateTime? _lastBackPress; // for double-tap-to-exit
+
   UserModel? _user;
   ProfessionalModel? _pro;
   List<ProfessionalModel> _professionals = [];
@@ -414,7 +405,45 @@ class _MainAppState extends State<MainApp> {
                   valueColor: AlwaysStoppedAnimation(AppColors.primary))));
     if (_user == null) return const AuthFlow();
 
-    // ── ADMIN ─────────────────────────────────────────────
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        // If on a sub-screen, go back within the app
+        if (_screen != 'home') {
+          setState(() {
+            _screen = 'home';
+          });
+          return;
+        }
+        if (_navIndex != 0) {
+          setState(() {
+            _navIndex = 0;
+            _screen = 'home';
+          });
+          return;
+        }
+        // At root home: double-tap to exit
+        final now = DateTime.now();
+        if (_lastBackPress == null ||
+            now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
+          _lastBackPress = now;
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Press back again to exit'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ));
+        } else {
+          // Actually exit
+          // ignore: deprecated_member_use
+          SystemNavigator.pop();
+        }
+      },
+      child: _buildContent(),
+    );
+  }
+
+  Widget _buildContent() {
     if (_user!.role == 'admin') {
       final u = _user!.toEntity();
 
@@ -496,10 +525,14 @@ class _MainAppState extends State<MainApp> {
         return BookingRequestsScreen(
           bookings: bookingEntities,
           currentNavIndex: _navIndex,
-          onNavTap: (i) => setState(() {
-            _navIndex = i;
-            _screen = 'home';
-          }),
+          onNavTap: (i) async {
+            setState(() {
+              _navIndex = i;
+              _screen = 'home';
+            });
+            // Always refresh when leaving/entering Requests tab
+            if (i == 1) await _refreshBookings();
+          },
           onRefresh: _refreshBookings,
           onAccept: (booking) async {
             try {
@@ -635,10 +668,14 @@ class _MainAppState extends State<MainApp> {
         pendingApplications:
             _applications.where((a) => a.status == 'pending').length,
         currentNavIndex: _navIndex,
-        onNavTap: (i) => setState(() {
-          _navIndex = i;
-          _screen = 'home';
-        }),
+        onNavTap: (i) async {
+          setState(() {
+            _navIndex = i;
+            _screen = 'home';
+          });
+          if (i == 1)
+            await _refreshBookings(); // Refresh pending requests when switching to Requests tab
+        },
         onUpdateStatus: (booking, status) async {
           try {
             await _ds.updateBookingStatus(booking.id, status);
@@ -647,7 +684,10 @@ class _MainAppState extends State<MainApp> {
             _notify('Error: $e');
           }
         },
-        onViewRequests: () => setState(() => _navIndex = 1),
+        onViewRequests: () async {
+          setState(() => _navIndex = 1);
+          await _refreshBookings();
+        },
         onViewEarnings: () => setState(() => _navIndex = 2),
         onViewHistory: () => setState(() => _screen = 'booking_history'),
         onApplyCredentials: () => setState(() => _screen = 'apply'),
@@ -810,12 +850,13 @@ class _MainAppState extends State<MainApp> {
           _screen = i == 3 ? 'profile' : 'home';
         }),
         onRequestService: () => setState(() => _screen = 'request_service'),
+        // "See All" in Recent Bookings header → Bookings tab
         onViewBookings: () => setState(() {
           _navIndex = 1;
           _screen = 'home';
         }),
+        // Tap a mini booking card → open its detail
         onBookingTap: (booking) {
-          // ADD THIS
           final model = _bookings.firstWhere((b) => b.id == booking.id,
               orElse: () => _bookings.first);
           setState(() {
@@ -839,6 +880,7 @@ class _MainAppState extends State<MainApp> {
           });
         },
       );
+
   Future<void> _createBooking(
       DateTime date, String serviceType, String? notes, String? address) async {
     if (_user == null || _selectedPro == null) return;

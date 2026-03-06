@@ -47,14 +47,19 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
-      body: Column(children: [
-        _buildHeader(),
-        Expanded(child: _pending.isEmpty ? _empty() : _buildList()),
-      ]),
-      bottomNavigationBar: _buildBottomNav(),
-    );
+    return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) widget.onNavTap?.call(0); // back → Dashboard
+        },
+        child: Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          body: Column(children: [
+            _buildHeader(),
+            Expanded(child: _pending.isEmpty ? _empty() : _buildList()),
+          ]),
+          bottomNavigationBar: _buildBottomNav(),
+        ));
   }
 
   Widget _buildHeader() => Container(

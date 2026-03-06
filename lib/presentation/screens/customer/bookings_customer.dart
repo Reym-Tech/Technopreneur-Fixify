@@ -79,22 +79,27 @@ class _CustomerBookingsScreenState extends State<CustomerBookingsScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
-      body: Column(children: [
-        _buildHeader(),
-        _buildTabBar(),
-        Expanded(
-          child: TabBarView(
-            controller: _tab,
-            children: ['All', 'Active', 'Pending', 'Completed']
-                .map((f) => _buildList(f))
-                .toList(),
-          ),
-        ),
-      ]),
-      bottomNavigationBar: _buildBottomNav(),
-    );
+    return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) widget.onNavTap?.call(0); // back → Home
+        },
+        child: Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          body: Column(children: [
+            _buildHeader(),
+            _buildTabBar(),
+            Expanded(
+              child: TabBarView(
+                controller: _tab,
+                children: ['All', 'Active', 'Pending', 'Completed']
+                    .map((f) => _buildList(f))
+                    .toList(),
+              ),
+            ),
+          ]),
+          bottomNavigationBar: _buildBottomNav(),
+        ));
   }
 
   Widget _buildHeader() => Container(
