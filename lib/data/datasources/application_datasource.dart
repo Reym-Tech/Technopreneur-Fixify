@@ -36,7 +36,7 @@ class ApplicationModel {
   final DateTime submittedAt;
   final DateTime? reviewedAt;
 
-  // Joined fields
+  // Joined fields (from users table)
   final String? applicantName;
   final String? applicantEmail;
 
@@ -96,7 +96,7 @@ class ApplicationDataSource {
     required String bucket,
     required String userId,
     required File file,
-    required String label, // 'credential' or 'valid_id'
+    required String label,
   }) async {
     final ext = file.path.split('.').last;
     final path =
@@ -106,9 +106,6 @@ class ApplicationDataSource {
   }
 
   // ── Submit a new application ───────────────────────────────
-  //
-  // Called by the professional after filling the apply form.
-  // Uploads credential + valid ID files first, then inserts the row.
 
   Future<ApplicationModel> submitApplication({
     required String professionalId,
@@ -151,7 +148,7 @@ class ApplicationDataSource {
     return ApplicationModel.fromJson(data);
   }
 
-  // ── Get applications for a professional ───────────────────
+  // ── Professional: get their own applications ──────────────
 
   Future<List<ApplicationModel>> getMyApplications(
       String professionalId) async {
@@ -184,20 +181,17 @@ class ApplicationDataSource {
     return (data as List).map((j) => ApplicationModel.fromJson(j)).toList();
   }
 
-  // ── Admin: approve an application ─────────────────────────
-  //
-  // 1. Updates application status → approved
-  // 2. Adds the service_type to professional.skills
-  // 3. Sets professional.verified = true
+  // ── Admin: approve ─────────────────────────────────────────
+  // 1. application status → approved
+  // 2. professionals.skills += service_type
+  // 3. professionals.verified = true
 
   Future<void> approveApplication(ApplicationModel app) async {
-    // 1. Mark application approved
     await _client.from(_table).update({
       'status': 'approved',
       'reviewed_at': DateTime.now().toIso8601String(),
     }).eq('id', app.id);
 
-    // 2. Fetch current skills, merge, update professional
     final proData = await _client
         .from('professionals')
         .select('skills')
@@ -216,7 +210,7 @@ class ApplicationDataSource {
     }).eq('id', app.professionalId);
   }
 
-  // ── Admin: reject an application ──────────────────────────
+  // ── Admin: reject ──────────────────────────────────────────
 
   Future<void> rejectApplication(ApplicationModel app, {String? note}) async {
     await _client.from(_table).update({
@@ -226,8 +220,7 @@ class ApplicationDataSource {
     }).eq('id', app.id);
   }
 
-  // ── Realtime: subscribe to application status changes ─────
-  // Used by the professional to know when admin acts.
+  // ── Realtime: professional gets live status updates ───────
 
   RealtimeChannel subscribeToMyApplications({
     required String professionalId,
@@ -244,12 +237,6 @@ class ApplicationDataSource {
             column: 'professional_id',
             value: professionalId,
           ),
-          // BEFORE
-          // filter: PostgresChangeFilter(
-          //   type: FilterType.eq,
-          //   column: 'professional_id',
-          //   value: professionalId,
-          // ),
           callback: (payload) {
             final updated = ApplicationModel.fromJson(payload.newRecord);
             onUpdate(updated);

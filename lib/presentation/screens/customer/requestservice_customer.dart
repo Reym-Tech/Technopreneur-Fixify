@@ -1,5 +1,15 @@
 // lib/presentation/screens/customer/requestservice_customer.dart
-// See full docstring in file header.
+//
+// RequestServiceScreen — 4-step service request wizard.
+//
+// Step 3 — Location:
+//   • Asks for location permission on entry (Once / Always / Deny)
+//   • Tap-to-pin on Google Maps with red marker
+//   • "Use My Location" button (GPS crosshair)
+//   • Reverse-geocodes pin → auto-fills address fields
+//   • Address fields are editable after autofill
+//   • Toggle between Map view and Form-only view (for slow devices)
+//   • Additional Notes field (P.S.)
 
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -44,7 +54,6 @@ class RequestServiceResult {
 // ─────────────────────────────────────────────────────────────
 
 class RequestServiceScreen extends StatefulWidget {
-  /// Full professionals list from Supabase. Screen filters approved+available ones.
   final List<ProfessionalModel> professionals;
   final Function(RequestServiceResult)? onSubmit;
   final VoidCallback? onBack;
@@ -72,17 +81,25 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   String? _photoPath;
   bool _pickingPhoto = false;
 
-  // Step 3
+  // Step 3 — map
   GoogleMapController? _mapCtrl;
   LatLng? _pinned;
-  String _address = '';
+  bool _showMap = true; // toggle between map and form-only
   bool _locating = false;
+  bool _geocoding = false;
+  bool _permissionDenied = false;
+  bool _permCheckDone = false; // true once permission flow has completed
+
+  // Step 3 — address fields (auto-filled by geocoding, also manually editable)
+  final _streetCtrl = TextEditingController();
+  final _barangayCtrl = TextEditingController();
+  final _cityCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
 
   // Step 4
   bool _submitting = false;
 
-  // Service catalogue
+  // ── Catalogue ──────────────────────────────────────────────
   static const _catalogue = [
     {
       'type': 'Electrical',
@@ -122,16 +139,12 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     },
   ];
 
-  /// Service types with at least one APPROVED + AVAILABLE professional.
-  Set<String> get _availableTypes {
-    return widget.professionals
-        .where((p) => p.verified && p.available)
-        .expand((p) => p.skills)
-        .map((s) => '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')
-        .toSet();
-  }
+  Set<String> get _availableTypes => widget.professionals
+      .where((p) => p.verified && p.available)
+      .expand((p) => p.skills)
+      .map((s) => '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')
+      .toSet();
 
-  /// Best-rated professional matching the selected service.
   ProfessionalModel? get _matchedPro {
     if (_serviceType == null) return null;
     final matches = widget.professionals.where((p) =>
@@ -142,16 +155,29 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     return matches.reduce((a, b) => (a.rating ?? 0) >= (b.rating ?? 0) ? a : b);
   }
 
+  String get _fullAddress {
+    final parts = [
+      _streetCtrl.text.trim(),
+      _barangayCtrl.text.trim(),
+      _cityCtrl.text.trim(),
+    ].where((s) => s.isNotEmpty).toList();
+    return parts.join(', ');
+  }
+
   @override
   void dispose() {
     _titleCtrl.dispose();
     _descCtrl.dispose();
+    _streetCtrl.dispose();
+    _barangayCtrl.dispose();
+    _cityCtrl.dispose();
     _notesCtrl.dispose();
     _mapCtrl?.dispose();
     super.dispose();
   }
 
-  // Navigation
+  // ── Navigation ─────────────────────────────────────────────
+
   void _next() {
     if (_step == 0 && _serviceType == null) {
       _snack('Please select a service type');
@@ -161,16 +187,23 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       _snack('Please enter a problem title');
       return;
     }
-    if (_step == 2 && _address.isEmpty) {
-      _snack('Please pin your location on the map');
-      return;
+    if (_step == 2) {
+      if (_streetCtrl.text.trim().isEmpty) {
+        _snack('Please enter your street or house number');
+        return;
+      }
+      if (_cityCtrl.text.trim().isEmpty) {
+        _snack('Please enter your city or municipality');
+        return;
+      }
     }
     if (_step == 3) {
       _submit();
       return;
     }
     setState(() => _step++);
-    if (_step == 2 && _pinned == null) _getCurrentLocation();
+    // On entering step 3, ask for permission & try to get location
+    if (_step == 2) _initLocation();
   }
 
   void _back() {
@@ -180,7 +213,215 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       setState(() => _step--);
   }
 
-  // Photo
+  // ── Location permission & GPS ──────────────────────────────
+
+  // ── Location permission & GPS ──────────────────────────────
+  //
+  // Flow:
+  //   1. Check if location service is on
+  //   2. If already granted → get location immediately, no dialogs
+  //   3. If denied (not forever) → show OUR explanation dialog first
+  //      → user taps "Allow" → THEN call Geolocator.requestPermission()
+  //        which shows the ONE system dialog
+  //   4. If deniedForever → show manual-entry banner
+  //
+  // myLocationEnabled on GoogleMap is set ONLY after permission is granted
+  // to prevent the map SDK from triggering its own extra permission request.
+
+  bool _locationPermissionGranted = false; // drives myLocationEnabled
+
+  Future<void> _initLocation() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() {
+        _permissionDenied = true;
+        _locationPermissionGranted = false;
+        _permCheckDone = true;
+      });
+      return;
+    }
+
+    final status = await Geolocator.checkPermission();
+
+    if (status == LocationPermission.always ||
+        status == LocationPermission.whileInUse) {
+      setState(() {
+        _locationPermissionGranted = true;
+        _permissionDenied = false;
+        _permCheckDone = true;
+      });
+      await _getDeviceLocation();
+      return;
+    }
+
+    if (status == LocationPermission.deniedForever) {
+      setState(() {
+        _permissionDenied = true;
+        _locationPermissionGranted = false;
+        _permCheckDone = true;
+      });
+      return;
+    }
+
+    // status == denied — show our explanation dialog first
+    if (!mounted) return;
+    final choice = await _showPermissionDialog();
+    if (choice == _LocationChoice.deny) {
+      setState(() {
+        _permissionDenied = true;
+        _locationPermissionGranted = false;
+        _permCheckDone = true;
+      });
+      return;
+    }
+
+    // User chose Allow → system dialog fires ONCE here
+    final newStatus = await Geolocator.requestPermission();
+    if (newStatus == LocationPermission.always ||
+        newStatus == LocationPermission.whileInUse) {
+      setState(() {
+        _locationPermissionGranted = true;
+        _permissionDenied = false;
+        _permCheckDone = true;
+      });
+      await _getDeviceLocation();
+    } else {
+      setState(() {
+        _permissionDenied = true;
+        _locationPermissionGranted = false;
+        _permCheckDone = true;
+      });
+    }
+  }
+
+  Future<_LocationChoice?> _showPermissionDialog() {
+    return showDialog<_LocationChoice>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.location_on_rounded,
+                  color: AppColors.primary, size: 32),
+            ),
+            const SizedBox(height: 16),
+            const Text('Allow Location Access',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textDark)),
+            const SizedBox(height: 10),
+            const Text(
+              'Fixify uses your location to pin the service address on the map and find the nearest available professional.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 13, color: AppColors.textLight, height: 1.5),
+            ),
+            const SizedBox(height: 24),
+            // Allow — triggers system dialog
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, _LocationChoice.once),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  elevation: 0,
+                ),
+                child: const Text('Allow Location',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Not now
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx, _LocationChoice.deny),
+                style: TextButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: const Text('Not now — I\'ll type my address',
+                    style: TextStyle(
+                        color: AppColors.textLight,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _getDeviceLocation() async {
+    if (!mounted) return;
+    setState(() => _locating = true);
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 10));
+      final ll = LatLng(pos.latitude, pos.longitude);
+      await _setPin(ll, moveCamera: true);
+    } catch (_) {
+      if (mounted) _snack('Could not get location — pin manually on the map.');
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
+
+  Future<void> _onMapTap(LatLng ll) => _setPin(ll, moveCamera: false);
+
+  Future<void> _setPin(LatLng ll, {required bool moveCamera}) async {
+    setState(() {
+      _pinned = ll;
+      _geocoding = true;
+    });
+    if (moveCamera) {
+      _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(ll, 17));
+    }
+    try {
+      final marks = await placemarkFromCoordinates(ll.latitude, ll.longitude)
+          .timeout(const Duration(seconds: 8));
+      if (marks.isNotEmpty && mounted) {
+        final p = marks.first;
+        setState(() {
+          if ((p.street ?? '').isNotEmpty) _streetCtrl.text = p.street!;
+          if ((p.subLocality ?? '').isNotEmpty)
+            _barangayCtrl.text = p.subLocality!;
+          else if ((p.subAdministrativeArea ?? '').isNotEmpty)
+            _barangayCtrl.text = p.subAdministrativeArea!;
+          final cityParts = [p.locality, p.administrativeArea]
+              .where((s) => s != null && s.isNotEmpty)
+              .toList();
+          if (cityParts.isNotEmpty) _cityCtrl.text = cityParts.join(', ');
+        });
+      }
+    } catch (_) {
+      // Geocoding failed silently — user can type manually
+    } finally {
+      if (mounted) setState(() => _geocoding = false);
+    }
+  }
+
+  // ── Photo ──────────────────────────────────────────────────
+
   Future<void> _pickPhoto() async {
     if (_pickingPhoto) return;
     setState(() => _pickingPhoto = true);
@@ -199,58 +440,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     }
   }
 
-  // Location
-  Future<void> _getCurrentLocation() async {
-    setState(() => _locating = true);
-    try {
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied)
-        perm = await Geolocator.requestPermission();
-      if (perm == LocationPermission.deniedForever) {
-        _snack('Location permission denied. Pin manually on the map.');
-        return;
-      }
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
-      final ll = LatLng(pos.latitude, pos.longitude);
-      await _updatePin(ll);
-      _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(ll, 17));
-    } catch (_) {
-      _snack('Could not get location. Pin manually on the map.');
-    } finally {
-      if (mounted) setState(() => _locating = false);
-    }
-  }
+  // ── Submit ─────────────────────────────────────────────────
 
-  Future<void> _onMapTap(LatLng ll) => _updatePin(ll);
-
-  Future<void> _updatePin(LatLng ll) async {
-    setState(() {
-      _pinned = ll;
-      _address = '';
-    });
-    try {
-      final marks = await placemarkFromCoordinates(ll.latitude, ll.longitude);
-      if (marks.isNotEmpty && mounted) {
-        final p = marks.first;
-        final parts = [
-          p.street,
-          p.subLocality,
-          p.locality,
-          p.administrativeArea,
-          p.postalCode,
-          p.country
-        ].where((s) => s != null && s!.isNotEmpty).toList();
-        setState(() => _address = parts.join(', '));
-      }
-    } catch (_) {
-      if (mounted)
-        setState(() => _address =
-            '${ll.latitude.toStringAsFixed(5)}, ${ll.longitude.toStringAsFixed(5)}');
-    }
-  }
-
-  // Submit
   Future<void> _submit() async {
     if (_submitting) return;
     final pro = _matchedPro;
@@ -263,7 +454,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       serviceType: _serviceType!,
       problemTitle: _titleCtrl.text.trim(),
       description: _descCtrl.text.trim(),
-      address: _address,
+      address: _fullAddress,
       latitude: _pinned?.latitude,
       longitude: _pinned?.longitude,
       notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
@@ -273,13 +464,17 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     if (mounted) setState(() => _submitting = false);
   }
 
-  void _snack(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(msg),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ));
+  void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+
+  // ── Build ───────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -295,7 +490,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               _buildStep1(),
               _buildStep2(),
               _buildStep3(),
-              _buildStep4()
+              _buildStep4(),
             ][_step],
           ),
         ),
@@ -304,12 +499,15 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     );
   }
 
+  // ── TOP BAR ───────────────────────────────────────────────
+
   Widget _buildTopBar() => Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF082218), Color(0xFF0F3D2E)]),
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF082218), Color(0xFF0F3D2E)],
+          ),
         ),
         child: SafeArea(
             bottom: false,
@@ -317,16 +515,18 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(children: [
                 GestureDetector(
-                    onTap: _back,
-                    child: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(12)),
-                      child: const Icon(Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white, size: 18),
-                    )),
+                  onTap: _back,
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.arrow_back_ios_new_rounded,
+                        color: Colors.white, size: 18),
+                  ),
+                ),
                 const SizedBox(width: 14),
                 const Text('Request Service',
                     style: TextStyle(
@@ -336,6 +536,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               ]),
             )),
       );
+
+  // ── STEPPER ───────────────────────────────────────────────
 
   Widget _buildStepper() {
     const labels = ['Service', 'Describe', 'Location', 'Confirm'];
@@ -348,9 +550,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           final done = (i ~/ 2) < _step;
           return Expanded(
               child: AnimatedContainer(
-                  duration: 300.ms,
-                  height: 2,
-                  color: done ? AppColors.primary : const Color(0xFFE0E0E0)));
+            duration: 300.ms,
+            height: 2,
+            color: done ? AppColors.primary : const Color(0xFFE0E0E0),
+          ));
         }
         final idx = i ~/ 2;
         final done = idx < _step;
@@ -379,13 +582,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           const SizedBox(height: 4),
           Text(labels[idx],
               style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-                  color: active ? AppColors.primary : const Color(0xFFAAAAAA))),
+                fontSize: 10,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w400,
+                color: active ? AppColors.primary : const Color(0xFFAAAAAA),
+              )),
         ]);
       })),
     );
   }
+
+  // ── STEP 1: SERVICE ───────────────────────────────────────
 
   Widget _buildStep1() {
     final available = _availableTypes;
@@ -501,6 +707,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     ]);
   }
 
+  // ── STEP 2: DESCRIBE ──────────────────────────────────────
+
   Widget _buildStep2() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -514,13 +722,13 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           const Text('Please describe the issue in detail',
               style: TextStyle(fontSize: 13, color: AppColors.textLight)),
           const SizedBox(height: 24),
-          _inputField(
-              controller: _titleCtrl,
+          _field(
+              ctrl: _titleCtrl,
               hint: 'Problem Title',
               icon: Icons.title_rounded),
           const SizedBox(height: 14),
-          _inputField(
-              controller: _descCtrl,
+          _field(
+              ctrl: _descCtrl,
               hint: 'Problem Description',
               icon: Icons.description_outlined,
               maxLines: 5),
@@ -596,96 +804,268 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         ],
       ).animate().fadeIn(duration: 200.ms);
 
+  // ── STEP 3: LOCATION ──────────────────────────────────────
+
   Widget _buildStep3() {
-    final initialPos =
-        _pinned ?? const LatLng(7.0707, 125.6087); // Default: Davao
+    // Default camera position: Davao City
+    final initialPos = _pinned ?? const LatLng(7.0707, 125.6087);
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('Pin Your Location',
-          style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: AppColors.textDark,
-              letterSpacing: -0.3)),
-      const SizedBox(height: 4),
-      const Text('Tap on the map to pin your exact location',
-          style: TextStyle(fontSize: 13, color: AppColors.textLight)),
-      const SizedBox(height: 20),
-      ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: SizedBox(
-          height: 280,
-          child: Stack(children: [
-            GoogleMap(
-              initialCameraPosition:
-                  CameraPosition(target: initialPos, zoom: 14),
-              onMapCreated: (c) => _mapCtrl = c,
-              onTap: _onMapTap,
-              markers: _pinned != null
-                  ? {
-                      Marker(
-                          markerId: const MarkerId('pin'),
-                          position: _pinned!,
-                          icon: BitmapDescriptor.defaultMarkerWithHue(
-                              BitmapDescriptor.hueRed))
-                    }
-                  : {},
-              myLocationButtonEnabled: false,
-              zoomControlsEnabled: true,
-              mapToolbarEnabled: false,
-            ),
-            Positioned(
-                top: 12,
-                right: 12,
-                child: GestureDetector(
-                  onTap: _getCurrentLocation,
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withOpacity(0.15),
-                            blurRadius: 8)
-                      ],
-                    ),
-                    child: _locating
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor:
-                                    AlwaysStoppedAnimation(AppColors.primary)))
-                        : const Icon(Icons.my_location_rounded,
-                            color: AppColors.primary, size: 20),
-                  ),
-                )),
-            if (_pinned == null)
-              Center(
-                  child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.55),
-                    borderRadius: BorderRadius.circular(12)),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.touch_app_rounded, color: Colors.white, size: 18),
-                  SizedBox(width: 8),
-                  Text('Tap map to pin location',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600)),
-                ]),
-              )),
+      // Title + map/form toggle
+      Row(children: [
+        const Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Pin Your Location',
+                style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textDark,
+                    letterSpacing: -0.3)),
+            SizedBox(height: 2),
+            Text('Tap the map or use GPS to pin your location',
+                style: TextStyle(fontSize: 12, color: AppColors.textLight)),
           ]),
         ),
-      ),
-      const SizedBox(height: 14),
+        // Map / Form toggle pill
+        GestureDetector(
+          onTap: () => setState(() => _showMap = !_showMap),
+          child: AnimatedContainer(
+            duration: 200.ms,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: _showMap
+                  ? AppColors.primary.withOpacity(0.1)
+                  : const Color(0xFFF0F0F0),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                  color: _showMap
+                      ? AppColors.primary.withOpacity(0.3)
+                      : const Color(0xFFDDDDDD)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(
+                _showMap ? Icons.map_rounded : Icons.list_alt_rounded,
+                size: 15,
+                color: _showMap ? AppColors.primary : AppColors.textLight,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                _showMap ? 'Map' : 'Form',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: _showMap ? AppColors.primary : AppColors.textLight,
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ]),
+      const SizedBox(height: 16),
+
+      // ── MAP VIEW ────────────────────────────────────────
+      if (_showMap) ...[
+        // Show a loading indicator while permission check is running
+        if (!_permCheckDone)
+          Container(
+            height: 270,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F0F0),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation(AppColors.primary),
+                    strokeWidth: 2),
+                SizedBox(height: 12),
+                Text('Checking location access…',
+                    style: TextStyle(fontSize: 12, color: AppColors.textLight)),
+              ]),
+            ),
+          ),
+
+        // Permission denied banner (only shown after check completes)
+        if (_permCheckDone && _permissionDenied)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF9500).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(14),
+              border:
+                  Border.all(color: const Color(0xFFFF9500).withOpacity(0.3)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.location_off_rounded,
+                  color: Color(0xFFFF9500), size: 18),
+              const SizedBox(width: 10),
+              const Expanded(
+                  child: Text(
+                'Location access denied. Tap the map to pin manually or fill in the address below.',
+                style: TextStyle(fontSize: 12, color: Color(0xFFAA6600)),
+              )),
+              GestureDetector(
+                onTap: _initLocation,
+                child: const Text('Retry',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFFF9500))),
+              ),
+            ]),
+          ),
+
+        // Google Map — only rendered AFTER permission check is done
+        if (_permCheckDone)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: SizedBox(
+              height: 270,
+              child: Stack(children: [
+                GoogleMap(
+                  initialCameraPosition:
+                      CameraPosition(target: initialPos, zoom: 14),
+                  onMapCreated: (c) {
+                    _mapCtrl = c;
+                    // If we already have a pin from GPS, don't re-center
+                    if (_pinned != null) {
+                      c.animateCamera(CameraUpdate.newLatLngZoom(_pinned!, 17));
+                    }
+                  },
+                  onTap: _onMapTap,
+                  markers: _pinned != null
+                      ? {
+                          Marker(
+                            markerId: const MarkerId('pin'),
+                            position: _pinned!,
+                            icon: BitmapDescriptor.defaultMarkerWithHue(
+                                BitmapDescriptor.hueRed),
+                            infoWindow: InfoWindow(
+                              title: 'Service Location',
+                              snippet:
+                                  _fullAddress.isNotEmpty ? _fullAddress : null,
+                            ),
+                          ),
+                        }
+                      : {},
+                  myLocationEnabled: _locationPermissionGranted,
+                  myLocationButtonEnabled: false,
+                  zoomControlsEnabled: false,
+                  mapToolbarEnabled: false,
+                  compassEnabled: false,
+                ),
+
+                // GPS button (top-right)
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: GestureDetector(
+                    onTap: _permissionDenied ? null : _getDeviceLocation,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                              color: Colors.black.withOpacity(0.18),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2))
+                        ],
+                      ),
+                      child: _locating
+                          ? const Padding(
+                              padding: EdgeInsets.all(10),
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation(
+                                      AppColors.primary)))
+                          : Icon(Icons.my_location_rounded,
+                              color: _permissionDenied
+                                  ? const Color(0xFFCCCCCC)
+                                  : AppColors.primary,
+                              size: 22),
+                    ),
+                  ),
+                ),
+
+                // Zoom buttons (bottom-right)
+                Positioned(
+                  bottom: 12,
+                  right: 12,
+                  child: Column(children: [
+                    _zoomBtn(Icons.add_rounded,
+                        () => _mapCtrl?.animateCamera(CameraUpdate.zoomIn())),
+                    const SizedBox(height: 4),
+                    _zoomBtn(Icons.remove_rounded,
+                        () => _mapCtrl?.animateCamera(CameraUpdate.zoomOut())),
+                  ]),
+                ),
+
+                // Geocoding spinner overlay
+                if (_geocoding)
+                  Positioned(
+                    bottom: 12,
+                    left: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.65),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child:
+                          const Row(mainAxisSize: MainAxisSize.min, children: [
+                        SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white)),
+                        SizedBox(width: 8),
+                        Text('Getting address…',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
+                  ),
+
+                // "Tap to pin" hint when no pin yet
+                if (_pinned == null && !_locating)
+                  Center(
+                      child: IgnorePointer(
+                          child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.55),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.touch_app_rounded,
+                          color: Colors.white, size: 16),
+                      SizedBox(width: 6),
+                      Text('Tap map to pin location',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                    ]),
+                  ))),
+              ]),
+            ),
+          ),
+        const SizedBox(height: 14),
+      ],
+
+      // ── Pinned address preview card ──────────────────────
       AnimatedContainer(
         duration: 300.ms,
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: _pinned != null
               ? AppColors.primary.withOpacity(0.06)
@@ -698,8 +1078,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         ),
         child: Row(children: [
           Container(
-            width: 38,
-            height: 38,
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
               color: (_pinned != null
                       ? AppColors.primary
@@ -711,7 +1091,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                 color: _pinned != null
                     ? AppColors.primary
                     : const Color(0xFFBBBBBB),
-                size: 20),
+                size: 18),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -719,45 +1099,116 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                 Text(
-                    _pinned != null
-                        ? 'Pinned Location'
-                        : 'No location pinned yet',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: _pinned != null
-                            ? AppColors.primary
-                            : const Color(0xFFAAAAAA))),
-                if (_address.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(_address,
+                  _pinned != null
+                      ? 'Pinned Location'
+                      : 'No location pinned yet',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: _pinned != null
+                          ? AppColors.primary
+                          : const Color(0xFFAAAAAA)),
+                ),
+                if (_fullAddress.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(_fullAddress,
                       style: const TextStyle(
-                          fontSize: 13,
+                          fontSize: 12,
                           fontWeight: FontWeight.w500,
                           color: AppColors.textDark)),
                 ],
               ])),
+          if (_pinned != null)
+            GestureDetector(
+              onTap: () => setState(() {
+                _pinned = null;
+                _streetCtrl.clear();
+                _barangayCtrl.clear();
+                _cityCtrl.clear();
+              }),
+              child: const Icon(Icons.close_rounded,
+                  color: Color(0xFFBBBBBB), size: 18),
+            ),
         ]),
       ),
-      const SizedBox(height: 20),
-      const Text('Additional Notes (Optional)',
+      const SizedBox(height: 18),
+
+      // ── Editable address fields ───────────────────────────
+      const Text('Confirm or Edit Address',
           style: TextStyle(
-              fontSize: 16,
+              fontSize: 14,
               fontWeight: FontWeight.w700,
               color: AppColors.textDark)),
+      const SizedBox(height: 2),
+      const Text('Auto-filled from map pin — edit if needed',
+          style: TextStyle(fontSize: 11, color: AppColors.textLight)),
       const SizedBox(height: 12),
-      _inputField(
-          controller: _notesCtrl,
-          hint: 'e.g. Gate is on the left side, call before coming...',
-          icon: Icons.sticky_note_2_outlined,
-          maxLines: 3,
-          prefix: 'P.S.'),
+
+      _label('Street / House No. *'),
+      const SizedBox(height: 6),
+      _field(
+          ctrl: _streetCtrl,
+          hint: 'e.g. 316 Gen. Luna St.',
+          icon: Icons.home_rounded,
+          onChanged: (_) => setState(() {})),
+      const SizedBox(height: 12),
+
+      _label('Barangay'),
+      const SizedBox(height: 6),
+      _field(
+          ctrl: _barangayCtrl,
+          hint: 'e.g. Barangay Matti',
+          icon: Icons.map_rounded,
+          onChanged: (_) => setState(() {})),
+      const SizedBox(height: 12),
+
+      _label('City / Municipality *'),
+      const SizedBox(height: 6),
+      _field(
+          ctrl: _cityCtrl,
+          hint: 'e.g. Digos City, Davao del Sur',
+          icon: Icons.location_city_rounded,
+          onChanged: (_) => setState(() {})),
+      const SizedBox(height: 18),
+
+      const Text('Additional Notes (Optional)',
+          style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textDark)),
+      const SizedBox(height: 6),
+      _field(
+        ctrl: _notesCtrl,
+        hint: 'e.g. Gate is on the left side, call before coming…',
+        icon: Icons.sticky_note_2_outlined,
+        maxLines: 3,
+        prefix: 'P.S.',
+      ),
       const SizedBox(height: 20),
     ]).animate().fadeIn(duration: 200.ms);
   }
 
+  Widget _zoomBtn(IconData icon, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 4)
+            ],
+          ),
+          child: Icon(icon, size: 20, color: AppColors.textDark),
+        ),
+      );
+
+  // ── STEP 4: CONFIRM ───────────────────────────────────────
+
   Widget _buildStep4() {
-    final rows = [
+    final notesVal = _notesCtrl.text.trim();
+    final rows = <Map<String, dynamic>>[
       {
         'icon': Icons.build_rounded,
         'label': 'Service Type',
@@ -773,15 +1224,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       {
         'icon': Icons.location_on_rounded,
         'label': 'Service Location',
-        'value': _address.isEmpty ? 'No location pinned' : _address
+        'value': _fullAddress.isEmpty ? 'No address entered' : _fullAddress
       },
-      if (_notesCtrl.text.trim().isNotEmpty)
+      if (notesVal.isNotEmpty)
         {
           'icon': Icons.sticky_note_2_outlined,
-          'label': 'Additional Notes',
-          'value': _notesCtrl.text.trim()
+          'label': 'Notes',
+          'value': notesVal
         },
     ];
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('Review Your Request',
           style: TextStyle(
@@ -857,13 +1309,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           const SizedBox(width: 10),
           const Expanded(
               child: Text(
-                  'By submitting, you agree to our Terms of Service and Privacy Policy.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textMedium))),
+            'By submitting, you agree to our Terms of Service and Privacy Policy.',
+            style: TextStyle(fontSize: 12, color: AppColors.textMedium),
+          )),
         ]),
       ),
       const SizedBox(height: 20),
     ]).animate().fadeIn(duration: 200.ms);
   }
+
+  // ── FOOTER ────────────────────────────────────────────────
 
   Widget _buildFooter() {
     final isFirst = _step == 0;
@@ -925,17 +1380,26 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     );
   }
 
-  Widget _inputField({
-    required TextEditingController controller,
+  // ── HELPERS ───────────────────────────────────────────────
+
+  Widget _label(String text) => Text(text,
+      style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textDark));
+
+  Widget _field({
+    required TextEditingController ctrl,
     required String hint,
     required IconData icon,
     int maxLines = 1,
     String? prefix,
+    ValueChanged<String>? onChanged,
   }) {
     return TextField(
-      controller: controller,
+      controller: ctrl,
       maxLines: maxLines,
-      onChanged: (_) => setState(() {}),
+      onChanged: onChanged,
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: const TextStyle(color: AppColors.textLight, fontSize: 14),
@@ -966,3 +1430,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     );
   }
 }
+
+// ── Internal enum ──────────────────────────────────────────────
+enum _LocationChoice { once, always, deny }

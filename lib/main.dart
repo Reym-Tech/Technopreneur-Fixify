@@ -74,6 +74,7 @@ class AuthFlow extends StatefulWidget {
 
 class _AuthFlowState extends State<AuthFlow> {
   bool _showSplash = true, _showRegister = false;
+
   @override
   void initState() {
     super.initState();
@@ -96,9 +97,12 @@ class _AuthFlowState extends State<AuthFlow> {
 
   Future<void> _handleLogin(String email, String password) async {
     try {
+      debugPrint('🔐 Attempting login for: $email');
       await Supabase.instance.client.auth
           .signInWithPassword(email: email, password: password);
+      debugPrint('✅ Login successful');
     } catch (e) {
+      debugPrint('❌ Login error: $e');
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Login failed: $e'),
@@ -108,10 +112,35 @@ class _AuthFlowState extends State<AuthFlow> {
 
   Future<void> _handleRegister(String name, String email, String password,
       String role, String? phone) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(AppColors.primary)),
+            SizedBox(height: 16),
+            Text('Creating your account...', style: TextStyle(fontSize: 14)),
+          ],
+        ),
+      ),
+    );
+
     try {
+      debugPrint('👤 Starting registration for: $email (role: $role)');
+
+      // Step 1: Auth sign-up
+      debugPrint('🔐 Step 1: Creating auth account...');
       final res = await Supabase.instance.client.auth
           .signUp(email: email, password: password);
+      debugPrint('✅ Auth account created: ${res.user?.id}');
+
       if (res.user != null) {
+        // Step 2: users table row
+        debugPrint('📝 Step 2: Creating user record...');
         await Supabase.instance.client.from('users').insert({
           'id': res.user!.id,
           'name': name,
@@ -120,24 +149,60 @@ class _AuthFlowState extends State<AuthFlow> {
           'phone': phone,
           'created_at': DateTime.now().toIso8601String(),
         });
-        // Auto-create professionals row for handyman registrations
+        debugPrint('✅ User record created');
+
+        // Step 3: professionals row for handymen
         if (role == 'professional') {
-          await Supabase.instance.client.from('professionals').insert({
-            'user_id': res.user!.id,
-            'skills': [],
-            'verified': false,
-            'rating': 0.0,
-            'review_count': 0,
-            'available': true,
-            'years_experience': 0,
+          try {
+            debugPrint('🏢 Step 3: Creating professional record...');
+            await Supabase.instance.client.from('professionals').insert({
+              'user_id': res.user!.id,
+              'skills': [],
+              'verified': false,
+              'rating': 0.0,
+              'review_count': 0,
+              'available': true,
+              'years_experience': 0,
+            });
+            debugPrint('✅ Professional record created');
+          } catch (proErr) {
+            // Non-fatal — _init() will auto-create it on first login if missing
+            debugPrint('⚠️ Professional record warning: $proErr');
+          }
+        }
+
+        if (mounted) Navigator.of(context).pop(); // close loading dialog
+        debugPrint('✅ Registration complete!');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Registration successful! Check your email to verify your account.'),
+            backgroundColor: AppColors.primary,
+            duration: Duration(seconds: 3),
+          ));
+          Future.delayed(const Duration(seconds: 2), () {
+            if (mounted) setState(() => _showRegister = false);
           });
         }
+      } else {
+        if (mounted) Navigator.of(context).pop();
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Registration failed: Unable to create account'),
+              backgroundColor: AppColors.error));
       }
     } catch (e) {
+      debugPrint('❌ Registration error: $e');
+      if (mounted) {
+        try {
+          Navigator.of(context).pop();
+        } catch (_) {}
+      }
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Registration failed: $e'),
-            backgroundColor: AppColors.error));
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 4)));
     }
   }
 }
@@ -158,8 +223,7 @@ class _MainAppState extends State<MainApp> {
   ProfessionalModel? _pro;
   List<ProfessionalModel> _professionals = [];
   List<BookingModel> _bookings = [];
-  List<ApplicationModel> _applications =
-      []; // for pro: my apps; for admin: all apps
+  List<ApplicationModel> _applications = [];
   int _navIndex = 0;
   String _screen = 'home';
   ProfessionalModel? _selectedPro;
@@ -179,8 +243,30 @@ class _MainAppState extends State<MainApp> {
       _user = await _ds.getCurrentUser();
       if (_user != null) {
         _professionals = await _ds.getProfessionals();
+
         if (_user!.isProfessional) {
           _pro = await _ds.getProfessionalByUserId(_user!.id);
+
+          // Auto-create professionals row if it was missed at registration
+          if (_pro == null) {
+            try {
+              debugPrint('⚠️ No professional record found — auto-creating...');
+              await Supabase.instance.client.from('professionals').insert({
+                'user_id': _user!.id,
+                'skills': [],
+                'verified': false,
+                'rating': 0.0,
+                'review_count': 0,
+                'available': true,
+                'years_experience': 0,
+              });
+              _pro = await _ds.getProfessionalByUserId(_user!.id);
+              debugPrint('✅ Professional record auto-created');
+            } catch (e) {
+              debugPrint('❌ Could not auto-create professional record: $e');
+            }
+          }
+
           if (_pro != null) {
             _bookings = await _ds.getProfessionalBookings(_pro!.id);
             _applications = await _appDs.getMyApplications(_pro!.id);
@@ -200,7 +286,6 @@ class _MainAppState extends State<MainApp> {
                   _notify('Your ${a.serviceType} application was approved!');
                 if (a.status == 'rejected')
                   _notify('Your ${a.serviceType} application was reviewed.');
-                // Refresh professionals list so customer sees new availability
                 _ds
                     .getProfessionals()
                     .then((list) => setState(() => _professionals = list));
@@ -214,7 +299,7 @@ class _MainAppState extends State<MainApp> {
         }
       }
     } catch (e) {
-      debugPrint('Init error: $e');
+      debugPrint('❌ Init error: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -226,7 +311,7 @@ class _MainAppState extends State<MainApp> {
       content: Row(children: [
         const Icon(Icons.notifications_rounded, color: Colors.white),
         const SizedBox(width: 10),
-        Expanded(child: Text(msg))
+        Expanded(child: Text(msg)),
       ]),
       backgroundColor: AppColors.primary,
       behavior: SnackBarBehavior.floating,
@@ -247,7 +332,7 @@ class _MainAppState extends State<MainApp> {
     // ── ADMIN ─────────────────────────────────────────────
     if (_user!.role == 'admin') {
       final u = _user!.toEntity();
-      // Approvals tab
+
       if (_navIndex == 1) {
         return ApprovalsScreen(
           applications: _applications,
@@ -275,7 +360,7 @@ class _MainAppState extends State<MainApp> {
           },
         );
       }
-      // Profile tab
+
       if (_navIndex == 3) {
         return AdminProfileScreen(
           adminName: u.name,
@@ -287,6 +372,7 @@ class _MainAppState extends State<MainApp> {
           onLogout: () async => Supabase.instance.client.auth.signOut(),
         );
       }
+
       final pending = _applications.where((a) => a.status == 'pending').length;
       return AdminDashboardScreen(
         adminName: u.name,
@@ -310,26 +396,60 @@ class _MainAppState extends State<MainApp> {
       final proEntity = _pro?.toEntity();
       final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
 
-      // Apply screen
+      // Apply screen — guarded so _pro null never crashes
       if (_screen == 'apply') {
-        // THIS IS ADDED - 005
-        if (_pro == null) {
-          return const Scaffold(
-            body: Center(child: Text("Professional profile not found")),
+        final proId = _pro?.id;
+        if (proId == null) {
+          // Show friendly error instead of crashing
+          return Scaffold(
+            backgroundColor: AppColors.backgroundLight,
+            appBar: AppBar(
+              backgroundColor: const Color(0xFF0F3D2E),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                    color: Colors.white),
+                onPressed: () => setState(() => _screen = 'home'),
+              ),
+              title: const Text('Apply for Service',
+                  style: TextStyle(color: Colors.white)),
+              elevation: 0,
+            ),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.error_outline_rounded,
+                      size: 56, color: Color(0xFFFF9500)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Professional profile not found.\nPlease log out and log back in.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 15, color: Color(0xFF666666)),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () => Supabase.instance.client.auth.signOut(),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12))),
+                    child: const Text('Log Out & Try Again'),
+                  ),
+                ]),
+              ),
+            ),
           );
         }
+
         return ApplyScreen(
-          professionalId: _pro!.id,
+          professionalId: proId,
           userId: _user!.id,
           onBack: () => setState(() => _screen = 'home'),
           onSubmit: (data) async {
             try {
-              // THIS IS CHANGED - 005
-              // final app = await _appDs.submitApplication(
-              //   professionalId: _pro!.id,
-              // INTO
               final app = await _appDs.submitApplication(
-                professionalId: _pro?.id ?? '',
+                professionalId: proId,
                 userId: _user!.id,
                 serviceType: data.serviceType,
                 credentialFile: data.credentialFile,
@@ -343,7 +463,7 @@ class _MainAppState extends State<MainApp> {
                 _screen = 'verification_status';
               });
               _notify(
-                  'Application submitted! We\'ll review it within 24–48 hours.');
+                  "Application submitted! We'll review it within 24–48 hours.");
             } catch (e) {
               if (mounted)
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -353,7 +473,6 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
-      // Verification status screen
       if (_screen == 'verification_status') {
         return VerificationStatusScreen(
           applications: _applications,
@@ -362,7 +481,6 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
-      // Profile tab
       if (_navIndex == 3) {
         return ProfessionalProfileScreen(
           user: u,
@@ -373,7 +491,9 @@ class _MainAppState extends State<MainApp> {
       }
 
       return ProfessionalDashboardScreen(
-        user: u, professional: proEntity, bookings: bookingEntities,
+        user: u,
+        professional: proEntity,
+        bookings: bookingEntities,
         pendingApplications:
             _applications.where((a) => a.status == 'pending').length,
         currentNavIndex: _navIndex,
@@ -381,7 +501,6 @@ class _MainAppState extends State<MainApp> {
         onUpdateStatus: _updateStatus,
         onViewRequests: () => setState(() => _navIndex = 1),
         onViewEarnings: () => setState(() => _navIndex = 2),
-        // Verification flow entry points
         onViewHistory: () => setState(() => _screen = 'verification_status'),
         onApplyCredentials: () => setState(() => _screen = 'apply'),
         onViewVerification: () =>
@@ -410,7 +529,7 @@ class _MainAppState extends State<MainApp> {
                 notes: [
                   result.problemTitle,
                   if (result.description.isNotEmpty) result.description,
-                  if (result.notes != null) result.notes!
+                  if (result.notes != null) result.notes!,
                 ].join('\n'),
                 address: result.address,
                 priceEstimate: result.matchedPro.priceMin,
