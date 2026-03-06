@@ -31,6 +31,7 @@ class CustomerDashboardScreen extends StatefulWidget {
   final Function(String skill)? onFilterBySkill;
   final Function(ProfessionalEntity)? onProfessionalTap;
   final Function(int)? onNavTap;
+  final Function(BookingEntity)? onBookingTap; // ADD THIS LINE
   final int currentNavIndex;
 
   const CustomerDashboardScreen({
@@ -44,12 +45,18 @@ class CustomerDashboardScreen extends StatefulWidget {
     this.onProfessionalTap,
     this.onNavTap,
     this.currentNavIndex = 0,
+    this.onBookingTap, // ADD THIS LINE
+    //required Null Function(booking) onBookingTap,
   });
 
   @override
   State<CustomerDashboardScreen> createState() =>
       _CustomerDashboardScreenState();
 }
+
+// class booking {
+//   Object? get id => null;
+// }
 
 class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   String _selectedSkill = 'All';
@@ -197,16 +204,29 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                     children: [
                       Row(children: [
                         Container(
-                          padding: const EdgeInsets.all(8),
+                          width: 60,
+                          height: 60,
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(12),
+                            color: Colors.white.withOpacity(0.15),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.3),
+                              width: 3,
+                            ),
                           ),
-                          child: const Icon(Icons.construction_rounded,
-                              color: Colors.white, size: 20),
+                          child: ClipOval(
+                            // Ensures image stays within circle bounds
+                            child: Image.asset(
+                              'assets/images/logo.jpg', // Replace with your logo asset
+                              width: 30, // Match container size
+                              height: 30, // Match container size
+                              fit: BoxFit
+                                  .cover, // Makes image cover the circle properly
+                            ),
+                          ),
                         ),
                         const SizedBox(width: 10),
-                        const Text('Fixify',
+                        const Text('AYO',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 22,
@@ -221,7 +241,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                       ]),
                     ],
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 17),
                   // Greeting row
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -423,7 +443,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         children: [
           const Padding(
             padding: EdgeInsets.only(right: 20),
-            child: SectionHeader(title: 'Services'),
+            child: SectionHeader(title: 'Service Offers'),
           ),
           const SizedBox(height: 16),
           SizedBox(
@@ -504,7 +524,11 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (context, i) {
           final b = widget.recentBookings[i];
-          return _BookingMiniCard(booking: b);
+          return GestureDetector(
+            // WRAP WITH GESTUREDETECTOR
+            onTap: () => widget.onBookingTap?.call(b), // ADD ONTAP
+            child: _BookingMiniCard(booking: b),
+          );
         },
       ),
     );

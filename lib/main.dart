@@ -16,6 +16,7 @@ import 'package:fixify/presentation/screens/auth/login_screen.dart';
 import 'package:fixify/presentation/screens/customer/dashboard_customer.dart';
 import 'package:fixify/presentation/screens/customer/profile_customer.dart';
 import 'package:fixify/presentation/screens/customer/requestservice_customer.dart';
+import 'package:fixify/presentation/screens/customer/bookings_customer.dart';
 import 'package:fixify/presentation/screens/customer/professional_profile_screen.dart'
     as customer;
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
@@ -23,6 +24,8 @@ import 'package:fixify/presentation/screens/professional/dashboard_professional.
 import 'package:fixify/presentation/screens/professional/profile_professional.dart';
 import 'package:fixify/presentation/screens/professional/apply_professional.dart';
 import 'package:fixify/presentation/screens/professional/verificationstatus_professional.dart';
+import 'package:fixify/presentation/screens/professional/booking_requests_professional.dart';
+import 'package:fixify/presentation/screens/professional/booking_history_professional.dart';
 import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
 import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
@@ -53,9 +56,7 @@ class FixifyApp extends StatelessWidget {
       home: const AppNavigator());
 }
 
-// FIX: Use a StatefulWidget so we can react to auth changes properly
-// and avoid the stale-session race condition where the stream fires
-// before the widget tree has rebuilt after login.
+// FIX: StatefulWidget so we react to auth changes properly
 class AppNavigator extends StatefulWidget {
   const AppNavigator({super.key});
   @override
@@ -63,7 +64,6 @@ class AppNavigator extends StatefulWidget {
 }
 
 class _AppNavigatorState extends State<AppNavigator> {
-  // Track auth state locally so we always have the latest value
   bool _isLoggedIn = false;
   bool _initialCheckDone = false;
 
@@ -71,16 +71,13 @@ class _AppNavigatorState extends State<AppNavigator> {
   void initState() {
     super.initState();
     _checkInitialSession();
-    // Listen for subsequent auth changes (login / logout)
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (!mounted) return;
-      final session = data.session;
-      setState(() => _isLoggedIn = session != null);
+      setState(() => _isLoggedIn = data.session != null);
     });
   }
 
   Future<void> _checkInitialSession() async {
-    // Small delay to let Supabase restore the persisted session from storage
     await Future.delayed(const Duration(milliseconds: 200));
     if (!mounted) return;
     final session = Supabase.instance.client.auth.currentSession;
@@ -93,14 +90,11 @@ class _AppNavigatorState extends State<AppNavigator> {
   @override
   Widget build(BuildContext context) {
     if (!_initialCheckDone) {
-      // Show a blank scaffold while we wait for the session check
       return const Scaffold(
         backgroundColor: AppColors.backgroundLight,
         body: Center(
-          child: CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation(AppColors.primary),
-          ),
-        ),
+            child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(AppColors.primary))),
       );
     }
     return _isLoggedIn ? const MainApp() : const AuthFlow();
@@ -144,7 +138,6 @@ class _AuthFlowState extends State<AuthFlow> {
       await Supabase.instance.client.auth
           .signInWithPassword(email: email, password: password);
       debugPrint('✅ Login successful');
-      // AppNavigator's listener will handle the navigation automatically
     } catch (e) {
       debugPrint('❌ Login error: $e');
       if (mounted)
@@ -156,19 +149,13 @@ class _AuthFlowState extends State<AuthFlow> {
 
   Future<void> _handleRegister(String name, String email, String password,
       String role, String? phone) async {
-    // FIX: Use a local overlay entry instead of showDialog so we have full
-    // control of dismissal and never get a stale-context pop failure.
     OverlayEntry? loadingOverlay;
     loadingOverlay = OverlayEntry(
       builder: (_) =>
           const _LoadingOverlay(message: 'Creating your account...'),
     );
-
-    // Insert overlay safely
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        Overlay.of(context).insert(loadingOverlay!);
-      }
+      if (mounted) Overlay.of(context).insert(loadingOverlay!);
     });
 
     void dismissOverlay() {
@@ -180,15 +167,12 @@ class _AuthFlowState extends State<AuthFlow> {
 
     try {
       debugPrint('👤 Starting registration for: $email (role: $role)');
-
-      // Step 1: Auth sign-up
       debugPrint('🔐 Step 1: Creating auth account...');
       final res = await Supabase.instance.client.auth
           .signUp(email: email, password: password);
       debugPrint('✅ Auth account created: ${res.user?.id}');
 
       if (res.user != null) {
-        // Step 2: users table row
         debugPrint('📝 Step 2: Creating user record...');
         await Supabase.instance.client.from('users').insert({
           'id': res.user!.id,
@@ -200,7 +184,6 @@ class _AuthFlowState extends State<AuthFlow> {
         });
         debugPrint('✅ User record created');
 
-        // Step 3: professionals row for handymen
         if (role == 'professional') {
           try {
             debugPrint('🏢 Step 3: Creating professional record...');
@@ -251,8 +234,6 @@ class _AuthFlowState extends State<AuthFlow> {
   }
 }
 
-// ── Loading overlay widget (replaces showDialog for registration) ──────────
-
 class _LoadingOverlay extends StatelessWidget {
   final String message;
   const _LoadingOverlay({required this.message});
@@ -262,31 +243,26 @@ class _LoadingOverlay extends StatelessWidget {
     return Material(
       color: Colors.black.withOpacity(0.4),
       child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.15),
-                  blurRadius: 20,
-                  offset: const Offset(0, 4))
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation(AppColors.primary)),
-              const SizedBox(height: 16),
-              Text(message,
-                  style:
-                      const TextStyle(fontSize: 14, color: AppColors.textDark)),
-            ],
-          ),
+          child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 20,
+                offset: const Offset(0, 4))
+          ],
         ),
-      ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation(AppColors.primary)),
+          const SizedBox(height: 16),
+          Text(message,
+              style: const TextStyle(fontSize: 14, color: AppColors.textDark)),
+        ]),
+      )),
     );
   }
 }
@@ -388,6 +364,21 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  Future<void> _refreshBookings() async {
+    try {
+      if (_user == null) return;
+      if (_user!.isProfessional && _pro != null) {
+        final list = await _ds.getProfessionalBookings(_pro!.id);
+        if (mounted) setState(() => _bookings = list);
+      } else if (_user!.role == 'customer') {
+        final list = await _ds.getCustomerBookings(_user!.id);
+        if (mounted) setState(() => _bookings = list);
+      }
+    } catch (e) {
+      debugPrint('Refresh error: $e');
+    }
+  }
+
   void _notify(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -479,6 +470,71 @@ class _MainAppState extends State<MainApp> {
       final proEntity = _pro?.toEntity();
       final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
 
+      // ── Profile tab
+      if (_navIndex == 3) {
+        return ProfessionalProfileScreen(
+          user: u,
+          professional: proEntity,
+          onBack: () => setState(() => _navIndex = 0),
+          onLogout: () async => Supabase.instance.client.auth.signOut(),
+        );
+      }
+
+      // ── Booking Requests tab (navIndex 1)
+      if (_navIndex == 1) {
+        return BookingRequestsScreen(
+          bookings: bookingEntities,
+          currentNavIndex: _navIndex,
+          onNavTap: (i) => setState(() {
+            _navIndex = i;
+            _screen = 'home';
+          }),
+          onRefresh: _refreshBookings,
+          onAccept: (booking) async {
+            try {
+              await _ds.updateBookingStatus(booking.id, BookingStatus.accepted);
+              await _refreshBookings();
+              _notify('Booking accepted! Customer has been notified.');
+            } catch (e) {
+              _notify('Error: $e');
+            }
+          },
+          onDecline: (booking) async {
+            try {
+              await _ds.updateBookingStatus(
+                  booking.id, BookingStatus.cancelled);
+              await _refreshBookings();
+              _notify('Booking declined.');
+            } catch (e) {
+              _notify('Error: $e');
+            }
+          },
+        );
+      }
+
+      // ── Booking History screen (from dashboard "Booking History" card)
+      if (_screen == 'booking_history') {
+        return BookingHistoryScreen(
+          bookings: bookingEntities,
+          currentNavIndex: _navIndex,
+          onNavTap: (i) => setState(() {
+            _navIndex = i;
+            _screen = 'home';
+          }),
+          onBack: () => setState(() => _screen = 'home'),
+          onRefresh: _refreshBookings,
+          onUpdateStatus: (booking, status) async {
+            try {
+              await _ds.updateBookingStatus(booking.id, status);
+              await _refreshBookings();
+            } catch (e) {
+              _notify('Error: $e');
+            }
+          },
+        );
+      }
+
+      // ── Apply screen
       if (_screen == 'apply') {
         final proId = _pro?.id;
         if (proId == null) {
@@ -496,33 +552,30 @@ class _MainAppState extends State<MainApp> {
               elevation: 0,
             ),
             body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.error_outline_rounded,
-                      size: 56, color: Color(0xFFFF9500)),
-                  const SizedBox(height: 16),
-                  const Text(
+                child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.error_outline_rounded,
+                    size: 56, color: Color(0xFFFF9500)),
+                const SizedBox(height: 16),
+                const Text(
                     'Professional profile not found.\nPlease log out and log back in.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 15, color: Color(0xFF666666)),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: () => Supabase.instance.client.auth.signOut(),
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12))),
-                    child: const Text('Log Out & Try Again'),
-                  ),
-                ]),
-              ),
-            ),
+                    style: TextStyle(fontSize: 15, color: Color(0xFF666666))),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: () => Supabase.instance.client.auth.signOut(),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12))),
+                  child: const Text('Log Out & Try Again'),
+                ),
+              ]),
+            )),
           );
         }
-
         return ApplyScreen(
           professionalId: proId,
           userId: _user!.id,
@@ -554,6 +607,7 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
+      // ── Verification status screen
       if (_screen == 'verification_status') {
         return VerificationStatusScreen(
           applications: _applications,
@@ -562,15 +616,7 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
-      if (_navIndex == 3) {
-        return ProfessionalProfileScreen(
-          user: u,
-          professional: proEntity,
-          onBack: () => setState(() => _navIndex = 0),
-          onLogout: () async => Supabase.instance.client.auth.signOut(),
-        );
-      }
-
+      // ── Professional Dashboard (navIndex 0)
       return ProfessionalDashboardScreen(
         user: u,
         professional: proEntity,
@@ -578,11 +624,21 @@ class _MainAppState extends State<MainApp> {
         pendingApplications:
             _applications.where((a) => a.status == 'pending').length,
         currentNavIndex: _navIndex,
-        onNavTap: (i) => setState(() => _navIndex = i),
-        onUpdateStatus: _updateStatus,
+        onNavTap: (i) => setState(() {
+          _navIndex = i;
+          _screen = 'home';
+        }),
+        onUpdateStatus: (booking, status) async {
+          try {
+            await _ds.updateBookingStatus(booking.id, status);
+            await _refreshBookings();
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
         onViewRequests: () => setState(() => _navIndex = 1),
         onViewEarnings: () => setState(() => _navIndex = 2),
-        onViewHistory: () => setState(() => _screen = 'verification_status'),
+        onViewHistory: () => setState(() => _screen = 'booking_history'),
         onApplyCredentials: () => setState(() => _screen = 'apply'),
         onViewVerification: () =>
             setState(() => _screen = 'verification_status'),
@@ -595,6 +651,30 @@ class _MainAppState extends State<MainApp> {
   }
 
   Widget _customerFlow() {
+    final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
+
+    // ── Bookings tab (navIndex 1) — full list with tabs
+    if (_navIndex == 1 && _screen == 'home') {
+      return CustomerBookingsScreen(
+        bookings: bookingEntities,
+        currentNavIndex: _navIndex,
+        onNavTap: (i) => setState(() {
+          _navIndex = i;
+          _screen = i == 3 ? 'profile' : 'home';
+        }),
+        onRefresh: _refreshBookings,
+        // Tap any booking card → go to its status/detail screen
+        onBookingTap: (booking) {
+          final model = _bookings.firstWhere((b) => b.id == booking.id,
+              orElse: () => _bookings.first);
+          setState(() {
+            _selectedBooking = model;
+            _screen = 'booking_status';
+          });
+        },
+      );
+    }
+
     switch (_screen) {
       case 'request_service':
         return RequestServiceScreen(
@@ -635,6 +715,7 @@ class _MainAppState extends State<MainApp> {
             }
           },
         );
+
       case 'professional_profile':
         if (_selectedPro == null) return _home();
         return customer.ProfessionalProfileScreen(
@@ -643,6 +724,7 @@ class _MainAppState extends State<MainApp> {
           onBack: () => setState(() => _screen = 'home'),
           onBookNow: () => setState(() => _screen = 'request_service'),
         );
+
       case 'booking':
         if (_selectedPro == null) return _home();
         return customer.BookingScreen(
@@ -650,19 +732,40 @@ class _MainAppState extends State<MainApp> {
           onBack: () => setState(() => _screen = 'professional_profile'),
           onConfirmBooking: _createBooking,
         );
+
       case 'booking_status':
         if (_selectedBooking == null) return _home();
         return BookingStatusScreen(
           booking: _selectedBooking!.toEntity(),
-          onBack: () => setState(() => _screen = 'home'),
+          // Back: if we came from the Bookings tab, return there
+          onBack: () => setState(() {
+            _screen = 'home';
+            // Keep _navIndex as-is so pressing back from a booking detail
+            // opened via the Bookings tab returns to the Bookings tab list
+          }),
           onWriteReview: _selectedBooking!.status == BookingStatus.completed
               ? () => setState(() => _screen = 'review')
               : null,
           onCancelBooking: _selectedBooking!.status == BookingStatus.pending
-              ? () => _updateStatus(
-                  _selectedBooking!.toEntity(), BookingStatus.cancelled)
+              ? () async {
+                  try {
+                    await _ds.updateBookingStatus(
+                        _selectedBooking!.id, BookingStatus.cancelled);
+                    await _refreshBookings();
+                    // Refresh selectedBooking too
+                    final updated = _bookings.firstWhere(
+                        (b) => b.id == _selectedBooking!.id,
+                        orElse: () => _selectedBooking!);
+                    setState(() {
+                      _selectedBooking = updated;
+                    });
+                  } catch (e) {
+                    _notify('Error: $e');
+                  }
+                }
               : null,
         );
+
       case 'review':
         if (_selectedBooking == null) return _home();
         return ReviewScreen(
@@ -670,6 +773,7 @@ class _MainAppState extends State<MainApp> {
           onBack: () => setState(() => _screen = 'booking_status'),
           onSubmitReview: _submitReview,
         );
+
       case 'profile':
         return CustomerProfileScreen(
           user: _user?.toEntity(),
@@ -679,6 +783,7 @@ class _MainAppState extends State<MainApp> {
           }),
           onLogout: () async => Supabase.instance.client.auth.signOut(),
         );
+
       default:
         return _home();
     }
@@ -694,6 +799,19 @@ class _MainAppState extends State<MainApp> {
           _screen = i == 3 ? 'profile' : 'home';
         }),
         onRequestService: () => setState(() => _screen = 'request_service'),
+        onViewBookings: () => setState(() {
+          _navIndex = 1;
+          _screen = 'home';
+        }),
+        onBookingTap: (booking) {
+          // ADD THIS
+          final model = _bookings.firstWhere((b) => b.id == booking.id,
+              orElse: () => _bookings.first);
+          setState(() {
+            _selectedBooking = model;
+            _screen = 'booking_status';
+          });
+        },
         onFilterBySkill: (skill) async {
           try {
             final list = await _ds.getProfessionals(skill: skill);
@@ -710,7 +828,6 @@ class _MainAppState extends State<MainApp> {
           });
         },
       );
-
   Future<void> _createBooking(
       DateTime date, String serviceType, String? notes, String? address) async {
     if (_user == null || _selectedPro == null) return;

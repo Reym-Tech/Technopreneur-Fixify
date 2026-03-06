@@ -88,6 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 50),
                         Padding(
                           padding: const EdgeInsets.all(28),
                           child: Column(
@@ -96,28 +97,31 @@ class _LoginScreenState extends State<LoginScreen> {
                             children: [
                               Row(
                                 children: [
+                                  // Logo with circular border
                                   Container(
-                                    padding: const EdgeInsets.all(10),
+                                    width: 90,
+                                    height: 90,
                                     decoration: BoxDecoration(
                                       color: Colors.white.withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(14),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Colors.white.withOpacity(0.3),
+                                        width: 3,
+                                      ),
                                     ),
-                                    child: const Icon(
-                                      Icons.construction_rounded,
-                                      color: Colors.white,
-                                      size: 24,
+                                    child: ClipOval(
+                                      // Ensures image stays within circle bounds
+                                      child: Image.asset(
+                                        'assets/images/logo.jpg', // Replace with your logo asset
+                                        width: 60, // Match container size
+                                        height: 60, // Match container size
+                                        fit: BoxFit
+                                            .cover, // Makes image cover the circle properly
+                                      ),
                                     ),
                                   ),
-                                  const SizedBox(width: 12),
-                                  const Text(
-                                    'Fixify',
-                                    style: TextStyle(
-                                      fontSize: 28,
-                                      fontWeight: FontWeight.w800,
-                                      color: Colors.white,
-                                      letterSpacing: -0.5,
-                                    ),
-                                  ),
+
+                                  const SizedBox(width: 15),
                                 ],
                               ),
                               const SizedBox(height: 20),
@@ -129,7 +133,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   color: Colors.white,
                                 ),
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 10),
                               Text(
                                 'Sign in to continue booking services',
                                 style: TextStyle(
@@ -296,7 +300,11 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildSocialLogin() {
     return OutlinedButton.icon(
       onPressed: () {},
-      icon: const Icon(Icons.g_mobiledata_rounded, size: 24),
+      icon: Image.asset(
+        'assets/images/googlelogo.png', // Add your Google logo asset path
+        width: 24,
+        height: 24,
+      ),
       label: const Text('Continue with Google'),
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.textDark,
