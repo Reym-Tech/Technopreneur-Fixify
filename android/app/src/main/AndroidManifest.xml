@@ -13,6 +13,7 @@
         android:label="fixify"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -24,25 +25,26 @@
             android:windowSoftInputMode="adjustResize">
 
             <meta-data
-              android:name="io.flutter.embedding.android.NormalTheme"
-              android:resource="@style/NormalTheme"
-                />
-
-            <!-- Google Maps API Key (injected from local.properties via build.gradle) -->
-            <meta-data
-                android:name="com.google.android.geo.API_KEY"
-                android:value="${GOOGLE_MAPS_API_KEY}"
-                />
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"/>
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
         </activity>
+
+        <!-- FIX: Google Maps API key must be at <application> level, NOT inside <activity>.
+             The Maps SDK reads this tag from the application context only. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyBVnzJKA4_KghYRHmV9Yfqylwo3OcJvnZo"/>
 
         <meta-data
             android:name="flutterEmbedding"
-            android:value="2" />
+            android:value="2"/>
+
     </application>
 
     <queries>
@@ -51,4 +53,5 @@
             <data android:mimeType="text/plain"/>
         </intent>
     </queries>
+
 </manifest>

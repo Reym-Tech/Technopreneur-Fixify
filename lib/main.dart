@@ -53,15 +53,58 @@ class FixifyApp extends StatelessWidget {
       home: const AppNavigator());
 }
 
-class AppNavigator extends StatelessWidget {
+// FIX: Use a StatefulWidget so we can react to auth changes properly
+// and avoid the stale-session race condition where the stream fires
+// before the widget tree has rebuilt after login.
+class AppNavigator extends StatefulWidget {
   const AppNavigator({super.key});
   @override
-  Widget build(BuildContext context) => StreamBuilder<AuthState>(
-      stream: Supabase.instance.client.auth.onAuthStateChange,
-      builder: (_, __) {
-        final session = Supabase.instance.client.auth.currentSession;
-        return session != null ? const MainApp() : const AuthFlow();
-      });
+  State<AppNavigator> createState() => _AppNavigatorState();
+}
+
+class _AppNavigatorState extends State<AppNavigator> {
+  // Track auth state locally so we always have the latest value
+  bool _isLoggedIn = false;
+  bool _initialCheckDone = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkInitialSession();
+    // Listen for subsequent auth changes (login / logout)
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (!mounted) return;
+      final session = data.session;
+      setState(() => _isLoggedIn = session != null);
+    });
+  }
+
+  Future<void> _checkInitialSession() async {
+    // Small delay to let Supabase restore the persisted session from storage
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
+    final session = Supabase.instance.client.auth.currentSession;
+    setState(() {
+      _isLoggedIn = session != null;
+      _initialCheckDone = true;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_initialCheckDone) {
+      // Show a blank scaffold while we wait for the session check
+      return const Scaffold(
+        backgroundColor: AppColors.backgroundLight,
+        body: Center(
+          child: CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation(AppColors.primary),
+          ),
+        ),
+      );
+    }
+    return _isLoggedIn ? const MainApp() : const AuthFlow();
+  }
 }
 
 // ── AUTH ──────────────────────────────────────────────────────
@@ -101,6 +144,7 @@ class _AuthFlowState extends State<AuthFlow> {
       await Supabase.instance.client.auth
           .signInWithPassword(email: email, password: password);
       debugPrint('✅ Login successful');
+      // AppNavigator's listener will handle the navigation automatically
     } catch (e) {
       debugPrint('❌ Login error: $e');
       if (mounted)
@@ -112,22 +156,27 @@ class _AuthFlowState extends State<AuthFlow> {
 
   Future<void> _handleRegister(String name, String email, String password,
       String role, String? phone) async {
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation(AppColors.primary)),
-            SizedBox(height: 16),
-            Text('Creating your account...', style: TextStyle(fontSize: 14)),
-          ],
-        ),
-      ),
+    // FIX: Use a local overlay entry instead of showDialog so we have full
+    // control of dismissal and never get a stale-context pop failure.
+    OverlayEntry? loadingOverlay;
+    loadingOverlay = OverlayEntry(
+      builder: (_) =>
+          const _LoadingOverlay(message: 'Creating your account...'),
     );
+
+    // Insert overlay safely
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Overlay.of(context).insert(loadingOverlay!);
+      }
+    });
+
+    void dismissOverlay() {
+      try {
+        loadingOverlay?.remove();
+      } catch (_) {}
+      loadingOverlay = null;
+    }
 
     try {
       debugPrint('👤 Starting registration for: $email (role: $role)');
@@ -166,12 +215,11 @@ class _AuthFlowState extends State<AuthFlow> {
             });
             debugPrint('✅ Professional record created');
           } catch (proErr) {
-            // Non-fatal — _init() will auto-create it on first login if missing
             debugPrint('⚠️ Professional record warning: $proErr');
           }
         }
 
-        if (mounted) Navigator.of(context).pop(); // close loading dialog
+        dismissOverlay();
         debugPrint('✅ Registration complete!');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -185,7 +233,7 @@ class _AuthFlowState extends State<AuthFlow> {
           });
         }
       } else {
-        if (mounted) Navigator.of(context).pop();
+        dismissOverlay();
         if (mounted)
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('Registration failed: Unable to create account'),
@@ -193,17 +241,53 @@ class _AuthFlowState extends State<AuthFlow> {
       }
     } catch (e) {
       debugPrint('❌ Registration error: $e');
-      if (mounted) {
-        try {
-          Navigator.of(context).pop();
-        } catch (_) {}
-      }
+      dismissOverlay();
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('Registration failed: $e'),
             backgroundColor: AppColors.error,
             duration: const Duration(seconds: 4)));
     }
+  }
+}
+
+// ── Loading overlay widget (replaces showDialog for registration) ──────────
+
+class _LoadingOverlay extends StatelessWidget {
+  final String message;
+  const _LoadingOverlay({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withOpacity(0.4),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 20,
+                  offset: const Offset(0, 4))
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation(AppColors.primary)),
+              const SizedBox(height: 16),
+              Text(message,
+                  style:
+                      const TextStyle(fontSize: 14, color: AppColors.textDark)),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -247,7 +331,6 @@ class _MainAppState extends State<MainApp> {
         if (_user!.isProfessional) {
           _pro = await _ds.getProfessionalByUserId(_user!.id);
 
-          // Auto-create professionals row if it was missed at registration
           if (_pro == null) {
             try {
               debugPrint('⚠️ No professional record found — auto-creating...');
@@ -396,11 +479,9 @@ class _MainAppState extends State<MainApp> {
       final proEntity = _pro?.toEntity();
       final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
 
-      // Apply screen — guarded so _pro null never crashes
       if (_screen == 'apply') {
         final proId = _pro?.id;
         if (proId == null) {
-          // Show friendly error instead of crashing
           return Scaffold(
             backgroundColor: AppColors.backgroundLight,
             appBar: AppBar(

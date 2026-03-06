@@ -2,15 +2,24 @@
 //
 // RequestServiceScreen — 4-step service request wizard.
 //
-// Step 3 — Location:
-//   • Asks for location permission on entry (Once / Always / Deny)
-//   • Tap-to-pin on Google Maps with red marker
-//   • "Use My Location" button (GPS crosshair)
-//   • Reverse-geocodes pin → auto-fills address fields
-//   • Address fields are editable after autofill
-//   • Toggle between Map view and Form-only view (for slow devices)
-//   • Additional Notes field (P.S.)
+// CRASH FIX (v3):
+//   Root cause: _initLocation() called setState() synchronously right after
+//   awaiting the dialog dismissal. During dialog teardown Flutter is still
+//   in a post-frame callback chain; calling setState at that moment causes
+//   "setState() called after dispose()" or a concurrent-modification fatal.
+//
+//   Solution:
+//   1. All setState calls inside _initLocation are wrapped in
+//      _safeSetState() which (a) checks mounted, and (b) defers via
+//      WidgetsBinding.addPostFrameCallback so they never land mid-frame.
+//   2. After _showPermissionDialog returns, we await Future.delayed(300ms)
+//      so the dialog's pop animation fully completes before touching state.
+//   3. _getDeviceLocation is called only after the map is ready, never
+//      during build or dialog-teardown.
+//   4. GoogleMapController.dispose() is guarded in a try/catch because
+//      disposing an already-disposed controller throws on some SDK versions.
 
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -84,13 +93,15 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   // Step 3 — map
   GoogleMapController? _mapCtrl;
   LatLng? _pinned;
-  bool _showMap = true; // toggle between map and form-only
+  bool _showMap = true;
   bool _locating = false;
   bool _geocoding = false;
   bool _permissionDenied = false;
-  bool _permCheckDone = false; // true once permission flow has completed
+  bool _permCheckDone = false;
+  bool _mapReady = false;
+  bool _locationPermissionGranted = false;
 
-  // Step 3 — address fields (auto-filled by geocoding, also manually editable)
+  // Step 3 — address fields
   final _streetCtrl = TextEditingController();
   final _barangayCtrl = TextEditingController();
   final _cityCtrl = TextEditingController();
@@ -164,6 +175,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     return parts.join(', ');
   }
 
+  // ── Safe setState ──────────────────────────────────────────
+  // CRASH FIX: Never call setState during a frame or after dispose.
+  // Defer to next frame and check mounted.
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(fn);
+    });
+  }
+
   @override
   void dispose() {
     _titleCtrl.dispose();
@@ -172,7 +193,9 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     _barangayCtrl.dispose();
     _cityCtrl.dispose();
     _notesCtrl.dispose();
-    _mapCtrl?.dispose();
+    try {
+      _mapCtrl?.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -201,97 +224,134 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       _submit();
       return;
     }
+
     setState(() => _step++);
-    // On entering step 3, ask for permission & try to get location
-    if (_step == 2) _initLocation();
+
+    // CRASH FIX: Wait two frames after step transition before starting
+    // the location flow, so the new step is fully laid out first.
+    if (_step == 2) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _initLocation();
+        });
+      });
+    }
   }
 
   void _back() {
-    if (_step == 0)
+    if (_step == 0) {
       widget.onBack?.call();
-    else
-      setState(() => _step--);
+      return;
+    }
+    if (_step == 2) {
+      try {
+        _mapCtrl?.dispose();
+      } catch (_) {}
+      _mapCtrl = null;
+      _permCheckDone = false;
+      _mapReady = false;
+      _locationPermissionGranted = false;
+      _locating = false;
+      _geocoding = false;
+    }
+    setState(() => _step--);
   }
 
-  // ── Location permission & GPS ──────────────────────────────
-
-  // ── Location permission & GPS ──────────────────────────────
-  //
-  // Flow:
-  //   1. Check if location service is on
-  //   2. If already granted → get location immediately, no dialogs
-  //   3. If denied (not forever) → show OUR explanation dialog first
-  //      → user taps "Allow" → THEN call Geolocator.requestPermission()
-  //        which shows the ONE system dialog
-  //   4. If deniedForever → show manual-entry banner
-  //
-  // myLocationEnabled on GoogleMap is set ONLY after permission is granted
-  // to prevent the map SDK from triggering its own extra permission request.
-
-  bool _locationPermissionGranted = false; // drives myLocationEnabled
+  // ── Location flow ──────────────────────────────────────────
 
   Future<void> _initLocation() async {
+    if (!mounted) return;
+
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!mounted) return;
+
     if (!serviceEnabled) {
-      setState(() {
+      _safeSetState(() {
         _permissionDenied = true;
         _locationPermissionGranted = false;
         _permCheckDone = true;
       });
+      _scheduleMapReady();
       return;
     }
 
     final status = await Geolocator.checkPermission();
+    if (!mounted) return;
 
     if (status == LocationPermission.always ||
         status == LocationPermission.whileInUse) {
-      setState(() {
+      _safeSetState(() {
         _locationPermissionGranted = true;
         _permissionDenied = false;
         _permCheckDone = true;
       });
-      await _getDeviceLocation();
+      _scheduleMapReady(thenGetLocation: true);
       return;
     }
 
     if (status == LocationPermission.deniedForever) {
-      setState(() {
+      _safeSetState(() {
         _permissionDenied = true;
         _locationPermissionGranted = false;
         _permCheckDone = true;
       });
+      _scheduleMapReady();
       return;
     }
 
-    // status == denied — show our explanation dialog first
+    // status == denied → show our dialog first
     if (!mounted) return;
     final choice = await _showPermissionDialog();
-    if (choice == _LocationChoice.deny) {
-      setState(() {
+
+    // CRASH FIX: Wait for dialog pop animation before touching state.
+    // This is the primary crash fix — dialog teardown + setState = fatal.
+    await Future.delayed(const Duration(milliseconds: 350));
+    if (!mounted) return;
+
+    if (choice == _LocationChoice.deny || choice == null) {
+      _safeSetState(() {
         _permissionDenied = true;
         _locationPermissionGranted = false;
         _permCheckDone = true;
       });
+      _scheduleMapReady();
       return;
     }
 
-    // User chose Allow → system dialog fires ONCE here
+    // User chose Allow → system dialog
     final newStatus = await Geolocator.requestPermission();
+
+    await Future.delayed(const Duration(milliseconds: 350));
+    if (!mounted) return;
+
     if (newStatus == LocationPermission.always ||
         newStatus == LocationPermission.whileInUse) {
-      setState(() {
+      _safeSetState(() {
         _locationPermissionGranted = true;
         _permissionDenied = false;
         _permCheckDone = true;
       });
-      await _getDeviceLocation();
+      _scheduleMapReady(thenGetLocation: true);
     } else {
-      setState(() {
+      _safeSetState(() {
         _permissionDenied = true;
         _locationPermissionGranted = false;
         _permCheckDone = true;
       });
+      _scheduleMapReady();
     }
+  }
+
+  void _scheduleMapReady({bool thenGetLocation = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => _mapReady = true);
+      if (thenGetLocation) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _getDeviceLocation();
+        });
+      }
+    });
   }
 
   Future<_LocationChoice?> _showPermissionDialog() {
@@ -328,7 +388,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   fontSize: 13, color: AppColors.textLight, height: 1.5),
             ),
             const SizedBox(height: 24),
-            // Allow — triggers system dialog
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -347,7 +406,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            // Not now
             SizedBox(
               width: double.infinity,
               child: TextButton(
@@ -372,36 +430,42 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   Future<void> _getDeviceLocation() async {
     if (!mounted) return;
-    setState(() => _locating = true);
+    _safeSetState(() => _locating = true);
     try {
       final pos = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
           timeLimit: const Duration(seconds: 10));
+      if (!mounted) return;
       final ll = LatLng(pos.latitude, pos.longitude);
       await _setPin(ll, moveCamera: true);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('GPS error: $e');
       if (mounted) _snack('Could not get location — pin manually on the map.');
     } finally {
-      if (mounted) setState(() => _locating = false);
+      if (mounted) _safeSetState(() => _locating = false);
     }
   }
 
   Future<void> _onMapTap(LatLng ll) => _setPin(ll, moveCamera: false);
 
   Future<void> _setPin(LatLng ll, {required bool moveCamera}) async {
-    setState(() {
+    if (!mounted) return;
+    _safeSetState(() {
       _pinned = ll;
       _geocoding = true;
     });
     if (moveCamera) {
-      _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(ll, 17));
+      await Future.delayed(const Duration(milliseconds: 150));
+      if (mounted) {
+        _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(ll, 17));
+      }
     }
     try {
       final marks = await placemarkFromCoordinates(ll.latitude, ll.longitude)
           .timeout(const Duration(seconds: 8));
       if (marks.isNotEmpty && mounted) {
         final p = marks.first;
-        setState(() {
+        _safeSetState(() {
           if ((p.street ?? '').isNotEmpty) _streetCtrl.text = p.street!;
           if ((p.subLocality ?? '').isNotEmpty)
             _barangayCtrl.text = p.subLocality!;
@@ -413,10 +477,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           if (cityParts.isNotEmpty) _cityCtrl.text = cityParts.join(', ');
         });
       }
-    } catch (_) {
-      // Geocoding failed silently — user can type manually
+    } catch (e) {
+      debugPrint('Geocoding error: $e');
     } finally {
-      if (mounted) setState(() => _geocoding = false);
+      if (mounted) _safeSetState(() => _geocoding = false);
     }
   }
 
@@ -464,15 +528,17 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     if (mounted) setState(() => _submitting = false);
   }
 
-  void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: AppColors.primary,
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
 
   // ── Build ───────────────────────────────────────────────────
 
@@ -807,11 +873,9 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   // ── STEP 3: LOCATION ──────────────────────────────────────
 
   Widget _buildStep3() {
-    // Default camera position: Davao City
     final initialPos = _pinned ?? const LatLng(7.0707, 125.6087);
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Title + map/form toggle
       Row(children: [
         const Expanded(
           child:
@@ -827,7 +891,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                 style: TextStyle(fontSize: 12, color: AppColors.textLight)),
           ]),
         ),
-        // Map / Form toggle pill
         GestureDetector(
           onTap: () => setState(() => _showMap = !_showMap),
           child: AnimatedContainer(
@@ -864,205 +927,18 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       ]),
       const SizedBox(height: 16),
 
-      // ── MAP VIEW ────────────────────────────────────────
-      if (_showMap) ...[
-        // Show a loading indicator while permission check is running
-        if (!_permCheckDone)
-          Container(
-            height: 270,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0F0F0),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation(AppColors.primary),
-                    strokeWidth: 2),
-                SizedBox(height: 12),
-                Text('Checking location access…',
-                    style: TextStyle(fontSize: 12, color: AppColors.textLight)),
-              ]),
-            ),
-          ),
-
-        // Permission denied banner (only shown after check completes)
-        if (_permCheckDone && _permissionDenied)
-          Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF9500).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(14),
-              border:
-                  Border.all(color: const Color(0xFFFF9500).withOpacity(0.3)),
-            ),
-            child: Row(children: [
-              const Icon(Icons.location_off_rounded,
-                  color: Color(0xFFFF9500), size: 18),
-              const SizedBox(width: 10),
-              const Expanded(
-                  child: Text(
-                'Location access denied. Tap the map to pin manually or fill in the address below.',
-                style: TextStyle(fontSize: 12, color: Color(0xFFAA6600)),
-              )),
-              GestureDetector(
-                onTap: _initLocation,
-                child: const Text('Retry',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFFFF9500))),
-              ),
-            ]),
-          ),
-
-        // Google Map — only rendered AFTER permission check is done
-        if (_permCheckDone)
-          ClipRRect(
+      // ── MAP — always 270px tall ─────────────────────────
+      if (_showMap)
+        SizedBox(
+          height: 270,
+          child: ClipRRect(
             borderRadius: BorderRadius.circular(20),
-            child: SizedBox(
-              height: 270,
-              child: Stack(children: [
-                GoogleMap(
-                  initialCameraPosition:
-                      CameraPosition(target: initialPos, zoom: 14),
-                  onMapCreated: (c) {
-                    _mapCtrl = c;
-                    // If we already have a pin from GPS, don't re-center
-                    if (_pinned != null) {
-                      c.animateCamera(CameraUpdate.newLatLngZoom(_pinned!, 17));
-                    }
-                  },
-                  onTap: _onMapTap,
-                  markers: _pinned != null
-                      ? {
-                          Marker(
-                            markerId: const MarkerId('pin'),
-                            position: _pinned!,
-                            icon: BitmapDescriptor.defaultMarkerWithHue(
-                                BitmapDescriptor.hueRed),
-                            infoWindow: InfoWindow(
-                              title: 'Service Location',
-                              snippet:
-                                  _fullAddress.isNotEmpty ? _fullAddress : null,
-                            ),
-                          ),
-                        }
-                      : {},
-                  myLocationEnabled: _locationPermissionGranted,
-                  myLocationButtonEnabled: false,
-                  zoomControlsEnabled: false,
-                  mapToolbarEnabled: false,
-                  compassEnabled: false,
-                ),
-
-                // GPS button (top-right)
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: GestureDetector(
-                    onTap: _permissionDenied ? null : _getDeviceLocation,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                              color: Colors.black.withOpacity(0.18),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2))
-                        ],
-                      ),
-                      child: _locating
-                          ? const Padding(
-                              padding: EdgeInsets.all(10),
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation(
-                                      AppColors.primary)))
-                          : Icon(Icons.my_location_rounded,
-                              color: _permissionDenied
-                                  ? const Color(0xFFCCCCCC)
-                                  : AppColors.primary,
-                              size: 22),
-                    ),
-                  ),
-                ),
-
-                // Zoom buttons (bottom-right)
-                Positioned(
-                  bottom: 12,
-                  right: 12,
-                  child: Column(children: [
-                    _zoomBtn(Icons.add_rounded,
-                        () => _mapCtrl?.animateCamera(CameraUpdate.zoomIn())),
-                    const SizedBox(height: 4),
-                    _zoomBtn(Icons.remove_rounded,
-                        () => _mapCtrl?.animateCamera(CameraUpdate.zoomOut())),
-                  ]),
-                ),
-
-                // Geocoding spinner overlay
-                if (_geocoding)
-                  Positioned(
-                    bottom: 12,
-                    left: 12,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.65),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child:
-                          const Row(mainAxisSize: MainAxisSize.min, children: [
-                        SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white)),
-                        SizedBox(width: 8),
-                        Text('Getting address…',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600)),
-                      ]),
-                    ),
-                  ),
-
-                // "Tap to pin" hint when no pin yet
-                if (_pinned == null && !_locating)
-                  Center(
-                      child: IgnorePointer(
-                          child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.55),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.touch_app_rounded,
-                          color: Colors.white, size: 16),
-                      SizedBox(width: 6),
-                      Text('Tap map to pin location',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600)),
-                    ]),
-                  ))),
-              ]),
-            ),
+            child: _buildMapContent(initialPos),
           ),
-        const SizedBox(height: 14),
-      ],
+        ),
+      if (_showMap) const SizedBox(height: 14),
 
-      // ── Pinned address preview card ──────────────────────
+      // ── Pinned address preview ───────────────────────────
       AnimatedContainer(
         duration: 300.ms,
         padding: const EdgeInsets.all(14),
@@ -1133,7 +1009,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       ),
       const SizedBox(height: 18),
 
-      // ── Editable address fields ───────────────────────────
+      // ── Address fields ───────────────────────────────────
       const Text('Confirm or Edit Address',
           style: TextStyle(
               fontSize: 14,
@@ -1186,6 +1062,200 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       ),
       const SizedBox(height: 20),
     ]).animate().fadeIn(duration: 200.ms);
+  }
+
+  Widget _buildMapContent(LatLng initialPos) {
+    // Show spinner until both permission check AND map are ready
+    if (!_permCheckDone || !_mapReady) {
+      return Container(
+        color: const Color(0xFFF0F0F0),
+        child: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(AppColors.primary),
+                strokeWidth: 2),
+            const SizedBox(height: 12),
+            Text(
+              _permCheckDone ? 'Loading map…' : 'Checking location access…',
+              style: const TextStyle(fontSize: 12, color: AppColors.textLight),
+            ),
+          ]),
+        ),
+      );
+    }
+
+    return Stack(children: [
+      GoogleMap(
+        initialCameraPosition: CameraPosition(target: initialPos, zoom: 14),
+        onMapCreated: (c) {
+          _mapCtrl = c;
+          if (_pinned != null) {
+            c.animateCamera(CameraUpdate.newLatLngZoom(_pinned!, 17));
+          }
+        },
+        onTap: _onMapTap,
+        markers: _pinned != null
+            ? {
+                Marker(
+                  markerId: const MarkerId('pin'),
+                  position: _pinned!,
+                  icon: BitmapDescriptor.defaultMarkerWithHue(
+                      BitmapDescriptor.hueRed),
+                  infoWindow: InfoWindow(
+                    title: 'Service Location',
+                    snippet: _fullAddress.isNotEmpty ? _fullAddress : null,
+                  ),
+                ),
+              }
+            : {},
+        myLocationEnabled: _locationPermissionGranted,
+        myLocationButtonEnabled: false,
+        zoomControlsEnabled: false,
+        mapToolbarEnabled: false,
+        compassEnabled: false,
+      ),
+
+      // Denied banner inside the map
+      if (_permissionDenied)
+        Positioned(
+          top: 10,
+          left: 10,
+          right: 10,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF9500).withOpacity(0.93),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(children: [
+              const Icon(Icons.location_off_rounded,
+                  color: Colors.white, size: 16),
+              const SizedBox(width: 8),
+              const Expanded(
+                  child: Text(
+                'Location denied. Tap map to pin or fill in address.',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600),
+              )),
+              GestureDetector(
+                onTap: () {
+                  _safeSetState(() {
+                    _permCheckDone = false;
+                    _mapReady = false;
+                    _permissionDenied = false;
+                  });
+                  Future.delayed(const Duration(milliseconds: 100), () {
+                    if (mounted) _initLocation();
+                  });
+                },
+                child: const Text('Retry',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        decoration: TextDecoration.underline)),
+              ),
+            ]),
+          ),
+        ),
+
+      // GPS button
+      Positioned(
+        top: _permissionDenied ? 62 : 12,
+        right: 12,
+        child: GestureDetector(
+          onTap: _permissionDenied ? null : _getDeviceLocation,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withOpacity(0.18),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2))
+              ],
+            ),
+            child: _locating
+                ? const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(AppColors.primary)))
+                : Icon(Icons.my_location_rounded,
+                    color: _permissionDenied
+                        ? const Color(0xFFCCCCCC)
+                        : AppColors.primary,
+                    size: 22),
+          ),
+        ),
+      ),
+
+      // Zoom buttons
+      Positioned(
+        bottom: 12,
+        right: 12,
+        child: Column(children: [
+          _zoomBtn(Icons.add_rounded,
+              () => _mapCtrl?.animateCamera(CameraUpdate.zoomIn())),
+          const SizedBox(height: 4),
+          _zoomBtn(Icons.remove_rounded,
+              () => _mapCtrl?.animateCamera(CameraUpdate.zoomOut())),
+        ]),
+      ),
+
+      // Geocoding spinner
+      if (_geocoding)
+        Positioned(
+          bottom: 12,
+          left: 12,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.65),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white)),
+              SizedBox(width: 8),
+              Text('Getting address…',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ),
+
+      // Tap-to-pin hint
+      if (_pinned == null && !_locating)
+        Center(
+            child: IgnorePointer(
+                child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.55),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.touch_app_rounded, color: Colors.white, size: 16),
+            SizedBox(width: 6),
+            Text('Tap map to pin location',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600)),
+          ]),
+        ))),
+    ]);
   }
 
   Widget _zoomBtn(IconData icon, VoidCallback onTap) => GestureDetector(
