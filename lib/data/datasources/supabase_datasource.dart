@@ -1,6 +1,7 @@
 // lib/data/datasources/supabase_datasource.dart
 
 import 'dart:typed_data';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/models.dart';
 import '../../core/constants/app_config.dart';
@@ -157,22 +158,30 @@ class SupabaseDataSource {
     String? address,
     String? notes,
   }) async {
-    final data = await _client
-        .from(AppConfig.bookingsTable)
-        .insert({
-          'customer_id': customerId,
-          'professional_id': professionalId,
-          'service_type': serviceType,
-          'description': description,
-          'price_estimate': priceEstimate,
-          'status': 'pending',
-          'scheduled_date': scheduledDate.toIso8601String(),
-          'address': address,
-          'notes': notes,
-        })
-        .select()
-        .single();
-    return BookingModel.fromJson(data);
+    final payload = {
+      'customer_id': customerId,
+      'professional_id': professionalId,
+      'service_type': serviceType,
+      'description': description,
+      'price_estimate': priceEstimate,
+      'status': 'pending',
+      'scheduled_date': scheduledDate.toIso8601String(),
+      'address': address,
+      'notes': notes,
+    };
+    try {
+      debugPrint('[Supabase] createBooking payload: $payload');
+      final data = await _client
+          .from(AppConfig.bookingsTable)
+          .insert(payload)
+          .select()
+          .single();
+      debugPrint('[Supabase] createBooking result: $data');
+      return BookingModel.fromJson(data);
+    } catch (e, st) {
+      debugPrint('[Supabase] createBooking error: $e\n$st');
+      rethrow;
+    }
   }
 
   Future<List<BookingModel>> getCustomerBookings(String customerId) async {

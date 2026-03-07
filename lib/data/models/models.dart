@@ -3,6 +3,7 @@
 // Each model holds its own fields and converts from/to JSON.
 
 import 'package:equatable/equatable.dart';
+import 'package:flutter/material.dart';
 import '../../domain/entities/entities.dart';
 
 // ─────────────────────────────────────────
@@ -40,6 +41,35 @@ class UserModel extends Equatable {
       phone: json['phone'] as String?,
       avatarUrl: json['avatar_url'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
+    );
+  }
+
+  /// Parse a possibly-partial user object (e.g. joined selects that only include
+  /// `name`/`phone`/`avatar_url`). Falls back to sensible defaults to avoid
+  /// casting errors when fields are missing.
+  factory UserModel.fromJsonSafe(Map<String, dynamic> json) {
+    final id = json['id']?.toString() ?? '';
+    final name = json['name']?.toString() ?? '';
+    final email = json['email']?.toString() ?? '';
+    final role = json['role']?.toString() ?? 'customer';
+    final phone = json['phone'] as String?;
+    final avatarUrl = json['avatar_url'] as String?;
+    DateTime createdAt;
+    try {
+      final ca = json['created_at']?.toString();
+      createdAt =
+          ca != null && ca.isNotEmpty ? DateTime.parse(ca) : DateTime.now();
+    } catch (_) {
+      createdAt = DateTime.now();
+    }
+    return UserModel(
+      id: id,
+      name: name,
+      email: email,
+      role: role,
+      phone: phone,
+      avatarUrl: avatarUrl,
+      createdAt: createdAt,
     );
   }
 
@@ -200,24 +230,61 @@ class BookingModel extends Equatable {
   });
 
   factory BookingModel.fromJson(Map<String, dynamic> json) {
-    final proJson = json['professionals'] as Map<String, dynamic>?;
-    final custJson = json['users'] as Map<String, dynamic>?;
-    return BookingModel(
-      id: json['id'] as String,
-      customerId: json['customer_id'] as String,
-      professionalId: json['professional_id'] as String,
-      serviceType: json['service_type'] as String,
-      description: json['description'] as String?,
-      priceEstimate: (json['price_estimate'] as num?)?.toDouble(),
-      status: _parseStatus(json['status'] as String? ?? 'pending'),
-      scheduledDate: DateTime.parse(json['scheduled_date'] as String),
-      address: json['address'] as String?,
-      notes: json['notes'] as String?,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      professional:
-          proJson != null ? ProfessionalModel.fromJson(proJson) : null,
-      customer: custJson != null ? UserModel.fromJson(custJson) : null,
-    );
+    try {
+      final proJson = json['professionals'] as Map<String, dynamic>?;
+      final custJson = json['users'] as Map<String, dynamic>?;
+
+      final id = json['id']?.toString() ?? '';
+      final customerId = json['customer_id']?.toString() ?? '';
+      final professionalId = json['professional_id']?.toString() ?? '';
+      final serviceType = json['service_type']?.toString() ?? '';
+      final description = json['description'] as String?;
+      final priceEstimate = (json['price_estimate'] as num?)?.toDouble();
+      final status = _parseStatus(json['status']?.toString() ?? 'pending');
+
+      DateTime scheduledDate;
+      try {
+        final sd = json['scheduled_date']?.toString();
+        scheduledDate =
+            sd != null && sd.isNotEmpty ? DateTime.parse(sd) : DateTime.now();
+      } catch (_) {
+        scheduledDate = DateTime.now();
+      }
+
+      final address = json['address'] as String?;
+      final notes = json['notes'] as String?;
+
+      DateTime createdAt;
+      try {
+        final ca = json['created_at']?.toString();
+        createdAt =
+            ca != null && ca.isNotEmpty ? DateTime.parse(ca) : DateTime.now();
+      } catch (_) {
+        createdAt = DateTime.now();
+      }
+
+      return BookingModel(
+        id: id,
+        customerId: customerId,
+        professionalId: professionalId,
+        serviceType: serviceType,
+        description: description,
+        priceEstimate: priceEstimate,
+        status: status,
+        scheduledDate: scheduledDate,
+        address: address,
+        notes: notes,
+        createdAt: createdAt,
+        professional:
+            proJson != null ? ProfessionalModel.fromJson(proJson) : null,
+        customer: custJson != null ? UserModel.fromJsonSafe(custJson) : null,
+      );
+    } catch (e, st) {
+      debugPrint('[BookingModel.fromJson] error parsing json: $e');
+      debugPrint('payload: $json');
+      debugPrint(st.toString());
+      rethrow;
+    }
   }
 
   static BookingStatus _parseStatus(String s) {
