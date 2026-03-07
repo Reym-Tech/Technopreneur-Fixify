@@ -425,18 +425,18 @@ class ProfessionalProfileScreen extends StatelessWidget {
           label: 'Change Password',
           onTap: onChangePassword,
         ),
-        _divider(),
-        _actionRow(
-          icon: Icons.list_alt_rounded,
-          label: 'Services Offered',
-          onTap: onServicesOffered,
-        ),
-        _divider(),
-        _actionRow(
-          icon: Icons.account_balance_wallet_outlined,
-          label: 'Payout Settings',
-          onTap: onPayoutSettings,
-        ),
+        // _divider(),
+        // _actionRow(
+        //   icon: Icons.list_alt_rounded,
+        //   label: 'Services Offered',
+        //   onTap: onServicesOffered,
+        // ),
+        // _divider(),
+        // _actionRow(
+        //   icon: Icons.account_balance_wallet_outlined,
+        //   label: 'Payout Settings',
+        //   onTap: onPayoutSettings,
+        // ),
         _divider(),
         _actionRow(
           icon: Icons.shield_outlined,

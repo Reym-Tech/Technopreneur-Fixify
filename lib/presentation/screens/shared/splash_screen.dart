@@ -148,10 +148,24 @@ class _SplashScreenState extends State<SplashScreen>
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.construction_rounded,
-                      color: Colors.white,
-                      size: 52,
+                    child: ClipRRect(
+                      // <-- ADD THIS
+                      borderRadius: BorderRadius.circular(
+                          28), // Match container border radius
+                      child: Image.asset(
+                        'assets/images/logo.jpg', // <-- PATH TO YOUR IMAGE
+                        width: 100,
+                        height: 100,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          // Fallback icon if image fails to load
+                          return const Icon(
+                            Icons.construction_rounded,
+                            color: Colors.white,
+                            size: 52,
+                          );
+                        },
+                      ),
                     ),
                   ).animate().fadeIn(delay: 200.ms, duration: 600.ms).scale(
                       begin: const Offset(0.6, 0.6),
@@ -164,7 +178,7 @@ class _SplashScreenState extends State<SplashScreen>
 
                   // App name
                   Text(
-                    'Fixify',
+                    'AYO',
                     style: const TextStyle(
                       fontSize: 48,
                       fontWeight: FontWeight.w800,
@@ -183,7 +197,7 @@ class _SplashScreenState extends State<SplashScreen>
 
                   // Tagline
                   Text(
-                    'Trusted Home Repairs, On Demand',
+                    'Appliance and Homecare Online',
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w400,
@@ -199,12 +213,16 @@ class _SplashScreenState extends State<SplashScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _buildServiceIcon(Icons.water_drop_rounded, 'Plumbing'),
+                      _buildServiceIcon('assets/images/plumber.png', 'Plumbing',
+                          iconSize: 70, containerSize: 100),
                       const SizedBox(width: 20),
                       _buildServiceIcon(
-                          Icons.electrical_services_rounded, 'Electric'),
+                          'assets/images/electrician.png', 'Electric',
+                          iconSize: 70, containerSize: 100),
                       const SizedBox(width: 20),
-                      _buildServiceIcon(Icons.kitchen_rounded, 'Appliances'),
+                      _buildServiceIcon(
+                          'assets/images/appliances.png', 'Appliances',
+                          iconSize: 70, containerSize: 100),
                     ],
                   ).animate().fadeIn(delay: 1200.ms, duration: 600.ms),
                 ],
@@ -244,14 +262,15 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  Widget _buildServiceIcon(IconData icon, String label) {
+  Widget _buildServiceIcon(String imagePath, String label,
+      {double iconSize = 26, double containerSize = 72}) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
-          width: 72,
-          height: 72,
+          width: containerSize,
+          height: containerSize,
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.1),
             borderRadius: BorderRadius.circular(16),
@@ -262,14 +281,43 @@ class _SplashScreenState extends State<SplashScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: Colors.white.withOpacity(0.9), size: 26),
-              const SizedBox(height: 4),
+              // Container for the image with corner radius
+              ClipRRect(
+                borderRadius:
+                    BorderRadius.circular(12), // Corner radius for image
+                child: Image.asset(
+                  imagePath,
+                  width: iconSize,
+                  height: iconSize,
+                  fit: BoxFit.cover,
+                  // Remove the color tint to see original image colors
+                  // color: Colors.white.withOpacity(0.9), // <-- REMOVE THIS LINE
+                  errorBuilder: (context, error, stackTrace) {
+                    print(
+                        'Error loading image: $imagePath - $error'); // Debug print
+                    return Container(
+                      width: iconSize,
+                      height: iconSize,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.broken_image_rounded,
+                        color: Colors.white.withOpacity(0.9),
+                        size: iconSize * 0.6,
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8), // Increased spacing
               Text(
                 label,
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
-                  fontSize: 9,
-                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withOpacity(0.9), // Brighter text
+                  fontSize: 11, // Slightly larger font
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],

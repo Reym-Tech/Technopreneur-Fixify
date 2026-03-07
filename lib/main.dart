@@ -1,5 +1,7 @@
 // lib/main.dart
 
+import 'package:fixify/presentation/screens/admin/superadmin_analytics.dart';
+import 'package:fixify/presentation/screens/professional/earnings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -482,6 +484,16 @@ class _MainAppState extends State<MainApp> {
               _notify('Error: $e');
             }
           },
+          onNavTap: (i) => setState(() => _navIndex = i),
+          currentNavIndex: _navIndex,
+        );
+      }
+
+      if (_navIndex == 2) {
+        return SuperAdminAnalytics(
+          onBack: () => setState(() => _navIndex = 0),
+          onNavTap: (i) => setState(() => _navIndex = i),
+          currentNavIndex: _navIndex,
         );
       }
 
@@ -540,7 +552,6 @@ class _MainAppState extends State<MainApp> {
               _navIndex = i;
               _screen = 'home';
             });
-            // Always refresh when leaving/entering Requests tab
             if (i == 1) await _refreshBookings();
           },
           onRefresh: _refreshBookings,
@@ -562,6 +573,34 @@ class _MainAppState extends State<MainApp> {
             } catch (e) {
               _notify('Error: $e');
             }
+          },
+        );
+      }
+
+      // ── Earnings tab (navIndex 2)  <-- ADD THIS SECTION
+      // ── Earnings tab (navIndex 2)
+      if (_navIndex == 2) {
+        return EarningsHandymanScreen(
+          professionalId: _pro?.id,
+          currentNavIndex: _navIndex, // <-- ADD THIS
+          onNavTap: (i) {
+            // <-- ADD THIS
+            setState(() {
+              _navIndex = i;
+              _screen = 'home';
+            });
+          },
+          onBack: () => setState(() {
+            _navIndex = 0;
+            _screen = 'home';
+          }),
+          onWithdraw: (amount, method) async {
+            _notify('Withdrawal of ₱$amount requested via $method');
+            return Future.value();
+          },
+          onAddPaymentMethod: (method) async {
+            _notify('Payment method added: ${method['method']}');
+            return Future.value();
           },
         );
       }
@@ -861,7 +900,7 @@ class _MainAppState extends State<MainApp> {
         currentNavIndex: _navIndex,
         onNavTap: (i) => setState(() {
           _navIndex = i;
-          _screen = i == 3 ? 'profile' : 'home';
+          _screen = i == 2 ? 'profile' : 'home'; // Profile is now index 2
         }),
         onRequestService: () => setState(() {
           _preselectedServiceType = null;
@@ -871,12 +910,10 @@ class _MainAppState extends State<MainApp> {
           _preselectedServiceType = serviceType;
           _screen = 'request_service';
         }),
-        // "See All" in Recent Bookings header → Bookings tab
         onViewBookings: () => setState(() {
           _navIndex = 1;
           _screen = 'home';
         }),
-        // Tap a mini booking card → open its detail
         onBookingTap: (booking) {
           final model = _bookings.firstWhere((b) => b.id == booking.id,
               orElse: () => _bookings.first);
@@ -900,6 +937,13 @@ class _MainAppState extends State<MainApp> {
           setState(() {
             _selectedPro = model;
             _screen = 'professional_profile';
+          });
+        },
+        // ADD THIS FOR PROFILE ICON TAP:
+        onProfileTap: () {
+          setState(() {
+            _navIndex = 3; // Set to profile tab index
+            _screen = 'profile';
           });
         },
       );

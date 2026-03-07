@@ -21,6 +21,7 @@
 //   currentNavIndex   → int                                  — active nav tab, default 0
 
 import 'dart:ui';
+import 'package:fixify/presentation/screens/professional/notificationhandyman.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
@@ -202,16 +203,30 @@ class _ProfessionalDashboardScreenState
                     children: [
                       Row(children: [
                         Container(
-                          padding: const EdgeInsets.all(8),
+                          width: 60,
+                          height: 60,
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(12),
+                            color: Colors.white.withOpacity(0.15),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: Colors.white.withOpacity(0.3), width: 3),
                           ),
-                          child: const Icon(Icons.construction_rounded,
-                              color: Colors.white, size: 20),
+                          child: ClipOval(
+                            child: Image.asset(
+                              'assets/images/logo.jpg',
+                              width: 30,
+                              height: 30,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.handyman_rounded,
+                                color: Colors.white,
+                                size: 28,
+                              ),
+                            ),
+                          ),
                         ),
                         const SizedBox(width: 10),
-                        const Text('Fixify',
+                        const Text('AYO',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 22,
@@ -219,15 +234,52 @@ class _ProfessionalDashboardScreenState
                               letterSpacing: -0.3,
                             )),
                       ]),
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.notifications_outlined,
-                            color: Colors.white, size: 20),
+                      Row(
+                        children: [
+                          // Notification Icon Button
+                          IconButton(
+                            onPressed: () {
+                              // Direct navigation without callback
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      HandymanNotificationsScreen(),
+                                ),
+                              );
+                            },
+                            icon: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.notifications_outlined,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                // Red dot for notifications
+                                const Positioned(
+                                  top: 7,
+                                  right: 7,
+                                  child: CircleAvatar(
+                                    radius: 3.5,
+                                    backgroundColor: Color(0xFFFF3B30),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                       ),
                     ],
                   ),

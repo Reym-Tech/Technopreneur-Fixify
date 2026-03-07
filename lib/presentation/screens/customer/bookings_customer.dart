@@ -244,7 +244,6 @@ class _CustomerBookingsScreenState extends State<CustomerBookingsScreen>
     const items = [
       {'icon': Icons.home_rounded, 'label': 'Home'},
       {'icon': Icons.calendar_today_rounded, 'label': 'Bookings'},
-      {'icon': Icons.headset_mic_rounded, 'label': 'Support'},
       {'icon': Icons.person_rounded, 'label': 'Profile'},
     ];
     return Container(

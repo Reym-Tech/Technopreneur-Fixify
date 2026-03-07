@@ -20,6 +20,8 @@
 //   onRequestServiceWithType  → Function(String type)?  (from service card)
 
 import 'dart:ui';
+import 'package:fixify/presentation/screens/customer/notifications.dart';
+import 'package:fixify/presentation/screens/customer/profile_customer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
@@ -38,6 +40,8 @@ class CustomerDashboardScreen extends StatefulWidget {
   final Function(ProfessionalEntity)? onProfessionalTap;
   final Function(int)? onNavTap;
   final Function(BookingEntity)? onBookingTap;
+  final VoidCallback? onNotificationTap; // <-- NEW
+  final VoidCallback? onProfileTap;
   final int currentNavIndex;
 
   const CustomerDashboardScreen({
@@ -53,6 +57,8 @@ class CustomerDashboardScreen extends StatefulWidget {
     this.onNavTap,
     this.currentNavIndex = 0,
     this.onBookingTap,
+    this.onNotificationTap, // <-- NEW
+    this.onProfileTap,
   });
 
   @override
@@ -491,107 +497,221 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ),
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
       ),
-      child: Stack(children: [
-        Positioned(top: -30, right: -20, child: _circle(180, 0.04)),
-        Positioned(top: 70, right: 40, child: _circle(90, 0.06)),
-        SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-            child: Column(children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Row(children: [
-                  Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: Colors.white.withOpacity(0.3), width: 3),
-                    ),
-                    child: ClipOval(
-                      child: Image.asset('assets/images/logo.jpg',
-                          width: 30,
-                          height: 30,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                              Icons.handyman_rounded,
-                              color: Colors.white,
-                              size: 28)),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  const Text('AYO',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.3)),
-                ]),
-                Row(children: [
-                  _headerIconBtn(Icons.notifications_outlined),
-                  const SizedBox(width: 8),
-                  _avatarChip(name),
-                ]),
-              ]),
-              const SizedBox(height: 17),
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
+        children: [
+          Positioned(top: -30, right: -20, child: _circle(180, 0.04)),
+          Positioned(top: 70, right: 40, child: _circle(90, 0.06)),
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
                         children: [
-                      Text('$greeting 👋',
-                          style: TextStyle(
-                              color: Colors.white.withOpacity(0.65),
-                              fontSize: 13)),
-                      const SizedBox(height: 4),
-                      Text(name,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 26,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.4)),
-                      const SizedBox(height: 6),
-                      Text('What repair do you need today?',
-                          style: TextStyle(
-                              color: Colors.white.withOpacity(0.55),
-                              fontSize: 13)),
-                    ])),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(16),
-                        border:
-                            Border.all(color: Colors.white.withOpacity(0.18)),
-                      ),
-                      child: Column(children: [
-                        Text('$proCount+',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 20,
-                                fontWeight: FontWeight.w800)),
-                        Text('Experts',
+                          Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.15),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 3),
+                            ),
+                            child: ClipOval(
+                              child: Image.asset(
+                                'assets/images/logo.jpg',
+                                width: 30,
+                                height: 30,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.handyman_rounded,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          const Text(
+                            'AYO',
                             style: TextStyle(
-                                color: Colors.white.withOpacity(0.6),
-                                fontSize: 11)),
-                      ]),
-                    ),
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          // Notification Icon Button
+                          IconButton(
+                            onPressed: () {
+                              // Direct navigation without callback
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => NotificationsScreen(),
+                                ),
+                              );
+                            },
+                            icon: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.notifications_outlined,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                // Red dot for notifications
+                                const Positioned(
+                                  top: 7,
+                                  right: 7,
+                                  child: CircleAvatar(
+                                    radius: 3.5,
+                                    backgroundColor: Color(0xFFFF3B30),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                          const SizedBox(width: 8),
+
+                          // Profile Icon Button
+                          IconButton(
+                            onPressed: widget
+                                .onProfileTap, // <-- Use the callback instead of direct navigation
+                            icon: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [
+                                    Color(0xFF34C759),
+                                    Color(0xFF2E7D5E)
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  name.isNotEmpty ? name[0].toUpperCase() : 'C',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ),
-              ]),
-            ]),
+                  const SizedBox(height: 17),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '$greeting 👋',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.65),
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              name,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 26,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.4,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'What repair do you need today?',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.55),
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                  color: Colors.white.withOpacity(0.18)),
+                            ),
+                            child: Column(
+                              children: [
+                                Text(
+                                  '$proCount+',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                Text(
+                                  'Experts',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.6),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-      ]),
+        ],
+      ),
     ).animate().fadeIn().slideY(begin: -0.05, end: 0);
-  }
+  } // <-- Th
 
   Widget _circle(double size, double opacity) => Container(
         width: size,
@@ -925,7 +1045,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     const items = [
       {'icon': Icons.home_rounded, 'label': 'Home'},
       {'icon': Icons.calendar_today_rounded, 'label': 'Bookings'},
-      {'icon': Icons.headset_mic_rounded, 'label': 'Support'},
       {'icon': Icons.person_rounded, 'label': 'Profile'},
     ];
     return Container(
