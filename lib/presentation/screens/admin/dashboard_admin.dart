@@ -1,31 +1,6 @@
 // lib/presentation/screens/admin/dashboard_admin.dart
-//
-// AdminDashboardScreen — MVP dashboard for the Admin role.
-//
-// Shows:
-//   • Header — gradient, admin name, "Admin" badge, notifications
-//   • Platform stats grid — Pending Approvals, Total Users, Total Earnings, Completed Bookings
-//   • Management quick-action cards:
-//       – Handyman Approvals (with pending badge)
-//       – Analytics
-//       – User Management
-//       – Booking Overview
-//
-// Key props:
-//   adminName          → String                  — admin display name, default 'Admin'
-//   pendingApprovals   → int                     — professionals awaiting verification
-//   totalUsers         → int                     — total registered users (customers + pros)
-//   totalEarnings      → double                  — sum of all completed booking earnings
-//   completedBookings  → int                     — total completed bookings platform-wide
-//   onHandymanApprovals → VoidCallback?          — "Handyman Approvals" card tap
-//   onAnalytics         → VoidCallback?          — "Analytics" card tap
-//   onUserManagement    → VoidCallback?          — "User Management" card tap
-//   onBookingOverview   → VoidCallback?          — "Booking Overview" card tap
-//   onNavTap            → Function(int)?         — bottom nav (0=Dashboard,1=Approvals,2=Analytics,3=Settings)
-//   currentNavIndex     → int                    — active nav tab, default 0
 
 import 'dart:ui';
-import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
@@ -138,13 +113,6 @@ class AdminDashboardScreen extends StatelessWidget {
   // ── HEADER ────────────────────────────────────────────────
 
   Widget _buildHeader(BuildContext context) {
-    final initials = adminName
-        .trim()
-        .split(' ')
-        .take(2)
-        .map((w) => w.isNotEmpty ? w[0].toUpperCase() : '')
-        .join();
-
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -230,17 +198,11 @@ class AdminDashboardScreen extends StatelessWidget {
                       ),
                       Row(
                         children: [
-                          // Notification Icon Button
+                          // FIX: Use onNavTap(4) instead of Navigator.push
+                          // with a hardcoded empty userId. This routes through
+                          // main.dart which has the real _user!.id available.
                           IconButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      const AdminNotificationsScreen(userId: ''),
-                                ),
-                              );
-                            },
+                            onPressed: () => onNavTap?.call(4),
                             icon: Stack(
                               clipBehavior: Clip.none,
                               children: [
@@ -257,15 +219,15 @@ class AdminDashboardScreen extends StatelessWidget {
                                     size: 20,
                                   ),
                                 ),
-                                // Red dot for notifications
-                                const Positioned(
-                                  top: 7,
-                                  right: 7,
-                                  child: CircleAvatar(
-                                    radius: 3.5,
-                                    backgroundColor: Color(0xFFFF3B30),
+                                if (pendingApprovals > 0)
+                                  const Positioned(
+                                    top: 7,
+                                    right: 7,
+                                    child: CircleAvatar(
+                                      radius: 3.5,
+                                      backgroundColor: Color(0xFFFF3B30),
+                                    ),
                                   ),
-                                ),
                               ],
                             ),
                             padding: EdgeInsets.zero,

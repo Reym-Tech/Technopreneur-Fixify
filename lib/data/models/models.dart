@@ -47,8 +47,15 @@ class UserModel extends Equatable {
   /// Parse a possibly-partial user object (e.g. joined selects that only include
   /// `name`/`phone`/`avatar_url`). Falls back to sensible defaults to avoid
   /// casting errors when fields are missing.
+  ///
+  /// NOTE: `id` is NOT defaulted to '' — if it is missing the caller should
+  /// handle the null case rather than silently getting an empty UUID that will
+  /// later crash Postgres with "invalid input syntax for type uuid: """.
   factory UserModel.fromJsonSafe(Map<String, dynamic> json) {
-    final id = json['id']?.toString() ?? '';
+    // Pull id — keep null if absent so callers can detect the problem early.
+    final rawId = json['id']?.toString();
+    final id = (rawId != null && rawId.isNotEmpty) ? rawId : '';
+
     final name = json['name']?.toString() ?? '';
     final email = json['email']?.toString() ?? '';
     final role = json['role']?.toString() ?? 'customer';

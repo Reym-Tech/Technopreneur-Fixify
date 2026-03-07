@@ -38,6 +38,8 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   final VoidCallback? onViewEarnings;
   final VoidCallback? onApplyCredentials;
   final VoidCallback? onViewVerification;
+  final VoidCallback? onViewReviews; // ← ADD
+  final List<ReviewEntity> reviews; // ← ADD
   final Function(bool)? onToggleAvailability;
   final Function(int)? onNavTap;
   final int currentNavIndex;
@@ -54,6 +56,8 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.onViewEarnings,
     this.onApplyCredentials,
     this.onViewVerification,
+    this.onViewReviews,
+    this.reviews = const [], // ← ADD
     this.onToggleAvailability,
     this.onNavTap,
     this.currentNavIndex = 0,
@@ -95,8 +99,20 @@ class _ProfessionalDashboardScreenState
     return (_completedCount / total) * 100;
   }
 
-  double get _avgRating => widget.professional?.rating ?? 0.0;
-  int get _totalJobs => widget.professional?.reviewCount ?? _completedCount;
+  double get _avgRating {
+    if (widget.reviews.isNotEmpty) {
+      // Compute live from the actual review entities passed in
+      final total = widget.reviews.fold<int>(0, (sum, r) => sum + r.rating);
+      return total / widget.reviews.length;
+    }
+    // Fallback to the cached value on the professional record
+    return widget.professional?.rating ?? 0.0;
+  }
+
+  int get _totalJobs {
+    if (widget.reviews.isNotEmpty) return widget.reviews.length;
+    return widget.professional?.reviewCount ?? _completedCount;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -244,7 +260,8 @@ class _ProfessionalDashboardScreenState
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) =>
-                                      HandymanNotificationsScreen(userId: widget.user?.id ?? ''),
+                                      HandymanNotificationsScreen(
+                                          userId: widget.user?.id ?? ''),
                                 ),
                               );
                             },
@@ -775,11 +792,22 @@ class _ProfessionalDashboardScreenState
   }
 
   // ── RATINGS CARD ──────────────────────────────────────────
-
   Widget _buildRatingsCard() {
-    // Mock distribution based on avg (real app would use actual review data)
     final avg = _avgRating.clamp(0.0, 5.0);
-    final bars = _mockStarDistribution(avg, _totalJobs);
+    final total = widget.reviews.length;
+
+    // ── Real star distribution from actual review entities ──────────────────
+    Map<int, double> realDistribution() {
+      if (total == 0) return {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
+      final counts = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
+      for (final r in widget.reviews) {
+        final star = r.rating.clamp(1, 5);
+        counts[star] = (counts[star] ?? 0) + 1;
+      }
+      return counts.map((star, count) => MapEntry(star, count / total));
+    }
+
+    final bars = realDistribution();
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -797,89 +825,229 @@ class _ProfessionalDashboardScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Ratings Overview',
-              style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark)),
-          const SizedBox(height: 20),
+          // Title row + "See All" button
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Big score
-              Column(
-                children: [
-                  Container(
-                    width: 80,
-                    height: 80,
+              const Text(
+                'Ratings Overview',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark),
+              ),
+              if (widget.onViewReviews != null)
+                GestureDetector(
+                  onTap: widget.onViewReviews,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFF9500).withOpacity(0.1),
-                      shape: BoxShape.circle,
+                      color: AppColors.primary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Center(
-                      child: Text(
-                        avg.toStringAsFixed(1),
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFFFF9500),
-                        ),
+                    child: const Text(
+                      'See All',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  const Text('out of 5',
-                      style:
-                          TextStyle(fontSize: 11, color: AppColors.textLight)),
-                ],
-              ),
-              const SizedBox(width: 20),
-              // Star bars
-              Expanded(
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // No reviews yet state
+          if (total == 0)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
                 child: Column(
-                  children: List.generate(5, (i) {
-                    final star = 5 - i;
-                    final pct = bars[star] ?? 0.0;
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        children: [
-                          Text('$star ★',
-                              style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.textLight,
-                                  fontWeight: FontWeight.w500)),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: LinearProgressIndicator(
-                                value: pct,
-                                minHeight: 8,
-                                backgroundColor: const Color(0xFFEEEEEE),
-                                valueColor: const AlwaysStoppedAnimation<Color>(
-                                    Color(0xFFFF9500)),
+                  children: [
+                    Icon(Icons.star_outline_rounded,
+                        size: 40, color: AppColors.textLight.withOpacity(0.4)),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'No reviews yet',
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textLight),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Reviews from completed bookings\nwill appear here.',
+                      textAlign: TextAlign.center,
+                      style:
+                          TextStyle(fontSize: 12, color: AppColors.textLight),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else ...[
+            Row(
+              children: [
+                // Big score
+                Column(
+                  children: [
+                    Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF9500).withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          avg.toStringAsFixed(1),
+                          style: const TextStyle(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFFFF9500),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text('out of 5',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textLight)),
+                  ],
+                ),
+                const SizedBox(width: 20),
+                // Real star bars
+                Expanded(
+                  child: Column(
+                    children: List.generate(5, (i) {
+                      final star = 5 - i;
+                      final pct = bars[star] ?? 0.0;
+                      final count =
+                          widget.reviews.where((r) => r.rating == star).length;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Text('$star ★',
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.textLight,
+                                    fontWeight: FontWeight.w500)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: pct,
+                                  minHeight: 8,
+                                  backgroundColor: const Color(0xFFEEEEEE),
+                                  valueColor:
+                                      const AlwaysStoppedAnimation<Color>(
+                                          Color(0xFFFF9500)),
+                                ),
                               ),
                             ),
+                            const SizedBox(width: 6),
+                            // Show actual count per star
+                            SizedBox(
+                              width: 18,
+                              child: Text(
+                                '$count',
+                                style: const TextStyle(
+                                    fontSize: 10, color: AppColors.textLight),
+                                textAlign: TextAlign.right,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 32, color: Color(0xFFEEEEEE)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _ratingStatItem(avg.toStringAsFixed(1), 'Avg Rating',
+                    const Color(0xFFFF9500)),
+                _ratingStatItem('$total', 'Reviews', AppColors.primary),
+                _ratingStatItem('${_completionRate.toStringAsFixed(0)}%',
+                    'Completion', const Color(0xFF34C759)),
+              ],
+            ),
+
+            // Latest review preview (most recent one)
+            if (widget.reviews.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Divider(height: 1, color: Color(0xFFEEEEEE)),
+              const SizedBox(height: 14),
+              Row(children: [
+                const Icon(Icons.format_quote_rounded,
+                    color: AppColors.textLight, size: 16),
+                const SizedBox(width: 6),
+                const Text('Latest review',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textLight)),
+              ]),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.backgroundLight,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Row(
+                        children: List.generate(
+                          5,
+                          (i) => Icon(
+                            i < widget.reviews.first.rating
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            color: const Color(0xFFFF9500),
+                            size: 13,
                           ),
-                        ],
+                        ),
                       ),
-                    );
-                  }),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.reviews.first.customerName ?? 'Customer',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textDark),
+                      ),
+                    ]),
+                    if (widget.reviews.first.comment?.isNotEmpty == true) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        '"${widget.reviews.first.comment}"',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMedium,
+                          fontStyle: FontStyle.italic,
+                          height: 1.4,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
-          ),
-          const Divider(height: 32, color: Color(0xFFEEEEEE)),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _ratingStatItem(avg.toStringAsFixed(1), 'Average Rating',
-                  const Color(0xFFFF9500)),
-              _ratingStatItem('$_totalJobs', 'Total Jobs', AppColors.primary),
-              _ratingStatItem('${_completionRate.toStringAsFixed(0)}%',
-                  'Completion', const Color(0xFF34C759)),
-            ],
-          ),
+          ],
         ],
       ),
     );

@@ -43,6 +43,19 @@ abstract class NotificationTypeStrings {
   static const systemAdmin = 'system_admin';
 }
 
+// ── UUID helper ───────────────────────────────────────────────
+// Validates that a string looks like a proper UUID before sending
+// it to Postgres — prevents the "invalid input syntax for type uuid: """
+// error when the user id is empty or malformed.
+bool _isValidUuid(String value) {
+  if (value.isEmpty) return false;
+  final uuidRegex = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}'
+    r'-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+  return uuidRegex.hasMatch(value);
+}
+
 // ── Model ─────────────────────────────────────────────────────
 
 class AppNotification {
@@ -123,9 +136,15 @@ class NotificationDataSource {
     int limit = 50,
     bool onlyUnread = false,
   }) async {
-    // All .eq() filters must be applied BEFORE .order() and .limit()
-    // because .limit() returns a PostgrestTransformBuilder which does
-    // not support filter methods like .eq().
+    // Guard: never send an empty/invalid UUID to Postgres.
+    if (!_isValidUuid(userId)) {
+      throw Exception(
+        'NotificationDataSource.getNotifications: '
+        'userId "$userId" is not a valid UUID. '
+        'Make sure the user is fully loaded before opening the notifications screen.',
+      );
+    }
+
     var query = _client.from(_table).select().eq('user_id', userId);
 
     if (onlyUnread) {
@@ -141,6 +160,7 @@ class NotificationDataSource {
 
   // ── Mark a single notification as read ───────────────────
   Future<void> markAsRead(String notificationId) async {
+    if (!_isValidUuid(notificationId)) return;
     await _client
         .from(_table)
         .update({'is_read': true}).eq('id', notificationId);
@@ -148,6 +168,7 @@ class NotificationDataSource {
 
   // ── Mark all notifications as read for a user ────────────
   Future<void> markAllAsRead(String userId) async {
+    if (!_isValidUuid(userId)) return;
     await _client
         .from(_table)
         .update({'is_read': true})
@@ -157,6 +178,7 @@ class NotificationDataSource {
 
   // ── Get unread count only (lightweight) ──────────────────
   Future<int> getUnreadCount(String userId) async {
+    if (!_isValidUuid(userId)) return 0;
     final data = await _client
         .from(_table)
         .select('id')
@@ -177,6 +199,12 @@ class NotificationDataSource {
     String? referenceType,
     Map<String, dynamic>? data,
   }) async {
+    if (!_isValidUuid(targetUserId)) {
+      throw Exception(
+        'NotificationDataSource.pushToUser: '
+        'targetUserId "$targetUserId" is not a valid UUID.',
+      );
+    }
     await _client.from(_table).insert({
       'user_id': targetUserId,
       'role': role,
@@ -197,6 +225,12 @@ class NotificationDataSource {
     required String userId,
     required void Function(AppNotification) onNew,
   }) {
+    // If userId is invalid we still return a channel object to avoid null
+    // issues in the caller — but we don't subscribe to anything meaningful.
+    if (!_isValidUuid(userId)) {
+      return _client.channel('notifications_invalid');
+    }
+
     return _client
         .channel('notifications_$userId')
         .onPostgresChanges(

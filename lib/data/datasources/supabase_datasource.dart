@@ -60,12 +60,14 @@ class SupabaseDataSource {
 
   Future<UserModel?> getCurrentUser() async {
     final user = _client.auth.currentUser;
+    debugPrint('🔑 Auth UID: ${user?.id}');
     if (user == null) return null;
     final data = await _client
         .from(AppConfig.usersTable)
         .select()
         .eq('id', user.id)
         .single();
+    debugPrint('👤 User row: $data');
     return UserModel.fromJson(data);
   }
 
@@ -214,7 +216,6 @@ class SupabaseDataSource {
   }
 
   // ── REALTIME ──────────────────────────────────────────────
-
   RealtimeChannel subscribeToBookingUpdates({
     required String bookingId,
     required Function(BookingModel) onUpdate,
@@ -230,9 +231,22 @@ class SupabaseDataSource {
             column: 'id',
             value: bookingId,
           ),
-          callback: (payload) => onUpdate(
-            BookingModel.fromJson(payload.newRecord),
-          ),
+          callback: (payload) async {
+            // Bug 5 fix: re-fetch with joins instead of using bare payload.newRecord
+            try {
+              final data = await _client
+                  .from(AppConfig.bookingsTable)
+                  .select('*, professionals(*, users(name, avatar_url))')
+                  .eq('id', bookingId)
+                  .single();
+              onUpdate(BookingModel.fromJson(data));
+            } catch (e) {
+              debugPrint(
+                  '[Realtime] Could not re-fetch booking $bookingId: $e');
+              // Fallback to bare record so the status at least updates
+              onUpdate(BookingModel.fromJson(payload.newRecord));
+            }
+          },
         )
         .subscribe();
   }
@@ -264,6 +278,22 @@ class SupabaseDataSource {
 
   // ── REVIEWS ───────────────────────────────────────────────
 
+  /// Returns true if the customer has already reviewed this booking.
+  Future<bool> hasReviewedBooking({
+    required String bookingId,
+    required String customerId,
+  }) async {
+    final response = await _client
+        .from(AppConfig.reviewsTable)
+        .select('id')
+        .eq('booking_id', bookingId)
+        .eq('customer_id', customerId)
+        .maybeSingle();
+    return response != null;
+  }
+
+  /// Inserts a review then recalculates the professional's avg rating and
+  /// review_count so the dashboard always shows accurate numbers.
   Future<ReviewModel> createReview({
     required String bookingId,
     required String customerId,
@@ -271,6 +301,16 @@ class SupabaseDataSource {
     required int rating,
     String? comment,
   }) async {
+    // ── Bug 3 fix: guard against duplicate reviews ──────────────────────────
+    final alreadyReviewed = await hasReviewedBooking(
+      bookingId: bookingId,
+      customerId: customerId,
+    );
+    if (alreadyReviewed) {
+      throw Exception('You have already submitted a review for this booking.');
+    }
+
+    // ── Insert the review ───────────────────────────────────────────────────
     final data = await _client
         .from(AppConfig.reviewsTable)
         .insert({
@@ -282,6 +322,35 @@ class SupabaseDataSource {
         })
         .select('*, users!customer_id(name, avatar_url)')
         .single();
+
+    // ── Bug 1 fix: recalculate avg rating + review_count ────────────────────
+    // Fetch all reviews for this professional to compute a fresh average.
+    try {
+      final allReviews = await _client
+          .from(AppConfig.reviewsTable)
+          .select('rating')
+          .eq('professional_id', professionalId);
+
+      final reviewList = allReviews as List;
+      final count = reviewList.length;
+      final avgRating = count > 0
+          ? reviewList.fold<double>(
+                  0.0, (sum, r) => sum + ((r['rating'] as num).toDouble())) /
+              count
+          : 0.0;
+
+      await _client.from(AppConfig.professionalsTable).update({
+        'rating': double.parse(avgRating.toStringAsFixed(2)),
+        'review_count': count,
+      }).eq('id', professionalId);
+
+      debugPrint(
+          '[Review] Updated professional $professionalId → avg: $avgRating, count: $count');
+    } catch (e) {
+      // Non-fatal: the review is saved; only the cached avg failed to update.
+      debugPrint('[Review] Warning — could not update professional stats: $e');
+    }
+
     return ReviewModel.fromJson(data);
   }
 

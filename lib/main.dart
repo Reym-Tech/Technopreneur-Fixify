@@ -11,6 +11,7 @@ import 'package:fixify/core/constants/app_config.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/data/datasources/supabase_datasource.dart';
 import 'package:fixify/data/datasources/application_datasource.dart';
+import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:fixify/data/models/models.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/screens/shared/splash_screen.dart';
@@ -23,20 +24,18 @@ import 'package:fixify/presentation/screens/customer/professional_profile_screen
     as customer;
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
 import 'package:fixify/presentation/screens/customer/review_screen.dart';
+import 'package:fixify/presentation/screens/customer/notifications.dart';
 import 'package:fixify/presentation/screens/professional/dashboard_professional.dart';
 import 'package:fixify/presentation/screens/professional/profile_professional.dart';
 import 'package:fixify/presentation/screens/professional/apply_professional.dart';
 import 'package:fixify/presentation/screens/professional/verificationstatus_professional.dart';
 import 'package:fixify/presentation/screens/professional/booking_requests_professional.dart';
 import 'package:fixify/presentation/screens/professional/booking_history_professional.dart';
+import 'package:fixify/presentation/screens/professional/reviews_professional.dart';
+import 'package:fixify/presentation/screens/professional/notificationhandyman.dart';
 import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
 import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
-
-// ── STEP 1: Add import at the top of main.dart ─────────────────
-import 'package:fixify/data/datasources/notification_datasource.dart';
-import 'package:fixify/presentation/screens/customer/notifications.dart';
-import 'package:fixify/presentation/screens/professional/notificationhandyman.dart';
 import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
 
 Future<void> main() async {
@@ -298,9 +297,13 @@ class _MainAppState extends State<MainApp> {
   List<ProfessionalModel> _professionals = [];
   List<BookingModel> _bookings = [];
   List<ApplicationModel> _applications = [];
+  List<ReviewModel> _reviews = [];
   int _navIndex = 0;
   String _screen = 'home';
   ProfessionalModel? _selectedPro;
+
+  /// Tracks which booking IDs the customer has already reviewed this session. Combined with the DB guard in createReview, this prevents the "Write Review" button from reappearing after a review is submitted.
+  final Set<String> _reviewedBookingIds = {};
   BookingModel? _selectedBooking;
   bool _loading = true;
 
@@ -344,6 +347,7 @@ class _MainAppState extends State<MainApp> {
           if (_pro != null) {
             _bookings = await _ds.getProfessionalBookings(_pro!.id);
             _applications = await _appDs.getMyApplications(_pro!.id);
+            _reviews = await _ds.getProfessionalReviews(_pro!.id);
             _ds.subscribeToProfessionalBookings(
               professionalId: _pro!.id,
               onNewBooking: (b) {
@@ -370,6 +374,16 @@ class _MainAppState extends State<MainApp> {
           _applications = await _appDs.getAllApplications();
         } else {
           _bookings = await _ds.getCustomerBookings(_user!.id);
+          //Pre-load reviewed booking IDs so the button is hidden on restart
+          for (final b in _bookings) {
+            if (b.status == BookingStatus.completed) {
+              final reviewed = await _ds.hasReviewedBooking(
+                bookingId: b.id,
+                customerId: _user!.id,
+              );
+              if (reviewed) _reviewedBookingIds.add(b.id);
+            }
+          }
         }
       }
     } catch (e) {
@@ -391,6 +405,16 @@ class _MainAppState extends State<MainApp> {
       }
     } catch (e) {
       debugPrint('Refresh error: $e');
+    }
+  }
+
+  Future<void> _refreshReviews() async {
+    if (_pro == null) return;
+    try {
+      final list = await _ds.getProfessionalReviews(_pro!.id);
+      if (mounted) setState(() => _reviews = list);
+    } catch (e) {
+      debugPrint('_refreshReviews error: $e');
     }
   }
 
@@ -534,14 +558,27 @@ class _MainAppState extends State<MainApp> {
       // In _buildContent(), inside the admin block (role == 'admin').
       // Add a new navIndex case:
 
+      // Guard: only open notifications when we have a confirmed, valid user id.
+      // Without this, tapping the notifications tab before _user is fully
+      // loaded passes an empty string to Postgres and throws:
+      //   "invalid input syntax for type uuid: """
+      if (_user == null || _user!.id.isEmpty) {
+        return const Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          body: Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation(AppColors.primary),
+            ),
+          ),
+        );
+      }
+
       if (_navIndex == 4) {
-        // adjust index to match your bottom nav
         return AdminNotificationsScreen(
           userId: _user!.id,
           notificationDataSource: _notifDs,
           onBack: () => setState(() => _navIndex = 0),
           onApprove: (applicationId) async {
-            // Reuse your existing approval logic — look up the app by id
             try {
               final app =
                   _applications.firstWhere((a) => a.id == applicationId);
@@ -752,6 +789,21 @@ class _MainAppState extends State<MainApp> {
           },
         );
       }
+      if (_screen == 'reviews') {
+        return ProfessionalReviewsScreen(
+          reviews: _reviews.map((r) => r.toEntity()).toList(),
+          professional: _pro?.toEntity(),
+          currentNavIndex: _navIndex,
+          onNavTap: (i) => setState(() {
+            _navIndex = i;
+            _screen = 'home';
+          }),
+          onBack: () => setState(() => _screen = 'home'),
+          onRefresh: () async {
+            await _refreshReviews();
+          },
+        );
+      }
 
       // ── Apply screen
       if (_screen == 'apply') {
@@ -840,6 +892,7 @@ class _MainAppState extends State<MainApp> {
         user: u,
         professional: proEntity,
         bookings: bookingEntities,
+        reviews: _reviews.map((r) => r.toEntity()).toList(), // ← ADD
         pendingApplications:
             _applications.where((a) => a.status == 'pending').length,
         currentNavIndex: _navIndex,
@@ -848,8 +901,7 @@ class _MainAppState extends State<MainApp> {
             _navIndex = i;
             _screen = 'home';
           });
-          if (i == 1)
-            await _refreshBookings(); // Refresh pending requests when switching to Requests tab
+          if (i == 1) await _refreshBookings();
         },
         onUpdateStatus: (booking, status) async {
           try {
@@ -865,6 +917,7 @@ class _MainAppState extends State<MainApp> {
         },
         onViewEarnings: () => setState(() => _navIndex = 2),
         onViewHistory: () => setState(() => _screen = 'booking_history'),
+        onViewReviews: () => setState(() => _screen = 'reviews'), // ← ADD
         onApplyCredentials: () => setState(() => _screen = 'apply'),
         onViewVerification: () =>
             setState(() => _screen = 'verification_status'),
@@ -996,13 +1049,12 @@ class _MainAppState extends State<MainApp> {
         if (_selectedBooking == null) return _home();
         return BookingStatusScreen(
           booking: _selectedBooking!.toEntity(),
-          // Back: if we came from the Bookings tab, return there
           onBack: () => setState(() {
             _screen = 'home';
-            // Keep _navIndex as-is so pressing back from a booking detail
-            // opened via the Bookings tab returns to the Bookings tab list
           }),
-          onWriteReview: _selectedBooking!.status == BookingStatus.completed
+          // Bug 4 fix: hide "Write Review" once the booking has been reviewed
+          onWriteReview: _selectedBooking!.status == BookingStatus.completed &&
+                  !_reviewedBookingIds.contains(_selectedBooking!.id)
               ? () => setState(() => _screen = 'review')
               : null,
           onCancelBooking: _selectedBooking!.status == BookingStatus.pending
@@ -1011,7 +1063,6 @@ class _MainAppState extends State<MainApp> {
                     await _ds.updateBookingStatus(
                         _selectedBooking!.id, BookingStatus.cancelled);
                     await _refreshBookings();
-                    // Refresh selectedBooking too
                     final updated = _bookings.firstWhere(
                         (b) => b.id == _selectedBooking!.id,
                         orElse: () => _selectedBooking!);
@@ -1199,15 +1250,43 @@ class _MainAppState extends State<MainApp> {
     if (_user == null || _selectedBooking == null) return;
     try {
       await _ds.createReview(
-          bookingId: _selectedBooking!.id,
-          customerId: _user!.id,
-          professionalId: _selectedBooking!.professionalId,
-          rating: rating,
-          comment: comment);
-      setState(() => _screen = 'home');
-      _notify('Review submitted! Thank you.');
+        bookingId: _selectedBooking!.id,
+        customerId: _user!.id,
+        professionalId: _selectedBooking!.professionalId,
+        rating: rating,
+        comment: comment,
+      );
+
+      // Bug 4 fix: mark this booking as reviewed so the button won't reappear
+      setState(() {
+        _reviewedBookingIds.add(_selectedBooking!.id);
+        _screen = 'home';
+      });
+
+      _notify('Review submitted! Thank you. ⭐');
+
+      // Refresh professional list so updated rating shows immediately
+      _ds.getProfessionals().then((list) {
+        if (mounted) setState(() => _professionals = list);
+      });
     } catch (e) {
+      // Bug 2 fix: surface the error to the user instead of silently swallowing
       debugPrint('Review error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              e.toString().contains('already submitted')
+                  ? 'You\'ve already reviewed this booking.'
+                  : 'Failed to submit review. Please try again.',
+            ),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
     }
   }
 }
