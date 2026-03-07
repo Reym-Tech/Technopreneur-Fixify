@@ -1,114 +1,33 @@
+// lib/presentation/screens/customer/serviceoffers/dryerrepair.dart
+// Auto-generated service detail screen for Dryer Repair.
+
 import 'package:flutter/material.dart';
-import 'package:fixify/core/theme/app_theme.dart';
+import 'service_detail_screen.dart';
 
 class DryerRepairScreen extends StatelessWidget {
-  const DryerRepairScreen({super.key});
+  final Function(String)? onBookNow;
+  const DryerRepairScreen({super.key, this.onBookNow});
 
   @override
-  Widget build(BuildContext context) {
-    // Data provided
-    final Map<String, String> serviceData = {
-      'name': 'Dryer Repair',
-      'description': 'Fix dryer not heating',
-      'image': 'assets/images/dryerrepair.png',
-    };
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          serviceData['name']!,
-          style: const TextStyle(color: Colors.white),
-        ),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 300,
-                      height: 250,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        image: DecorationImage(
-                          image: AssetImage(serviceData['image']!),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    serviceData['name']!,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textDark,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    serviceData['description']!,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[700],
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(20),
-        child: SizedBox(
-          height: 50,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () {
-              print('Booking for ${serviceData['name']} initiated!');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Processing your booking...'),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 2,
-            ),
-            child: const Text(
-              'Book Now',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ServiceDetailScreen(
+        serviceName: 'Dryer Repair',
+        serviceType: 'Appliances',
+        description:
+            'A dryer that doesn\'t heat, tumbles slowly, or trips the breaker wastes energy and damages clothes. Our technicians will identify heating element, thermostat, or motor faults and get your dryer back to peak performance.',
+        imagePath: 'assets/images/dryerrepair.png',
+        accentColor: const Color(0xFF5856D6),
+        icon: Icons.kitchen_rounded,
+        priceRange: '₱500 – ₱3,000',
+        duration: '1–3 hours',
+        includes: const [
+          'Heating element and thermostat diagnosis',
+          'Belt, drum, and motor inspection',
+          'Lint trap and vent duct cleaning',
+          'Electrical connection check',
+          'Full test cycle after repair',
+        ],
+        tips:
+            'Clean the lint filter before the technician arrives. A clogged lint trap is the #1 cause of dryer fires and poor performance.',
+        onBookNow: onBookNow,
+      );
 }

@@ -1,124 +1,33 @@
-import 'package:fixify/presentation/screens/customer/requestservice_customer.dart'
-    show RequestServiceScreen;
+// lib/presentation/screens/customer/serviceoffers/cabinetinstallation.dart
+// Auto-generated service detail screen for Cabinet Installation.
+
 import 'package:flutter/material.dart';
-import 'package:fixify/core/theme/app_theme.dart';
+import 'service_detail_screen.dart';
 
 class CabinetInstallationScreen extends StatelessWidget {
-  const CabinetInstallationScreen({super.key});
+  final Function(String)? onBookNow;
+  const CabinetInstallationScreen({super.key, this.onBookNow});
 
   @override
-  Widget build(BuildContext context) {
-    // Data provided
-    final Map<String, String> serviceData = {
-      'name': 'Cabinet Installation',
-      'description': 'Install new kitchen cabinets',
-      'image': 'assets/images/cabenitinstallation.png',
-    };
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          serviceData['name']!,
-          style: const TextStyle(color: Colors.white),
-        ),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Centered image
-                  Center(
-                    child: Container(
-                      width: 300,
-                      height: 250,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        image: DecorationImage(
-                          image: AssetImage(serviceData['image']!),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Title below image
-                  Text(
-                    serviceData['name']!,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textDark,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Description
-                  Text(
-                    serviceData['description']!,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[700],
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      // Book Now button fixed at bottom with 50px height
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(20),
-        child: SizedBox(
-          height: 50,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () {
-              // Simply navigate to RequestServiceScreen
-              // The RequestServiceScreen will handle the rest
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const RequestServiceScreen(),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 2,
-            ),
-            child: const Text(
-              'Book Now',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ServiceDetailScreen(
+        serviceName: 'Cabinet Installation',
+        serviceType: 'Carpentry',
+        description:
+            'Transform your kitchen or bathroom with professionally installed cabinets. Our carpenters ensure level, secure mounting, proper alignment, and clean finishes — giving your space both beauty and lasting functionality.',
+        imagePath: 'assets/images/cabenitinstallation.png',
+        accentColor: const Color(0xFFFF3B30),
+        icon: Icons.handyman_rounded,
+        priceRange: '₱1,500 – ₱8,000',
+        duration: '2–6 hours',
+        includes: const [
+          'Wall stud location and mounting preparation',
+          'Cabinet leveling and alignment',
+          'Secure wall-anchor installation',
+          'Door hinge and hardware fitting',
+          'Touch-up and clean-up after installation',
+        ],
+        tips:
+            'Have your cabinets on-site and fully assembled before booking. Confirm measurements with your carpenter — even 1cm can matter.',
+        onBookNow: onBookNow,
+      );
 }

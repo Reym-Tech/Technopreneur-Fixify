@@ -355,37 +355,63 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             border: Border.all(color: color.withOpacity(0.3)),
             color: color.withOpacity(0.05),
           ),
-          child: Stack(children: [
-            // Network image preview
-            ClipRRect(
-              borderRadius: BorderRadius.circular(11),
-              child: Image.network(url,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: double.infinity,
-                  errorBuilder: (_, __, ___) => Center(
-                      child: Icon(Icons.image_not_supported_outlined,
-                          color: color.withOpacity(0.4), size: 28))),
-            ),
-            Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  decoration: BoxDecoration(
-                    borderRadius: const BorderRadius.vertical(
-                        bottom: Radius.circular(11)),
-                    color: color.withOpacity(0.85),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(11),
+            child: Stack(children: [
+              // Network image preview with loading indicator
+              Image.network(
+                url,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                height: double.infinity,
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return Container(
+                    color: color.withOpacity(0.05),
+                    child: Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: color.withOpacity(0.6)),
+                      ),
+                    ),
+                  );
+                },
+                errorBuilder: (_, __, ___) => Container(
+                  color: color.withOpacity(0.08),
+                  child: Center(
+                    child: Icon(Icons.image_outlined,
+                        color: color.withOpacity(0.5), size: 28),
                   ),
-                  child: Text(label,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700)),
-                )),
-          ]),
+                ),
+              ),
+              // Label bar at bottom
+              Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.85),
+                    ),
+                    child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.zoom_in_rounded,
+                              color: Colors.white, size: 11),
+                          const SizedBox(width: 3),
+                          Text(label,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700)),
+                        ]),
+                  )),
+            ]),
+          ),
         ),
       ));
 
@@ -424,24 +450,83 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
 
   void _showDocDialog(String label, String url) => showDialog(
         context: context,
-        builder: (_) => Dialog(
+        builder: (dialogCtx) => Dialog(
+          backgroundColor: Colors.black87,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // Header row
             Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-                child: Text(label,
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700))),
+              padding: const EdgeInsets.fromLTRB(20, 14, 8, 8),
+              child: Row(children: [
+                Expanded(
+                    child: Text(label,
+                        style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white))),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, color: Colors.white60),
+                  onPressed: () => Navigator.of(dialogCtx).pop(),
+                ),
+              ]),
+            ),
+            // Zoomable image
             ClipRRect(
               borderRadius:
                   const BorderRadius.vertical(bottom: Radius.circular(20)),
-              child: Image.network(url,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Text('Could not load image',
-                          style: TextStyle(color: AppColors.textLight)))),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 480),
+                child: InteractiveViewer(
+                  minScale: 0.8,
+                  maxScale: 5.0,
+                  child: Image.network(
+                    url,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) return child;
+                      return SizedBox(
+                        height: 220,
+                        child: Center(
+                          child:
+                              Column(mainAxisSize: MainAxisSize.min, children: [
+                            CircularProgressIndicator(
+                              value: progress.expectedTotalBytes != null
+                                  ? progress.cumulativeBytesLoaded /
+                                      progress.expectedTotalBytes!
+                                  : null,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(height: 12),
+                            const Text('Loading…',
+                                style: TextStyle(
+                                    color: Colors.white54, fontSize: 12)),
+                          ]),
+                        ),
+                      );
+                    },
+                    errorBuilder: (_, __, ___) => Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.broken_image_outlined,
+                            color: Colors.white30, size: 48),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Image could not be loaded.',
+                          style: TextStyle(color: Colors.white60, fontSize: 13),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Make sure the Supabase storage bucket is set to Public in your Supabase dashboard.',
+                          style: TextStyle(color: Colors.white38, fontSize: 11),
+                          textAlign: TextAlign.center,
+                        ),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ]),
         ),

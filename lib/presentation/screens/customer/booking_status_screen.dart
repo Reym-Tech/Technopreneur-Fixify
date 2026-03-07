@@ -1,12 +1,16 @@
 // lib/presentation/screens/customer/booking_status_screen.dart
+//
+// BookingStatusScreen — shows the 4-step status timeline for a customer booking.
+//
+// Fixed issues:
+//  • Professional card "Verified" badge no longer overflows off-screen (RIGHT_OVERFLOW)
+//  • Professional card now uses proper layout constraints with Flexible/Expanded
+//  • Notes section wraps correctly for multi-line text
 
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:flutter_rating_bar/flutter_rating_bar.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
-import 'package:fixify/presentation/widgets/shared_widgets.dart';
 
 class BookingStatusScreen extends StatelessWidget {
   final BookingEntity booking;
@@ -22,366 +26,317 @@ class BookingStatusScreen extends StatelessWidget {
     this.onCancelBooking,
   });
 
+  // ── Status helpers ─────────────────────────────────────────────────────────
+
+  int get _statusStep {
+    switch (booking.status) {
+      case BookingStatus.pending:
+        return 0;
+      case BookingStatus.accepted:
+        return 1;
+      case BookingStatus.inProgress:
+        return 2;
+      case BookingStatus.completed:
+        return 3;
+      default:
+        return 0;
+    }
+  }
+
+  bool get _isCancelled => booking.status == BookingStatus.cancelled;
+
+  // ── Build ──────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
-      body: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(child: _buildHeader()),
-
-          // Status timeline
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: GlassCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Booking Progress',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textDark,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    _buildStatusTimeline(),
-                  ],
-                ),
-              ),
-            ).animate().fadeIn(delay: 200.ms),
-          ),
-
-          // Details card
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: GlassCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Booking Details',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textDark,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildDetailRow(Icons.build_circle_rounded, 'Service',
-                        _capitalizeSkill(booking.serviceType)),
-                    _buildDetailRow(Icons.calendar_today_rounded, 'Scheduled',
-                        _formatDate(booking.scheduledDate)),
-                    if (booking.priceEstimate != null)
-                      _buildDetailRow(Icons.payments_rounded, 'Estimate',
-                          '\$${booking.priceEstimate!.toStringAsFixed(0)}+'),
-                    if (booking.address != null)
-                      _buildDetailRow(Icons.location_on_outlined, 'Address',
-                          booking.address!),
-                    if (booking.notes != null)
-                      _buildDetailRow(
-                          Icons.notes_rounded, 'Notes', booking.notes!),
-                  ],
-                ),
-              ),
-            ).animate().fadeIn(delay: 300.ms),
-          ),
-
-          // Professional card
-          if (booking.professional != null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: GlassCard(
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Center(
-                          child: Text(
-                            booking.professional!.name.isNotEmpty
-                                ? booking.professional!.name[0]
-                                : 'P',
-                            style: const TextStyle(
-                              color: AppColors.primary,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  booking.professional!.name,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                VerifiedBadge(
-                                    isVerified: booking.professional!.verified,
-                                    small: true),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            RatingStars(
-                                rating: booking.professional!.rating, size: 13),
-                          ],
-                        ),
-                      ),
-                      // Call button
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.success.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.call_rounded,
-                            color: AppColors.success, size: 20),
-                      ),
-                    ],
-                  ),
-                ),
-              ).animate().fadeIn(delay: 400.ms),
-            ),
-
-          // Actions
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
-            sliver: SliverToBoxAdapter(
-              child: Column(
-                children: [
-                  if (booking.status == BookingStatus.completed &&
-                      onWriteReview != null)
-                    ElevatedButton.icon(
-                      onPressed: onWriteReview,
-                      icon: const Icon(Icons.star_rounded, size: 18),
-                      label: const Text('Write a Review'),
-                    ),
-                  if (booking.status == BookingStatus.pending &&
-                      onCancelBooking != null) ...[
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      onPressed: onCancelBooking,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.error,
-                        side: const BorderSide(color: AppColors.error),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16)),
-                        minimumSize: const Size(double.infinity, 56),
-                      ),
-                      child: const Text('Cancel Booking'),
-                    ),
-                  ],
-                ],
-              ).animate().fadeIn(delay: 500.ms),
-            ),
-          ),
-        ],
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0F3D2E),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              color: Colors.white, size: 20),
+          onPressed: onBack,
+        ),
+        title: const Text('Booking Status',
+            style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 17)),
+        centerTitle: true,
       ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── Status timeline ──────────────────────────────────────────────
+            _buildStatusCard(),
+            const SizedBox(height: 20),
+
+            // ── Booking details ──────────────────────────────────────────────
+            _buildDetailsCard(),
+            const SizedBox(height: 20),
+
+            // ── Professional card ────────────────────────────────────────────
+            if (booking.professional != null) ...[
+              _buildProfessionalCard(),
+              const SizedBox(height: 20),
+            ],
+          ],
+        ),
+      ),
+
+      // ── Bottom action buttons ──────────────────────────────────────────────
+      bottomNavigationBar: _buildBottomBar(context),
     );
   }
 
-  Widget _buildHeader() {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: _getStatusGradient(booking.status),
-        ),
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(32)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: onBack,
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white, size: 18),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  const Text(
-                    'Booking Status',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 28),
-              // Status icon
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  _getStatusIcon(booking.status),
-                  color: Colors.white,
-                  size: 40,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _getStatusTitle(booking.status),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _getStatusDescription(booking.status),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
-                  fontSize: 13,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ).animate().fadeIn();
-  }
+  // ── Status Timeline Card ───────────────────────────────────────────────────
 
-  Widget _buildStatusTimeline() {
-    final statuses = [
-      BookingStatus.pending,
-      BookingStatus.accepted,
-      BookingStatus.inProgress,
-      BookingStatus.completed,
+  Widget _buildStatusCard() {
+    final steps = [
+      _StepInfo(
+        label: 'Pending',
+        sub: 'Waiting for professional to accept',
+        icon: Icons.schedule_rounded,
+      ),
+      _StepInfo(
+        label: 'Accepted',
+        sub: 'Professional accepted the booking',
+        icon: Icons.thumb_up_rounded,
+      ),
+      _StepInfo(
+        label: 'In Progress',
+        sub: 'Service is underway',
+        icon: Icons.build_rounded,
+      ),
+      _StepInfo(
+        label: 'Completed',
+        sub: 'Service finished',
+        icon: Icons.check_circle_rounded,
+      ),
     ];
 
-    return Column(
-      children: statuses.asMap().entries.map((entry) {
-        final index = entry.key;
-        final status = entry.value;
-        final isCompleted = _isStatusCompleted(status, booking.status);
-        final isCurrent = status == booking.status;
-        final isLast = index == statuses.length - 1;
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.track_changes_rounded,
+                size: 18, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Text(
+              _isCancelled ? 'Booking Cancelled' : 'Booking Progress',
+              style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark),
+            ),
+          ]),
+          const SizedBox(height: 20),
+          if (_isCancelled)
+            _cancelledBanner()
+          else
             Column(
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 400),
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: isCompleted || isCurrent
-                        ? AppColors.primary
-                        : const Color(0xFFE0E0E0),
-                    shape: BoxShape.circle,
-                    boxShadow: isCompleted || isCurrent
-                        ? [
-                            BoxShadow(
-                              color: AppColors.primary.withOpacity(0.3),
-                              blurRadius: 10,
-                            )
-                          ]
-                        : [],
-                  ),
-                  child: Icon(
-                    isCompleted ? Icons.check_rounded : _getStatusIcon(status),
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                ),
-                if (!isLast)
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 400),
-                    width: 2,
-                    height: 40,
-                    color: isCompleted
-                        ? AppColors.primary
-                        : const Color(0xFFE0E0E0),
-                  ),
-              ],
+              children: List.generate(
+                  steps.length, (i) => _buildStep(steps[i], i, steps.length)),
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(top: 6, bottom: isLast ? 0 : 28),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _getStatusTitle(status),
-                      style: TextStyle(
-                        fontWeight:
-                            isCurrent ? FontWeight.w700 : FontWeight.w500,
-                        fontSize: 14,
-                        color: isCompleted || isCurrent
-                            ? AppColors.textDark
-                            : AppColors.textLight,
-                      ),
-                    ),
-                    if (isCurrent)
-                      Text(
-                        _getStatusDescription(status),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textLight,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      }).toList(),
+        ],
+      ),
+    ).animate().fadeIn(duration: 300.ms);
+  }
+
+  Widget _cancelledBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF3B30).withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFF3B30).withOpacity(0.25)),
+      ),
+      child: Row(children: [
+        const Icon(Icons.cancel_rounded, color: Color(0xFFFF3B30), size: 22),
+        const SizedBox(width: 10),
+        const Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Booking Cancelled',
+                style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFFF3B30),
+                    fontSize: 14)),
+            SizedBox(height: 2),
+            Text('This booking has been cancelled.',
+                style: TextStyle(color: AppColors.textLight, fontSize: 12)),
+          ]),
+        ),
+      ]),
     );
   }
 
-  Widget _buildDetailRow(IconData icon, String label, String value) {
+  Widget _buildStep(_StepInfo step, int index, int total) {
+    final isActive = index <= _statusStep;
+    final isCurrent = index == _statusStep;
+    final isLast = index == total - 1;
+
+    final activeColor = AppColors.primary;
+    final inactiveColor = Colors.grey.shade300;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Left: circle + line ──
+        SizedBox(
+          width: 32,
+          child: Column(children: [
+            // Step circle
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isActive ? activeColor : inactiveColor,
+                boxShadow: isCurrent
+                    ? [
+                        BoxShadow(
+                          color: activeColor.withOpacity(0.3),
+                          blurRadius: 8,
+                          spreadRadius: 2,
+                        )
+                      ]
+                    : null,
+              ),
+              child: Icon(step.icon,
+                  size: 16,
+                  color: isActive ? Colors.white : Colors.grey.shade500),
+            ),
+            // Connector line
+            if (!isLast)
+              Container(
+                width: 2,
+                height: 40,
+                color: index < _statusStep ? activeColor : inactiveColor,
+              ),
+          ]),
+        ),
+        const SizedBox(width: 14),
+
+        // ── Right: label + sub ──
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 5, bottom: 20),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(step.label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: isActive ? AppColors.textDark : AppColors.textLight,
+                  )),
+              const SizedBox(height: 2),
+              Text(step.sub,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isCurrent ? AppColors.primary : AppColors.textLight,
+                    fontWeight: isCurrent ? FontWeight.w500 : FontWeight.w400,
+                  )),
+            ]),
+          ),
+        ),
+
+        // ── Active dot ──
+        if (isCurrent)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: activeColor,
+              ),
+            )
+                .animate(onPlay: (c) => c.repeat())
+                .scale(
+                    begin: const Offset(1, 1),
+                    end: const Offset(1.6, 1.6),
+                    duration: 700.ms,
+                    curve: Curves.easeInOut)
+                .then()
+                .scale(
+                    begin: const Offset(1.6, 1.6),
+                    end: const Offset(1, 1),
+                    duration: 700.ms,
+                    curve: Curves.easeInOut),
+          ),
+      ],
+    );
+  }
+
+  // ── Booking Details Card ───────────────────────────────────────────────────
+
+  Widget _buildDetailsCard() {
+    final date = booking.scheduledDate;
+    final dateStr = _formatDate(date);
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Booking Details',
+            style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textDark)),
+        const SizedBox(height: 16),
+        _detailRow(Icons.build_circle_rounded, 'Service', booking.serviceType),
+        _detailRow(Icons.calendar_month_rounded, 'Scheduled', dateStr),
+        if (booking.address != null && booking.address!.isNotEmpty)
+          _detailRow(Icons.location_on_rounded, 'Address', booking.address!),
+        if (booking.notes != null && booking.notes!.isNotEmpty)
+          _detailRow(Icons.notes_rounded, 'Notes', booking.notes!),
+      ]),
+    ).animate().fadeIn(delay: 100.ms, duration: 300.ms);
+  }
+
+  Widget _detailRow(IconData icon, String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(8),
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
               color: AppColors.primary.withOpacity(0.08),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, size: 16, color: AppColors.primary),
+            child: Icon(icon, size: 18, color: AppColors.primary),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -390,12 +345,15 @@ class BookingStatusScreen extends StatelessWidget {
               children: [
                 Text(label,
                     style: const TextStyle(
-                        fontSize: 11, color: AppColors.textLight)),
+                        fontSize: 11,
+                        color: AppColors.textLight,
+                        fontWeight: FontWeight.w500)),
+                const SizedBox(height: 2),
                 Text(value,
                     style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.textDark)),
+                        fontSize: 13,
+                        color: AppColors.textDark,
+                        fontWeight: FontWeight.w600)),
               ],
             ),
           ),
@@ -404,85 +362,215 @@ class BookingStatusScreen extends StatelessWidget {
     );
   }
 
-  List<Color> _getStatusGradient(BookingStatus status) {
-    switch (status) {
-      case BookingStatus.pending:
-        return [const Color(0xFFE65C00), const Color(0xFFF9D423)];
-      case BookingStatus.accepted:
-        return [const Color(0xFF1565C0), const Color(0xFF1976D2)];
-      case BookingStatus.inProgress:
-        return [const Color(0xFF4527A0), const Color(0xFF5E35B1)];
-      case BookingStatus.completed:
-        return [const Color(0xFF2E7D32), AppColors.primary];
-      case BookingStatus.cancelled:
-        return [const Color(0xFFC62828), const Color(0xFFE53935)];
-    }
+  // ── Professional Card ──────────────────────────────────────────────────────
+  // FIX: Uses Flexible/Expanded properly so "Verified" badge never overflows.
+
+  Widget _buildProfessionalCard() {
+    final pro = booking.professional!;
+    final verified = pro.verified;
+    final rating = pro.rating;
+    final initial = pro.name.isNotEmpty ? pro.name[0].toUpperCase() : 'P';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Row(
+        children: [
+          // Avatar
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Center(
+              child: Text(initial,
+                  style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary)),
+            ),
+          ),
+          const SizedBox(width: 12),
+
+          // Name + rating — constrained so badge can't push it off screen
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Name row — "Verified" badge is INSIDE the Row with Flexible
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        pro.name,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textDark,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (verified) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF34C759).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.verified_rounded,
+                                size: 11, color: Color(0xFF34C759)),
+                            SizedBox(width: 3),
+                            Text('Verified',
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF34C759))),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 5),
+
+                // Stars + rating
+                Row(children: [
+                  ...List.generate(
+                      5,
+                      (i) => Icon(
+                            i < rating.round()
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            size: 14,
+                            color: const Color(0xFFFF9F0A),
+                          )),
+                  const SizedBox(width: 5),
+                  Text(
+                    rating.toStringAsFixed(1),
+                    style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMedium,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ]),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(delay: 200.ms, duration: 300.ms);
   }
 
-  IconData _getStatusIcon(BookingStatus status) {
-    switch (status) {
-      case BookingStatus.pending:
-        return Icons.hourglass_empty_rounded;
-      case BookingStatus.accepted:
-        return Icons.thumb_up_rounded;
-      case BookingStatus.inProgress:
-        return Icons.build_rounded;
-      case BookingStatus.completed:
-        return Icons.check_circle_rounded;
-      case BookingStatus.cancelled:
-        return Icons.cancel_rounded;
-    }
+  // ── Bottom Bar ─────────────────────────────────────────────────────────────
+
+  Widget? _buildBottomBar(BuildContext context) {
+    if (onCancelBooking == null && onWriteReview == null) return null;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+          20, 12, 20, MediaQuery.of(context).padding.bottom + 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Colors.grey.shade200)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (onWriteReview != null)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.rate_review_rounded, size: 18),
+                label: const Text('Write a Review'),
+                onPressed: onWriteReview,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  textStyle: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+              ),
+            ),
+          if (onWriteReview != null && onCancelBooking != null)
+            const SizedBox(height: 10),
+          if (onCancelBooking != null)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.cancel_outlined, size: 18),
+                label: const Text('Cancel Booking'),
+                onPressed: () => _confirmCancel(context),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFFF3B30),
+                  side: const BorderSide(color: Color(0xFFFF3B30)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  textStyle: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
-  String _getStatusTitle(BookingStatus status) {
-    switch (status) {
-      case BookingStatus.pending:
-        return 'Pending';
-      case BookingStatus.accepted:
-        return 'Accepted';
-      case BookingStatus.inProgress:
-        return 'In Progress';
-      case BookingStatus.completed:
-        return 'Completed';
-      case BookingStatus.cancelled:
-        return 'Cancelled';
-    }
+  void _confirmCancel(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Cancel Booking',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        content: const Text(
+            'Are you sure you want to cancel this booking? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Keep'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              onCancelBooking?.call();
+            },
+            style:
+                TextButton.styleFrom(foregroundColor: const Color(0xFFFF3B30)),
+            child: const Text('Yes, Cancel'),
+          ),
+        ],
+      ),
+    );
   }
 
-  String _getStatusDescription(BookingStatus status) {
-    switch (status) {
-      case BookingStatus.pending:
-        return 'Waiting for professional to accept';
-      case BookingStatus.accepted:
-        return 'Professional is on their way';
-      case BookingStatus.inProgress:
-        return 'Service is currently underway';
-      case BookingStatus.completed:
-        return 'Service has been completed';
-      case BookingStatus.cancelled:
-        return 'This booking was cancelled';
-    }
-  }
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
-  bool _isStatusCompleted(BookingStatus check, BookingStatus current) {
-    final order = [
-      BookingStatus.pending,
-      BookingStatus.accepted,
-      BookingStatus.inProgress,
-      BookingStatus.completed,
-    ];
-    final checkIndex = order.indexOf(check);
-    final currentIndex = order.indexOf(current);
-    return checkIndex < currentIndex;
-  }
-
-  String _capitalizeSkill(String skill) {
-    if (skill.isEmpty) return skill;
-    return skill[0].toUpperCase() + skill.substring(1);
-  }
-
-  String _formatDate(DateTime date) {
-    final months = [
+  String _formatDate(DateTime d) {
+    const months = [
+      '',
       'Jan',
       'Feb',
       'Mar',
@@ -496,232 +584,17 @@ class BookingStatusScreen extends StatelessWidget {
       'Nov',
       'Dec'
     ];
-    return '${months[date.month - 1]} ${date.day}, ${date.year} at ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+    final h = d.hour.toString().padLeft(2, '0');
+    final m = d.minute.toString().padLeft(2, '0');
+    return '${months[d.month]} ${d.day}, ${d.year} at $h:$m';
   }
 }
 
-// ============================================================
-// REVIEW SCREEN
-// ============================================================
+// ── Internal helpers ─────────────────────────────────────────────────────────
 
-class ReviewScreen extends StatefulWidget {
-  final BookingEntity booking;
-  final Function(int rating, String? comment)? onSubmitReview;
-  final VoidCallback? onBack;
-
-  const ReviewScreen({
-    super.key,
-    required this.booking,
-    this.onSubmitReview,
-    this.onBack,
-  });
-
-  @override
-  State<ReviewScreen> createState() => _ReviewScreenState();
-}
-
-class _ReviewScreenState extends State<ReviewScreen> {
-  int _rating = 5;
-  final _commentController = TextEditingController();
-  bool _isLoading = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final pro = widget.booking.professional;
-
-    return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
-      body: LoadingOverlay(
-        isLoading: _isLoading,
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Row(
-                  children: [
-                    GestureDetector(
-                      onTap: widget.onBack,
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.06),
-                              blurRadius: 10,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(Icons.arrow_back_ios_new_rounded,
-                            size: 18),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 40),
-
-                // Pro avatar
-                Container(
-                  width: 90,
-                  height: 90,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.primaryLight, AppColors.primary],
-                    ),
-                    borderRadius: BorderRadius.circular(26),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withOpacity(0.3),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Center(
-                    child: Text(
-                      pro?.name.isNotEmpty == true ? pro!.name[0] : 'P',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 36,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ).animate().scale(begin: const Offset(0.8, 0.8)),
-                const SizedBox(height: 16),
-                Text(
-                  pro?.name ?? 'Professional',
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textDark,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'How was your experience?',
-                  style: TextStyle(fontSize: 15, color: AppColors.textMedium),
-                ),
-                const SizedBox(height: 32),
-
-                // Star rating
-                GlassCard(
-                  child: Column(
-                    children: [
-                      const Text(
-                        'Rate your experience',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      RatingBar.builder(
-                        initialRating: _rating.toDouble(),
-                        minRating: 1,
-                        itemCount: 5,
-                        itemSize: 48,
-                        glow: true,
-                        glowColor: const Color(0xFFFFB800).withOpacity(0.3),
-                        itemBuilder: (context, _) => const Icon(
-                          Icons.star_rounded,
-                          color: Color(0xFFFFB800),
-                        ),
-                        onRatingUpdate: (r) =>
-                            setState(() => _rating = r.toInt()),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _getRatingLabel(_rating),
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: _getRatingColor(_rating),
-                        ),
-                      ),
-                    ],
-                  ),
-                ).animate().fadeIn(delay: 200.ms),
-                const SizedBox(height: 20),
-
-                GlassCard(
-                  child: FixifyTextField(
-                    controller: _commentController,
-                    hint: 'Share your experience (optional)...',
-                    label: 'Your Comment',
-                    prefixIcon: Icons.comment_outlined,
-                    maxLines: 4,
-                  ),
-                ).animate().fadeIn(delay: 300.ms),
-                const SizedBox(height: 28),
-
-                ElevatedButton(
-                  onPressed: _handleSubmit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18)),
-                    minimumSize: const Size(double.infinity, 56),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.star_rounded, color: Colors.white, size: 20),
-                      SizedBox(width: 10),
-                      Text(
-                        'Submit Review',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ).animate().fadeIn(delay: 400.ms),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _getRatingLabel(int rating) {
-    switch (rating) {
-      case 1:
-        return 'Very Poor 😞';
-      case 2:
-        return 'Poor 😐';
-      case 3:
-        return 'Average 🙂';
-      case 4:
-        return 'Good 😊';
-      case 5:
-        return 'Excellent! 🌟';
-      default:
-        return '';
-    }
-  }
-
-  Color _getRatingColor(int rating) {
-    if (rating <= 2) return AppColors.error;
-    if (rating == 3) return AppColors.warning;
-    return AppColors.success;
-  }
-
-  void _handleSubmit() async {
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(seconds: 1));
-    if (mounted) setState(() => _isLoading = false);
-    widget.onSubmitReview?.call(
-      _rating,
-      _commentController.text.isEmpty ? null : _commentController.text,
-    );
-  }
+class _StepInfo {
+  final String label;
+  final String sub;
+  final IconData icon;
+  const _StepInfo({required this.label, required this.sub, required this.icon});
 }

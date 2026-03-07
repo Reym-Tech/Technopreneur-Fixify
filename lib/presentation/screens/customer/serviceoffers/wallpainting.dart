@@ -1,114 +1,33 @@
+// lib/presentation/screens/customer/serviceoffers/wallpainting.dart
+// Auto-generated service detail screen for Wall Painting.
+
 import 'package:flutter/material.dart';
-import 'package:fixify/core/theme/app_theme.dart';
+import 'service_detail_screen.dart';
 
 class WallPaintingScreen extends StatelessWidget {
-  const WallPaintingScreen({super.key});
+  final Function(String)? onBookNow;
+  const WallPaintingScreen({super.key, this.onBookNow});
 
   @override
-  Widget build(BuildContext context) {
-    // Data provided
-    final Map<String, String> serviceData = {
-      'name': 'Wall Painting',
-      'description': 'Interior wall painting',
-      'image': 'assets/images/wallpainting.png',
-    };
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          serviceData['name']!,
-          style: const TextStyle(color: Colors.white),
-        ),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 300,
-                      height: 250,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        image: DecorationImage(
-                          image: AssetImage(serviceData['image']!),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    serviceData['name']!,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textDark,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    serviceData['description']!,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[700],
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(20),
-        child: SizedBox(
-          height: 50,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () {
-              print('Booking for ${serviceData['name']} initiated!');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Processing your booking...'),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 2,
-            ),
-            child: const Text(
-              'Book Now',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ServiceDetailScreen(
+        serviceName: 'Wall Painting',
+        serviceType: 'Painting',
+        description:
+            'A fresh coat of paint is the fastest way to transform a room. Our professional painters prepare surfaces properly, apply even coats, and deliver clean edges and consistent coverage — with minimal disruption to your home.',
+        imagePath: 'assets/images/wallpainting.png',
+        accentColor: const Color(0xFF34C759),
+        icon: Icons.format_paint_rounded,
+        priceRange: '₱1,000 – ₱6,000 per room',
+        duration: '4–8 hours',
+        includes: const [
+          'Surface preparation and crack filling',
+          'Primer application where needed',
+          '2 coats of interior paint',
+          'Edge masking for clean lines',
+          'Furniture protection and clean-up',
+        ],
+        tips:
+            'Choose your paint color and finish before booking. Flat/matte finishes hide imperfections; semi-gloss is easier to clean for kitchens and bathrooms.',
+        onBookNow: onBookNow,
+      );
 }

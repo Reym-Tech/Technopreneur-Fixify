@@ -1,114 +1,33 @@
+// lib/presentation/screens/customer/serviceoffers/washerrepair.dart
+// Auto-generated service detail screen for Washer Repair.
+
 import 'package:flutter/material.dart';
-import 'package:fixify/core/theme/app_theme.dart';
+import 'service_detail_screen.dart';
 
 class WasherRepairScreen extends StatelessWidget {
-  const WasherRepairScreen({super.key});
+  final Function(String)? onBookNow;
+  const WasherRepairScreen({super.key, this.onBookNow});
 
   @override
-  Widget build(BuildContext context) {
-    // Data provided
-    final Map<String, String> serviceData = {
-      'name': 'Washer Repair',
-      'description': 'Fix washing machine issues',
-      'image': 'assets/images/washerrepair.png',
-    };
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          serviceData['name']!,
-          style: const TextStyle(color: Colors.white),
-        ),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 300,
-                      height: 250,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        image: DecorationImage(
-                          image: AssetImage(serviceData['image']!),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    serviceData['name']!,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textDark,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    serviceData['description']!,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[700],
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(20),
-        child: SizedBox(
-          height: 50,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () {
-              print('Booking for ${serviceData['name']} initiated!');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Processing your booking...'),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 2,
-            ),
-            child: const Text(
-              'Book Now',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ServiceDetailScreen(
+        serviceName: 'Washer Repair',
+        serviceType: 'Appliances',
+        description:
+            'Whether your washing machine won\'t spin, leaks, or makes unusual noises, our appliance technicians diagnose the root cause and repair it on the spot — restoring your laundry routine without the cost of a new unit.',
+        imagePath: 'assets/images/washerrepair.png',
+        accentColor: const Color(0xFF5856D6),
+        icon: Icons.kitchen_rounded,
+        priceRange: '₱500 – ₱3,500',
+        duration: '1–3 hours',
+        includes: const [
+          'Full diagnostic assessment',
+          'Repair of motor, pump, or drum issues',
+          'Belt and bearing replacement if needed',
+          'Water inlet valve inspection',
+          'Test run to confirm fix',
+        ],
+        tips:
+            'Note down the exact symptoms (e.g. error code on display, which cycle it fails at) — this helps the technician arrive prepared with the right parts.',
+        onBookNow: onBookNow,
+      );
 }

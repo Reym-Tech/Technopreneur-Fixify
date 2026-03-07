@@ -1,114 +1,33 @@
+// lib/presentation/screens/customer/serviceoffers/outlet.dart
+// Auto-generated service detail screen for Outlet Installation.
+
 import 'package:flutter/material.dart';
-import 'package:fixify/core/theme/app_theme.dart';
+import 'service_detail_screen.dart';
 
 class OutletInstallationScreen extends StatelessWidget {
-  const OutletInstallationScreen({super.key});
+  final Function(String)? onBookNow;
+  const OutletInstallationScreen({super.key, this.onBookNow});
 
   @override
-  Widget build(BuildContext context) {
-    // Data provided
-    final Map<String, String> serviceData = {
-      'name': 'Outlet Installation',
-      'description': 'Install new electrical outlets',
-      'image': 'assets/images/outletinstallation.png',
-    };
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          serviceData['name']!,
-          style: const TextStyle(color: Colors.white),
-        ),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 300,
-                      height: 250,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        image: DecorationImage(
-                          image: AssetImage(serviceData['image']!),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    serviceData['name']!,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textDark,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    serviceData['description']!,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[700],
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(20),
-        child: SizedBox(
-          height: 50,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () {
-              print('Booking for ${serviceData['name']} initiated!');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Processing your booking...'),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 2,
-            ),
-            child: const Text(
-              'Book Now',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ServiceDetailScreen(
+        serviceName: 'Outlet Installation',
+        serviceType: 'Electrical',
+        description:
+            'Need more power points in your kitchen, home office, or living room? Our electricians install grounded outlets safely, ensuring proper load distribution and compliance with local electrical codes.',
+        imagePath: 'assets/images/outletinstallation.png',
+        accentColor: const Color(0xFFFF9500),
+        icon: Icons.electrical_services_rounded,
+        priceRange: '₱400 – ₱1,500 per outlet',
+        duration: '30 min – 2 hours',
+        includes: const [
+          'Wall assessment and outlet placement advice',
+          'Wiring from nearest junction or panel',
+          'Grounded outlet installation',
+          'Load capacity verification',
+          'Safety inspection and testing',
+        ],
+        tips:
+            'Decide the exact location(s) for new outlets beforehand. Consider USB-C combo outlets for modern convenience.',
+        onBookNow: onBookNow,
+      );
 }

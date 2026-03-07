@@ -20,6 +20,7 @@ import 'package:fixify/presentation/screens/customer/bookings_customer.dart';
 import 'package:fixify/presentation/screens/customer/professional_profile_screen.dart'
     as customer;
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
+import 'package:fixify/presentation/screens/customer/review_screen.dart';
 import 'package:fixify/presentation/screens/professional/dashboard_professional.dart';
 import 'package:fixify/presentation/screens/professional/profile_professional.dart';
 import 'package:fixify/presentation/screens/professional/apply_professional.dart';
@@ -281,6 +282,8 @@ class _MainAppState extends State<MainApp> {
 
   DateTime? _lastBackPress; // for double-tap-to-exit
 
+  String?
+      _preselectedServiceType; // set when tapping "Book Now" on a service detail
   UserModel? _user;
   ProfessionalModel? _pro;
   List<ProfessionalModel> _professionals = [];
@@ -409,6 +412,13 @@ class _MainAppState extends State<MainApp> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        // If a Navigator route (e.g. ServiceDetailScreen) is on top of the
+        // stack, let Flutter handle the pop normally — don't intercept it.
+        final nav = Navigator.of(context);
+        if (nav.canPop()) {
+          nav.pop();
+          return;
+        }
         // If on a sub-screen, go back within the app
         if (_screen != 'home') {
           setState(() {
@@ -730,7 +740,11 @@ class _MainAppState extends State<MainApp> {
       case 'request_service':
         return RequestServiceScreen(
           professionals: _professionals,
-          onBack: () => setState(() => _screen = 'home'),
+          initialServiceType: _preselectedServiceType,
+          onBack: () => setState(() {
+            _screen = 'home';
+            _preselectedServiceType = null;
+          }),
           onSubmit: (result) async {
             try {
               final booking = await _ds.createBooking(
@@ -849,7 +863,14 @@ class _MainAppState extends State<MainApp> {
           _navIndex = i;
           _screen = i == 3 ? 'profile' : 'home';
         }),
-        onRequestService: () => setState(() => _screen = 'request_service'),
+        onRequestService: () => setState(() {
+          _preselectedServiceType = null;
+          _screen = 'request_service';
+        }),
+        onRequestServiceWithType: (serviceType) => setState(() {
+          _preselectedServiceType = serviceType;
+          _screen = 'request_service';
+        }),
         // "See All" in Recent Bookings header → Bookings tab
         onViewBookings: () => setState(() {
           _navIndex = 1;
@@ -866,7 +887,9 @@ class _MainAppState extends State<MainApp> {
         },
         onFilterBySkill: (skill) async {
           try {
-            final list = await _ds.getProfessionals(skill: skill);
+            final list = skill == 'All'
+                ? await _ds.getProfessionals()
+                : await _ds.getProfessionals(skill: skill);
             setState(() => _professionals = list);
           } catch (e) {
             debugPrint('Filter error: $e');

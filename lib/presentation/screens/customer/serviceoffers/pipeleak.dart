@@ -1,114 +1,33 @@
+// lib/presentation/screens/customer/serviceoffers/pipeleak.dart
+// Auto-generated service detail screen for Pipe Leak Repair.
+
 import 'package:flutter/material.dart';
-import 'package:fixify/core/theme/app_theme.dart';
+import 'service_detail_screen.dart';
 
 class PipeLeakRepairScreen extends StatelessWidget {
-  const PipeLeakRepairScreen({super.key});
+  final Function(String)? onBookNow;
+  const PipeLeakRepairScreen({super.key, this.onBookNow});
 
   @override
-  Widget build(BuildContext context) {
-    // Data provided
-    final Map<String, String> serviceData = {
-      'name': 'Pipe Leak Repair',
-      'description': 'Fix leaking pipes and faucets',
-      'image': 'assets/images/pipeleakrepair.png',
-    };
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          serviceData['name']!,
-          style: const TextStyle(color: Colors.white),
-        ),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 300,
-                      height: 250,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        image: DecorationImage(
-                          image: AssetImage(serviceData['image']!),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    serviceData['name']!,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textDark,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    serviceData['description']!,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[700],
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(20),
-        child: SizedBox(
-          height: 50,
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: () {
-              print('Booking for ${serviceData['name']} initiated!');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Processing your booking...'),
-                ),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 2,
-            ),
-            child: const Text(
-              'Book Now',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ServiceDetailScreen(
+        serviceName: 'Pipe Leak Repair',
+        serviceType: 'Plumbing',
+        description:
+            'A leaking pipe can waste hundreds of liters of water per day and cause serious structural damage to your home. Our verified plumbers will quickly locate the source, replace or seal the affected section, and test the repair to ensure a permanent fix.',
+        imagePath: 'assets/images/pipeleakrepair.png',
+        accentColor: const Color(0xFF007AFF),
+        icon: Icons.water_drop_rounded,
+        priceRange: '₱500 – ₱2,500',
+        duration: '1–3 hours',
+        includes: const [
+          'Inspection of visible and hidden pipes',
+          'Sealing or replacement of the leaking section',
+          'Pressure test after repair',
+          'Clean-up of the work area',
+          '30-day workmanship warranty',
+        ],
+        tips:
+            'Turn off your main water valve before the handyman arrives to prevent further damage. Take photos of the leak area for the professional\'s reference.',
+        onBookNow: onBookNow,
+      );
 }
