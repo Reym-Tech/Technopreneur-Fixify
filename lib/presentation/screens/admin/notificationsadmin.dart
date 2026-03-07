@@ -1,53 +1,30 @@
 // lib/presentation/screens/admin/notifications_admin.dart
 
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
-
-enum AdminNotificationType {
-  application,
-  verification,
-  payment,
-  report,
-  system,
-  reminder,
-}
-
-class AdminNotificationModel {
-  final String id;
-  final String title;
-  final String message;
-  final DateTime timestamp;
-  final AdminNotificationType type;
-  final bool isRead;
-  final Map<String, dynamic>? data;
-  final String? actionRequired; // e.g., "Review", "Approve", "View"
-
-  const AdminNotificationModel({
-    required this.id,
-    required this.title,
-    required this.message,
-    required this.timestamp,
-    required this.type,
-    this.isRead = false,
-    this.data,
-    this.actionRequired,
-  });
-}
+import 'package:fixify/data/datasources/notification_datasource.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AdminNotificationsScreen extends StatefulWidget {
+  final String userId;
   final VoidCallback? onBack;
-  final Function(String notificationId)? onNotificationTap;
-  final Function()? onMarkAllAsRead;
-  final Function(String notificationId)? onApprove;
-  final Function(String notificationId)? onReject;
+  final Function(AppNotification notification)? onNotificationTap;
+  final NotificationDataSource? notificationDataSource;
+
+  /// Called when admin taps Approve on an application notification.
+  /// Receives the application reference_id from the notification.
+  final Function(String applicationId)? onApprove;
+
+  /// Called when admin taps Decline on an application notification.
+  final Function(String applicationId)? onReject;
 
   const AdminNotificationsScreen({
     super.key,
+    required this.userId,
     this.onBack,
     this.onNotificationTap,
-    this.onMarkAllAsRead,
+    this.notificationDataSource,
     this.onApprove,
     this.onReject,
   });
@@ -58,281 +35,275 @@ class AdminNotificationsScreen extends StatefulWidget {
 }
 
 class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
-  // Sample notifications data for admin
-  final List<AdminNotificationModel> _notifications = [
-    AdminNotificationModel(
-      id: '1',
-      title: 'New Professional Application',
-      message:
-          'Juan Dela Cruz applied for Plumbing services. Review credentials and verify.',
-      timestamp: DateTime.now().subtract(const Duration(minutes: 15)),
-      type: AdminNotificationType.application,
-      actionRequired: 'Review',
-      data: {'applicantId': 'PRO-001', 'serviceType': 'Plumbing'},
-    ),
-    AdminNotificationModel(
-      id: '2',
-      title: 'Verification Request',
-      message:
-          'Maria Santos submitted valid ID and certification for Electrical services.',
-      timestamp: DateTime.now().subtract(const Duration(minutes: 45)),
-      type: AdminNotificationType.verification,
-      actionRequired: 'Verify',
-      data: {'applicantId': 'PRO-002', 'serviceType': 'Electrical'},
-    ),
-    AdminNotificationModel(
-      id: '3',
-      title: 'Payment Dispute',
-      message:
-          'Customer reported an issue with payment for booking #BK-1234. Please review.',
-      timestamp: DateTime.now().subtract(const Duration(hours: 2)),
-      type: AdminNotificationType.payment,
-      actionRequired: 'Review',
-      isRead: true,
-    ),
-    AdminNotificationModel(
-      id: '4',
-      title: 'Application Approved',
-      message:
-          'You approved Pedro Reyes\'s Carpentry application. They can now receive bookings.',
-      timestamp: DateTime.now().subtract(const Duration(hours: 5)),
-      type: AdminNotificationType.system,
-      isRead: true,
-    ),
-    AdminNotificationModel(
-      id: '5',
-      title: 'User Report',
-      message:
-          'Multiple reports received about professional "Mike Tan". Please investigate.',
-      timestamp: DateTime.now().subtract(const Duration(hours: 8)),
-      type: AdminNotificationType.report,
-      actionRequired: 'Investigate',
-      data: {'professionalId': 'PRO-005', 'reportCount': 3},
-    ),
-    AdminNotificationModel(
-      id: '6',
-      title: 'System Update',
-      message: 'New version of Fixify is available. Review release notes.',
-      timestamp: DateTime.now().subtract(const Duration(days: 1)),
-      type: AdminNotificationType.system,
-      isRead: true,
-    ),
-    AdminNotificationModel(
-      id: '7',
-      title: 'Pending Applications',
-      message:
-          '5 professional applications waiting for review. Please check the approvals section.',
-      timestamp: DateTime.now().subtract(const Duration(hours: 12)),
-      type: AdminNotificationType.reminder,
-      actionRequired: 'View',
-    ),
-    AdminNotificationModel(
-      id: '8',
-      title: 'Verification Expiring',
-      message:
-          '3 professionals have documents expiring in 7 days. Remind them to update.',
-      timestamp: DateTime.now().subtract(const Duration(days: 2)),
-      type: AdminNotificationType.reminder,
-      actionRequired: 'Review',
-    ),
-    AdminNotificationModel(
-      id: '9',
-      title: 'Payout Processed',
-      message: 'Weekly payouts for 12 professionals have been processed.',
-      timestamp: DateTime.now().subtract(const Duration(days: 3)),
-      type: AdminNotificationType.payment,
-      isRead: true,
-    ),
-  ];
+  late final NotificationDataSource _ds;
+  RealtimeChannel? _channel;
+
+  List<AppNotification> _notifications = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _ds = widget.notificationDataSource ??
+        NotificationDataSource(Supabase.instance.client);
+    _loadNotifications();
+    _subscribeRealtime();
+  }
+
+  @override
+  void dispose() {
+    if (_channel != null) _ds.unsubscribe(_channel!);
+    super.dispose();
+  }
+
+  Future<void> _loadNotifications({bool silent = false}) async {
+    if (!silent)
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    try {
+      final list = await _ds.getNotifications(userId: widget.userId);
+      if (mounted) setState(() => _notifications = list);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _subscribeRealtime() {
+    _channel = _ds.subscribeToNotifications(
+      userId: widget.userId,
+      onNew: (n) {
+        if (mounted) setState(() => _notifications = [n, ..._notifications]);
+      },
+    );
+  }
 
   int get _unreadCount => _notifications.where((n) => !n.isRead).length;
 
+  int get _applicationCount => _notifications
+      .where((n) => n.type == NotificationTypeStrings.newApplication)
+      .length;
+
+  int get _pendingApplicationCount => _notifications
+      .where(
+          (n) => n.type == NotificationTypeStrings.newApplication && !n.isRead)
+      .length;
+
+  Future<void> _markAsRead(AppNotification notification) async {
+    if (notification.isRead) return;
+    setState(() {
+      _notifications = _notifications
+          .map((n) => n.id == notification.id ? n.copyAsRead() : n)
+          .toList();
+    });
+    try {
+      await _ds.markAsRead(notification.id);
+    } catch (_) {
+      if (mounted) await _loadNotifications(silent: true);
+    }
+    widget.onNotificationTap?.call(notification);
+  }
+
+  Future<void> _markAllAsRead() async {
+    setState(() {
+      _notifications = _notifications.map((n) => n.copyAsRead()).toList();
+    });
+    try {
+      await _ds.markAllAsRead(widget.userId);
+    } catch (_) {
+      if (mounted) await _loadNotifications(silent: true);
+    }
+  }
+
   String _formatTimestamp(DateTime timestamp) {
-    final now = DateTime.now();
-    final difference = now.difference(timestamp);
+    final diff = DateTime.now().difference(timestamp);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+    if (diff.inHours < 24) return '${diff.inHours} hr ago';
+    if (diff.inDays == 1) return 'Yesterday';
+    if (diff.inDays < 7) return '${diff.inDays} days ago';
+    return '${timestamp.day}/${timestamp.month}/${timestamp.year}';
+  }
 
-    if (difference.inMinutes < 1) {
-      return 'Just now';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes} min ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours} hr ago';
-    } else if (difference.inDays == 1) {
-      return 'Yesterday';
-    } else if (difference.inDays < 7) {
-      return '${difference.inDays} days ago';
-    } else {
-      return '${timestamp.day}/${timestamp.month}/${timestamp.year}';
+  Color _colorFor(String type) {
+    switch (type) {
+      case NotificationTypeStrings.newApplication:
+        return const Color(0xFFFF9500);
+      case NotificationTypeStrings.applicationReviewed:
+        return const Color(0xFF34C759);
+      case NotificationTypeStrings.userReport:
+        return const Color(0xFFFF3B30);
+      case NotificationTypeStrings.systemAdmin:
+        return const Color(0xFF007AFF);
+      default:
+        return const Color(0xFF5856D6);
     }
   }
 
-  Color _getNotificationColor(AdminNotificationType type) {
+  IconData _iconFor(String type) {
     switch (type) {
-      case AdminNotificationType.application:
-        return const Color(0xFFFF9500); // Orange for new applications
-      case AdminNotificationType.verification:
-        return const Color(0xFF5856D6); // Purple for verification
-      case AdminNotificationType.payment:
-        return const Color(0xFF34C759); // Green for payments
-      case AdminNotificationType.report:
-        return const Color(0xFFFF3B30); // Red for reports
-      case AdminNotificationType.system:
-        return const Color(0xFF007AFF); // Blue for system
-      case AdminNotificationType.reminder:
-        return const Color(0xFFFF9F0A); // Gold for reminders
-    }
-  }
-
-  IconData _getNotificationIcon(AdminNotificationType type) {
-    switch (type) {
-      case AdminNotificationType.application:
+      case NotificationTypeStrings.newApplication:
         return Icons.assignment_rounded;
-      case AdminNotificationType.verification:
+      case NotificationTypeStrings.applicationReviewed:
         return Icons.verified_rounded;
-      case AdminNotificationType.payment:
-        return Icons.payments_rounded;
-      case AdminNotificationType.report:
+      case NotificationTypeStrings.userReport:
         return Icons.flag_rounded;
-      case AdminNotificationType.system:
+      case NotificationTypeStrings.systemAdmin:
         return Icons.settings_rounded;
-      case AdminNotificationType.reminder:
+      default:
         return Icons.notifications_active_rounded;
     }
   }
 
-  void _markAsRead(String id) {
-    setState(() {
-      final index = _notifications.indexWhere((n) => n.id == id);
-      if (index != -1 && !_notifications[index].isRead) {
-        _notifications[index] = AdminNotificationModel(
-          id: _notifications[index].id,
-          title: _notifications[index].title,
-          message: _notifications[index].message,
-          timestamp: _notifications[index].timestamp,
-          type: _notifications[index].type,
-          isRead: true,
-          data: _notifications[index].data,
-          actionRequired: _notifications[index].actionRequired,
-        );
-      }
-    });
-    widget.onNotificationTap?.call(id);
-  }
-
-  void _markAllAsRead() {
-    setState(() {
-      for (int i = 0; i < _notifications.length; i++) {
-        if (!_notifications[i].isRead) {
-          _notifications[i] = AdminNotificationModel(
-            id: _notifications[i].id,
-            title: _notifications[i].title,
-            message: _notifications[i].message,
-            timestamp: _notifications[i].timestamp,
-            type: _notifications[i].type,
-            isRead: true,
-            data: _notifications[i].data,
-            actionRequired: _notifications[i].actionRequired,
-          );
-        }
-      }
-    });
-    widget.onMarkAllAsRead?.call();
+  String? _actionLabelFor(String type) {
+    switch (type) {
+      case NotificationTypeStrings.newApplication:
+        return 'Review';
+      case NotificationTypeStrings.userReport:
+        return 'Investigate';
+      default:
+        return null;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
-      body: CustomScrollView(
-        slivers: [
-          // Header Sliver
-          SliverToBoxAdapter(
-            child: _buildHeader(),
-          ),
-
-          // Stats Section
-          if (_unreadCount > 0)
-            SliverToBoxAdapter(
-              child: _buildStatsCard()
-                  .animate()
-                  .fadeIn(delay: 100.ms)
-                  .slideY(begin: 0.1, end: 0),
-            ),
-
-          // Notifications List Header
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Admin Notifications',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textDark,
+      body: _loading
+          ? _buildLoader()
+          : RefreshIndicator(
+              color: AppColors.primary,
+              onRefresh: () => _loadNotifications(),
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverToBoxAdapter(child: _buildHeader()),
+                  if (_error != null) SliverToBoxAdapter(child: _buildError()),
+                  if (_unreadCount > 0 && _error == null)
+                    SliverToBoxAdapter(
+                      child: _buildStatsCard()
+                          .animate()
+                          .fadeIn(delay: 100.ms)
+                          .slideY(begin: 0.1, end: 0),
                     ),
-                  ),
-                  if (_unreadCount > 0)
-                    TextButton(
-                      onPressed: _markAllAsRead,
-                      style: TextButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                      ),
-                      child: Text(
-                        'Mark all as read',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.primary,
+                  if (_error == null)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Admin Notifications',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textDark,
+                              ),
+                            ),
+                            if (_unreadCount > 0)
+                              TextButton(
+                                onPressed: _markAllAsRead,
+                                style: TextButton.styleFrom(
+                                    foregroundColor: AppColors.primary),
+                                child: const Text(
+                                  'Mark all as read',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ).animate().fadeIn(delay: 150.ms),
+                    ),
+                  if (_notifications.isEmpty && _error == null)
+                    SliverFillRemaining(child: _buildEmptyState())
+                  else if (_error == null)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final n = _notifications[index];
+                            return _AdminNotificationTile(
+                              notification: n,
+                              timestamp: _formatTimestamp(n.createdAt),
+                              color: _colorFor(n.type),
+                              icon: _iconFor(n.type),
+                              actionLabel: _actionLabelFor(n.type),
+                              onTap: () => _markAsRead(n),
+                              onApprove: (widget.onApprove != null &&
+                                      n.type ==
+                                          NotificationTypeStrings
+                                              .newApplication &&
+                                      !n.isRead &&
+                                      n.referenceId != null)
+                                  ? () => widget.onApprove!(n.referenceId!)
+                                  : null,
+                              onReject: (widget.onReject != null &&
+                                      n.type ==
+                                          NotificationTypeStrings
+                                              .newApplication &&
+                                      !n.isRead &&
+                                      n.referenceId != null)
+                                  ? () => widget.onReject!(n.referenceId!)
+                                  : null,
+                            )
+                                .animate()
+                                .fadeIn(delay: (200 + index * 50).ms)
+                                .slideX(begin: 0.05, end: 0);
+                          },
+                          childCount: _notifications.length,
                         ),
                       ),
                     ),
                 ],
               ),
-            ).animate().fadeIn(delay: 150.ms),
-          ),
-
-          // Notifications List
-          if (_notifications.isEmpty)
-            SliverFillRemaining(
-              child: _buildEmptyState(),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final notification = _notifications[index];
-                    return _AdminNotificationTile(
-                      notification: notification,
-                      timestamp: _formatTimestamp(notification.timestamp),
-                      color: _getNotificationColor(notification.type),
-                      icon: _getNotificationIcon(notification.type),
-                      onTap: () => _markAsRead(notification.id),
-                      onApprove: widget.onApprove,
-                      onReject: widget.onReject,
-                    )
-                        .animate()
-                        .fadeIn(delay: (200 + index * 50).ms)
-                        .slideX(begin: 0.05, end: 0);
-                  },
-                  childCount: _notifications.length,
-                ),
-              ),
             ),
-        ],
-      ),
     );
   }
 
-  Widget _buildHeader() {
-    final pendingCount = _notifications
-        .where((n) => n.type == AdminNotificationType.application && !n.isRead)
-        .length;
+  Widget _buildLoader() => const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation(AppColors.primary),
+        ),
+      );
 
+  Widget _buildError() => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.error.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(children: [
+            const Icon(Icons.error_outline_rounded,
+                color: AppColors.error, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(_error!,
+                  style: const TextStyle(
+                      fontSize: 13, color: AppColors.textMedium)),
+            ),
+            TextButton(
+              onPressed: _loadNotifications,
+              child: const Text('Retry',
+                  style: TextStyle(color: AppColors.primary)),
+            ),
+          ]),
+        ),
+      );
+
+  Widget _buildHeader() {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -353,95 +324,50 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: () {
-                          if (widget.onBack != null) {
-                            widget.onBack!();
-                          } else {
-                            Navigator.pop(context);
-                          }
-                        },
-                        icon: const Icon(
-                          Icons.arrow_back_rounded,
-                          color: Colors.white,
-                          size: 24,
-                        ),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
+                  Row(children: [
+                    IconButton(
+                      onPressed: () => widget.onBack != null
+                          ? widget.onBack!()
+                          : Navigator.pop(context),
+                      icon: const Icon(Icons.arrow_back_rounded,
+                          color: Colors.white, size: 24),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Notifications',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.4,
                       ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Notifications',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.4,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ]),
                   const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Admin Center',
+                  Row(children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Admin Center',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.65),
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'System Updates & Alerts',
+                                  color: Colors.white.withOpacity(0.65),
+                                  fontSize: 13)),
+                          const SizedBox(height: 4),
+                          Text('System Updates & Alerts',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.9),
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
+                                  color: Colors.white.withOpacity(0.9),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600)),
+                        ],
                       ),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.18),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Text(
-                              '$_unreadCount',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'unread',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (pendingCount > 0)
+                    ),
+                    _unreadBadge(),
+                  ]),
+                  // Pending applications pill (mirrors original design)
+                  if (_pendingApplicationCount > 0)
                     Padding(
                       padding: const EdgeInsets.only(top: 12),
                       child: Container(
@@ -460,7 +386,8 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                                 color: Color(0xFFFF9500), size: 14),
                             const SizedBox(width: 6),
                             Text(
-                              '$pendingCount pending ${pendingCount == 1 ? 'application' : 'applications'}',
+                              '$_pendingApplicationCount pending '
+                              '${_pendingApplicationCount == 1 ? 'application' : 'applications'}',
                               style: const TextStyle(
                                 color: Color(0xFFFF9500),
                                 fontSize: 12,
@@ -480,6 +407,26 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
     ).animate().fadeIn().slideY(begin: -0.05, end: 0);
   }
 
+  Widget _unreadBadge() => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.18)),
+        ),
+        child: Row(children: [
+          Text('$_unreadCount',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(width: 4),
+          Text('unread',
+              style: TextStyle(
+                  color: Colors.white.withOpacity(0.7), fontSize: 12)),
+        ]),
+      );
+
   Widget _circle(double size, double opacity) => Container(
         width: size,
         height: size,
@@ -493,13 +440,9 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
     final now = DateTime.now();
     final todayCount = _notifications
         .where((n) =>
-            n.timestamp.year == now.year &&
-            n.timestamp.month == now.month &&
-            n.timestamp.day == now.day)
-        .length;
-
-    final applicationCount = _notifications
-        .where((n) => n.type == AdminNotificationType.application)
+            n.createdAt.year == now.year &&
+            n.createdAt.month == now.month &&
+            n.createdAt.day == now.day)
         .length;
 
     return Padding(
@@ -526,22 +469,14 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
               label: 'Unread',
               color: AppColors.primary,
             ),
-            Container(
-              height: 30,
-              width: 1,
-              color: Colors.grey.shade200,
-            ),
+            _divider(),
             _buildStatItem(
               icon: Icons.pending_actions_rounded,
-              value: '$applicationCount',
+              value: '$_applicationCount',
               label: 'Applications',
               color: const Color(0xFFFF9500),
             ),
-            Container(
-              height: 30,
-              width: 1,
-              color: Colors.grey.shade200,
-            ),
+            _divider(),
             _buildStatItem(
               icon: Icons.today_rounded,
               value: '$todayCount',
@@ -554,96 +489,75 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
     );
   }
 
+  Widget _divider() =>
+      Container(height: 30, width: 1, color: Colors.grey.shade200);
+
   Widget _buildStatItem({
     required IconData icon,
     required String value,
     required String label,
     required Color color,
   }) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            icon,
-            color: color,
-            size: 18,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          value,
+    return Column(children: [
+      Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+            color: color.withOpacity(0.1), shape: BoxShape.circle),
+        child: Icon(icon, color: color, size: 18),
+      ),
+      const SizedBox(height: 6),
+      Text(value,
           style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textDark,
-          ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11,
-            color: AppColors.textLight,
-          ),
-        ),
-      ],
-    );
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textDark)),
+      Text(label,
+          style: const TextStyle(fontSize: 11, color: AppColors.textLight)),
+    ]);
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(32),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.08),
-              shape: BoxShape.circle,
+  Widget _buildEmptyState() => Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(32),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.notifications_none_rounded,
+                  size: 64, color: AppColors.primary.withOpacity(0.5)),
             ),
-            child: Icon(
-              Icons.notifications_none_rounded,
-              size: 64,
-              color: AppColors.primary.withOpacity(0.5),
+            const SizedBox(height: 24),
+            const Text('All Clear!',
+                style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark)),
+            const SizedBox(height: 12),
+            const Text(
+              'No new notifications.\nWe\'ll alert you when there are new applications or system updates.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 14, color: AppColors.textLight, height: 1.5),
             ),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            'All Clear!',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textDark,
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'No new notifications.\nWe\'ll alert you when there are new applications or system updates.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: AppColors.textLight,
-              height: 1.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+          ],
+        ),
+      );
 }
 
+// ── Tile (maintains original structure + approve/decline buttons) ─
+
 class _AdminNotificationTile extends StatelessWidget {
-  final AdminNotificationModel notification;
+  final AppNotification notification;
   final String timestamp;
   final Color color;
   final IconData icon;
+  final String? actionLabel;
   final VoidCallback onTap;
-  final Function(String)? onApprove;
-  final Function(String)? onReject;
+  final VoidCallback? onApprove;
+  final VoidCallback? onReject;
 
   const _AdminNotificationTile({
     required this.notification,
@@ -651,15 +565,15 @@ class _AdminNotificationTile extends StatelessWidget {
     required this.color,
     required this.icon,
     required this.onTap,
+    this.actionLabel,
     this.onApprove,
     this.onReject,
   });
 
   @override
   Widget build(BuildContext context) {
-    final hasAction = notification.actionRequired != null &&
-        (notification.type == AdminNotificationType.application ||
-            notification.type == AdminNotificationType.verification);
+    final hasActionButtons =
+        (onApprove != null || onReject != null) && !notification.isRead;
 
     return GestureDetector(
       onTap: onTap,
@@ -689,7 +603,6 @@ class _AdminNotificationTile extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Icon Container
                 Container(
                   width: 52,
                   height: 52,
@@ -697,46 +610,36 @@ class _AdminNotificationTile extends StatelessWidget {
                     color: color.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(
-                    icon,
-                    color: color,
-                    size: 26,
-                  ),
+                  child: Icon(icon, color: color, size: 26),
                 ),
                 const SizedBox(width: 16),
-
-                // Content
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              notification.title,
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: notification.isRead
-                                    ? FontWeight.w500
-                                    : FontWeight.w700,
-                                color: notification.isRead
-                                    ? AppColors.textMedium
-                                    : AppColors.textDark,
-                              ),
+                      Row(children: [
+                        Expanded(
+                          child: Text(
+                            notification.title,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: notification.isRead
+                                  ? FontWeight.w500
+                                  : FontWeight.w700,
+                              color: notification.isRead
+                                  ? AppColors.textMedium
+                                  : AppColors.textDark,
                             ),
                           ),
-                          if (!notification.isRead)
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: color,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                        ],
-                      ),
+                        ),
+                        if (!notification.isRead)
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                                color: color, shape: BoxShape.circle),
+                          ),
+                      ]),
                       const SizedBox(height: 6),
                       Text(
                         notification.message,
@@ -751,50 +654,42 @@ class _AdminNotificationTile extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.access_time_rounded,
+                      Row(children: [
+                        Icon(Icons.access_time_rounded,
                             size: 12,
-                            color: AppColors.textLight.withOpacity(0.6),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            timestamp,
+                            color: AppColors.textLight.withOpacity(0.6)),
+                        const SizedBox(width: 4),
+                        Text(timestamp,
                             style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textLight.withOpacity(0.8),
+                                fontSize: 11,
+                                color: AppColors.textLight.withOpacity(0.8))),
+                        if (actionLabel != null) ...[
+                          const SizedBox(width: 12),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: color.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              actionLabel!,
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: color,
+                              ),
                             ),
                           ),
-                          if (notification.actionRequired != null) ...[
-                            const SizedBox(width: 12),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: color.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                notification.actionRequired!,
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w700,
-                                  color: color,
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
-                      ),
+                      ]),
                     ],
                   ),
                 ),
               ],
             ),
-
-            // Action buttons for application/verification
-            if (hasAction && !notification.isRead)
+            // Approve / Decline buttons — only for new application notifications
+            if (hasActionButtons)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: Row(
@@ -802,13 +697,12 @@ class _AdminNotificationTile extends StatelessWidget {
                   children: [
                     if (onReject != null)
                       OutlinedButton(
-                        onPressed: () => onReject?.call(notification.id),
+                        onPressed: onReject,
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: Color(0xFFFF3B30)),
                           foregroundColor: const Color(0xFFFF3B30),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                              borderRadius: BorderRadius.circular(8)),
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 8),
                         ),
@@ -818,13 +712,12 @@ class _AdminNotificationTile extends StatelessWidget {
                     const SizedBox(width: 8),
                     if (onApprove != null)
                       ElevatedButton(
-                        onPressed: () => onApprove?.call(notification.id),
+                        onPressed: onApprove,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: color,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                              borderRadius: BorderRadius.circular(8)),
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 8),
                         ),

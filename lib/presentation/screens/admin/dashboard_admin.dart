@@ -237,7 +237,7 @@ class AdminDashboardScreen extends StatelessWidget {
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) =>
-                                      AdminNotificationsScreen(),
+                                      const AdminNotificationsScreen(userId: ''),
                                 ),
                               );
                             },

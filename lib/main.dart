@@ -33,6 +33,12 @@ import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
 import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
 
+// ── STEP 1: Add import at the top of main.dart ─────────────────
+import 'package:fixify/data/datasources/notification_datasource.dart';
+import 'package:fixify/presentation/screens/customer/notifications.dart';
+import 'package:fixify/presentation/screens/professional/notificationhandyman.dart';
+import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: '.env');
@@ -281,6 +287,7 @@ class MainApp extends StatefulWidget {
 class _MainAppState extends State<MainApp> {
   late final SupabaseDataSource _ds;
   late final ApplicationDataSource _appDs;
+  late final NotificationDataSource _notifDs;
 
   DateTime? _lastBackPress; // for double-tap-to-exit
 
@@ -302,6 +309,7 @@ class _MainAppState extends State<MainApp> {
     super.initState();
     _ds = SupabaseDataSource(Supabase.instance.client);
     _appDs = ApplicationDataSource(Supabase.instance.client);
+    _notifDs = NotificationDataSource(Supabase.instance.client);
     _init();
   }
 
@@ -383,6 +391,19 @@ class _MainAppState extends State<MainApp> {
       }
     } catch (e) {
       debugPrint('Refresh error: $e');
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 1 — Add this method inside _MainAppState, right after _refreshBookings()
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  Future<void> _refreshUser() async {
+    try {
+      final updated = await _ds.getCurrentUser();
+      if (mounted && updated != null) setState(() => _user = updated);
+    } catch (e) {
+      debugPrint('_refreshUser error: $e');
     }
   }
 
@@ -509,6 +530,45 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
+      // ── STEP 6: Admin notifications screen ────────────────────────
+      // In _buildContent(), inside the admin block (role == 'admin').
+      // Add a new navIndex case:
+
+      if (_navIndex == 4) {
+        // adjust index to match your bottom nav
+        return AdminNotificationsScreen(
+          userId: _user!.id,
+          notificationDataSource: _notifDs,
+          onBack: () => setState(() => _navIndex = 0),
+          onApprove: (applicationId) async {
+            // Reuse your existing approval logic — look up the app by id
+            try {
+              final app =
+                  _applications.firstWhere((a) => a.id == applicationId);
+              await _appDs.approveApplication(app);
+              _applications = await _appDs.getAllApplications();
+              _professionals = await _ds.getProfessionals();
+              setState(() {});
+              _notify('${app.applicantName} approved for ${app.serviceType}!');
+            } catch (e) {
+              _notify('Error: $e');
+            }
+          },
+          onReject: (applicationId) async {
+            try {
+              final app =
+                  _applications.firstWhere((a) => a.id == applicationId);
+              await _appDs.rejectApplication(app);
+              _applications = await _appDs.getAllApplications();
+              setState(() {});
+              _notify('Application rejected.');
+            } catch (e) {
+              _notify('Error: $e');
+            }
+          },
+        );
+      }
+
       final pending = _applications.where((a) => a.status == 'pending').length;
       return AdminDashboardScreen(
         adminName: u.name,
@@ -531,16 +591,6 @@ class _MainAppState extends State<MainApp> {
       final u = _user!.toEntity();
       final proEntity = _pro?.toEntity();
       final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
-
-      // ── Profile tab
-      if (_navIndex == 3) {
-        return ProfessionalProfileScreen(
-          user: u,
-          professional: proEntity,
-          onBack: () => setState(() => _navIndex = 0),
-          onLogout: () async => Supabase.instance.client.auth.signOut(),
-        );
-      }
 
       // ── Booking Requests tab (navIndex 1)
       if (_navIndex == 1) {
@@ -577,7 +627,6 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
-      // ── Earnings tab (navIndex 2)  <-- ADD THIS SECTION
       // ── Earnings tab (navIndex 2)
       if (_navIndex == 2) {
         return EarningsHandymanScreen(
@@ -601,6 +650,83 @@ class _MainAppState extends State<MainApp> {
           onAddPaymentMethod: (method) async {
             _notify('Payment method added: ${method['method']}');
             return Future.value();
+          },
+        );
+      }
+
+      // ── Profile tab
+      if (_navIndex == 3) {
+        return ProfessionalProfileScreen(
+          user: u,
+          professional: proEntity,
+          onBack: () => setState(() => _navIndex = 0),
+
+          // ── Edit Profile: save name + phone to users table,
+          //                  city to professionals table ────────────────────
+          onSaveProfile: (name, phone, city) async {
+            // 1. Update users table (name + phone)
+            await _ds.updateUserProfile(
+              userId: _user!.id,
+              name: name,
+              phone: phone ?? '',
+            );
+            // 2. Update professionals table (city)
+            if (_pro != null) {
+              await Supabase.instance.client
+                  .from('professionals')
+                  .update({'city': city}).eq('id', _pro!.id);
+            }
+            // 3. Refresh both _user and _pro in local state
+            await _refreshUser();
+            final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
+            if (mounted && updatedPro != null) {
+              setState(() => _pro = updatedPro);
+            }
+          },
+
+          // ── Change Password ───────────────────────────────────────────────
+          onChangePassword: (currentPassword, newPassword) async {
+            // Verify current password first
+            await Supabase.instance.client.auth.signInWithPassword(
+              email: _user!.email,
+              password: currentPassword,
+            );
+            // Then update to new password
+            await Supabase.instance.client.auth.updateUser(
+              UserAttributes(password: newPassword),
+            );
+          },
+
+          // ── Upload Avatar: Storage → update users.avatar_url ─────────────
+          onUploadAvatar: (bytes, fileName) async {
+            final publicUrl = await _ds.uploadAvatar(
+              _user!.id,
+              bytes,
+              fileName,
+            );
+            await _ds.updateUserProfile(
+              userId: _user!.id,
+              avatarUrl: publicUrl,
+            );
+            await _refreshUser();
+            return publicUrl;
+          },
+
+          onLogout: () async => Supabase.instance.client.auth.signOut(),
+        );
+      }
+
+      if (_navIndex == 4) {
+        // adjust index to match your bottom nav
+        return HandymanNotificationsScreen(
+          userId: _user!.id,
+          notificationDataSource: _notifDs,
+          onBack: () => setState(() => _navIndex = 0),
+          onNotificationTap: (notification) {
+            // Optional: navigate to booking requests when tapping a booking_request
+            if (notification.type == NotificationTypeStrings.bookingRequest) {
+              setState(() => _navIndex = 1);
+            }
           },
         );
       }
@@ -775,6 +901,35 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
+    // ── STEP 4: Customer notifications screen ─────────────────────
+    // In _customerFlow(), add a new case BEFORE the switch statement:
+
+    if (_navIndex == 2 && _screen == 'notifications') {
+      // or wherever you navigate to it
+      return NotificationsScreen(
+        userId: _user!.id,
+        notificationDataSource: _notifDs,
+        onBack: () => setState(() {
+          _screen = 'home';
+          _navIndex = 0;
+        }),
+        onNotificationTap: (notification) {
+          // Optional: navigate to the referenced booking/screen
+          if (notification.referenceType == 'booking' &&
+              notification.referenceId != null) {
+            final booking = _bookings
+                .firstWhereOrNull((b) => b.id == notification.referenceId);
+            if (booking != null) {
+              setState(() {
+                _selectedBooking = booking;
+                _screen = 'booking_status';
+              });
+            }
+          }
+        },
+      );
+    }
+
     switch (_screen) {
       case 'request_service':
         return RequestServiceScreen(
@@ -885,6 +1040,51 @@ class _MainAppState extends State<MainApp> {
             _screen = 'home';
             _navIndex = 0;
           }),
+
+          // ── Edit Profile: save name + phone to Supabase ──────────────────
+          onSaveProfile: (name, phone) async {
+            await _ds.updateUserProfile(
+              userId: _user!.id,
+              name: name,
+              // Always write phone; pass empty string as null so we can clear it
+              phone: phone ?? '',
+            );
+            await _refreshUser();
+          },
+
+          // ── Change Password ───────────────────────────────────────────────
+          // Re-authenticate first so we confirm the current password is correct,
+          // then call updateUser to set the new one.
+          onChangePassword: (currentPassword, newPassword) async {
+            // Step 1: verify current password by re-signing in
+            await Supabase.instance.client.auth.signInWithPassword(
+              email: _user!.email,
+              password: currentPassword,
+            );
+            // Step 2: update to the new password
+            await Supabase.instance.client.auth.updateUser(
+              UserAttributes(password: newPassword),
+            );
+          },
+
+          // ── Upload Avatar: Storage → update users.avatar_url ─────────────
+          onUploadAvatar: (bytes, fileName) async {
+            // Upload to Storage (upsert — overwrites previous avatar)
+            final publicUrl = await _ds.uploadAvatar(
+              _user!.id,
+              bytes,
+              fileName,
+            );
+            // Persist the new URL in the users table
+            await _ds.updateUserProfile(
+              userId: _user!.id,
+              avatarUrl: publicUrl,
+            );
+            // Refresh local _user so the rest of the app sees the new avatar
+            await _refreshUser();
+            return publicUrl;
+          },
+
           onLogout: () async => Supabase.instance.client.auth.signOut(),
         );
 
@@ -1009,5 +1209,14 @@ class _MainAppState extends State<MainApp> {
     } catch (e) {
       debugPrint('Review error: $e');
     }
+  }
+}
+
+extension IterableExtension<T> on Iterable<T> {
+  T? firstWhereOrNull(bool Function(T) test) {
+    for (final e in this) {
+      if (test(e)) return e;
+    }
+    return null;
   }
 }

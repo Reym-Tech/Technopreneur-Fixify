@@ -244,7 +244,7 @@ class _ProfessionalDashboardScreenState
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) =>
-                                      HandymanNotificationsScreen(),
+                                      HandymanNotificationsScreen(userId: widget.user?.id ?? ''),
                                 ),
                               );
                             },

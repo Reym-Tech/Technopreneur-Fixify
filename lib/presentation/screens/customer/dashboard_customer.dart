@@ -557,7 +557,9 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => NotificationsScreen(),
+                                  builder: (context) => NotificationsScreen(
+                                    userId: widget.user?.id ?? '',
+                                  ),
                                 ),
                               );
                             },

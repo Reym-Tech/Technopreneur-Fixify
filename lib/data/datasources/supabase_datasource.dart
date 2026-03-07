@@ -299,7 +299,9 @@ class SupabaseDataSource {
 
   // ── USER PROFILE ──────────────────────────────────────────
 
-  Future<void> updateUserProfile({
+  /// Update name, phone, and/or avatar_url in the users table.
+  /// Only fields that are non-null are written.
+  Future<UserModel> updateUserProfile({
     required String userId,
     String? name,
     String? phone,
@@ -309,15 +311,43 @@ class SupabaseDataSource {
     if (name != null) updates['name'] = name;
     if (phone != null) updates['phone'] = phone;
     if (avatarUrl != null) updates['avatar_url'] = avatarUrl;
+
+    if (updates.isEmpty) {
+      // Nothing to update — just return the current record
+      return (await getCurrentUser())!;
+    }
+
     await _client.from(AppConfig.usersTable).update(updates).eq('id', userId);
+
+    // Re-fetch and return the fresh record so callers always get truth
+    final data = await _client
+        .from(AppConfig.usersTable)
+        .select()
+        .eq('id', userId)
+        .single();
+    return UserModel.fromJson(data);
   }
 
+  /// Upload avatar bytes to Supabase Storage and return the public URL.
+  /// Uses upsert so re-uploading the same path overwrites cleanly.
   Future<String> uploadAvatar(
       String userId, List<int> fileBytes, String fileName) async {
-    final path = '$userId/$fileName';
-    await _client.storage
-        .from(AppConfig.avatarsBucket)
-        .uploadBinary(path, Uint8List.fromList(fileBytes));
-    return _client.storage.from(AppConfig.avatarsBucket).getPublicUrl(path);
+    // Always store under a fixed name per user so old files are replaced
+    final path = '$userId/avatar.jpg';
+
+    await _client.storage.from(AppConfig.avatarsBucket).uploadBinary(
+          path,
+          Uint8List.fromList(fileBytes),
+          fileOptions: const FileOptions(
+            contentType: 'image/jpeg',
+            upsert: true, // overwrite if already exists
+          ),
+        );
+
+    // Return a cache-busted public URL so the Image widget re-fetches
+    final base =
+        _client.storage.from(AppConfig.avatarsBucket).getPublicUrl(path);
+    final busted = '$base?t=${DateTime.now().millisecondsSinceEpoch}';
+    return busted;
   }
 }
