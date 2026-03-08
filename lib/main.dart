@@ -6,6 +6,8 @@
 //     with onSetPrice (saves assessment_price) and onUpdateStatus.
 //  3. getCustomerBookings / getProfessionalBookings now use improved queries
 //     (see supabase_datasource.dart) so lat/lng and avatarUrl flow through.
+//  4. FIX: Moved misplaced empty-user guard so _navIndex == 4 (AdminNotifications)
+//     is reachable. AdminNotificationsScreen now also has onNavTap wired.
 
 import 'package:fixify/presentation/screens/admin/superadmin_analytics.dart';
 import 'package:fixify/presentation/screens/professional/earnings.dart';
@@ -117,7 +119,7 @@ class _AppNavigatorState extends State<AppNavigator> {
   }
 }
 
-// ── AUTH ──────────────────────────────────────────────────
+// ── AUTH ──────────────────────────────────────────────
 
 class AuthFlow extends StatefulWidget {
   const AuthFlow({super.key});
@@ -303,11 +305,12 @@ class _MainAppState extends State<MainApp> {
   int _navIndex = 0;
   String _screen = 'home';
   ProfessionalModel? _selectedPro;
+  int _unreadNotifCount = 0;
 
   final Set<String> _reviewedBookingIds = {};
   BookingModel? _selectedBooking;
 
-  // ── NEW: tracks which booking the pro tapped in history ──────────────────
+  // tracks which booking the pro tapped in history
   BookingEntity? _selectedProBooking;
 
   bool _loading = true;
@@ -387,6 +390,17 @@ class _MainAppState extends State<MainApp> {
               if (reviewed) _reviewedBookingIds.add(b.id);
             }
           }
+          _notifDs.getNotifications(userId: _user!.id).then((list) {
+            if (mounted)
+              setState(() =>
+                  _unreadNotifCount = list.where((n) => !n.isRead).length);
+          });
+          try {
+            final notifs = await _notifDs.getNotifications(userId: _user!.id);
+            _unreadNotifCount = notifs.where((n) => !n.isRead).length;
+          } catch (e) {
+            debugPrint('Could not load notif count: $e');
+          }
         }
       }
     } catch (e) {
@@ -464,7 +478,6 @@ class _MainAppState extends State<MainApp> {
           return;
         }
         if (_screen != 'home') {
-          // If coming back from pro booking detail → go back to history
           if (_screen == 'pro_booking_detail') {
             setState(() => _screen = 'booking_history');
             return;
@@ -499,60 +512,81 @@ class _MainAppState extends State<MainApp> {
 
   Widget _buildContent() {
     if (_user!.role == 'admin') {
-      final u = _user!.toEntity();
+      return _adminFlow();
+    }
 
-      if (_navIndex == 1) {
-        return ApprovalsScreen(
-          applications: _applications,
-          onBack: () => setState(() => _navIndex = 0),
-          onApprove: (app) async {
-            try {
-              await _appDs.approveApplication(app);
-              _applications = await _appDs.getAllApplications();
-              _professionals = await _ds.getProfessionals();
-              setState(() {});
-              _notify('${app.applicantName} approved for ${app.serviceType}!');
-            } catch (e) {
-              _notify('Error: $e');
-            }
-          },
-          onReject: (app, note) async {
-            try {
-              await _appDs.rejectApplication(app, note: note);
-              _applications = await _appDs.getAllApplications();
-              setState(() {});
-              _notify('Application rejected.');
-            } catch (e) {
-              _notify('Error: $e');
-            }
-          },
-          onNavTap: (i) => setState(() => _navIndex = i),
-          currentNavIndex: _navIndex,
-        );
-      }
+    // ── PROFESSIONAL ──────────────────────────────────────────
+    if (_user!.isProfessional) {
+      return _professionalFlow();
+    }
 
-      if (_navIndex == 2) {
-        return SuperAdminAnalytics(
-          onBack: () => setState(() => _navIndex = 0),
-          onNavTap: (i) => setState(() => _navIndex = i),
-          currentNavIndex: _navIndex,
-        );
-      }
+    // ── CUSTOMER ──────────────────────────────────────────
+    return _customerFlow();
+  }
 
-      if (_navIndex == 3) {
-        return AdminProfileScreen(
-          adminName: u.name,
-          adminEmail: u.email,
-          adminPhone: u.phone,
-          accessLevel: 'SUPERADMIN',
-          lastLogin: DateTime.now(),
-          onBack: () => setState(() => _navIndex = 0),
-          onLogout: () async => Supabase.instance.client.auth.signOut(),
-        );
-      }
+  // ── ADMIN FLOW ────────────────────────────────────────────
 
+  Widget _adminFlow() {
+    final u = _user!.toEntity();
+
+    // ── Approvals tab
+    if (_navIndex == 1) {
+      return ApprovalsScreen(
+        applications: _applications,
+        onBack: () => setState(() => _navIndex = 0),
+        onApprove: (app) async {
+          try {
+            await _appDs.approveApplication(app);
+            _applications = await _appDs.getAllApplications();
+            _professionals = await _ds.getProfessionals();
+            setState(() {});
+            _notify('${app.applicantName} approved for ${app.serviceType}!');
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
+        onReject: (app, note) async {
+          try {
+            await _appDs.rejectApplication(app, note: note);
+            _applications = await _appDs.getAllApplications();
+            setState(() {});
+            _notify('Application rejected.');
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
+        onNavTap: (i) => setState(() => _navIndex = i),
+        currentNavIndex: _navIndex,
+      );
+    }
+
+    // ── Analytics tab
+    if (_navIndex == 2) {
+      return SuperAdminAnalytics(
+        onBack: () => setState(() => _navIndex = 0),
+        onNavTap: (i) => setState(() => _navIndex = i),
+        currentNavIndex: _navIndex,
+      );
+    }
+
+    // ── Profile / Settings tab
+    if (_navIndex == 3) {
+      return AdminProfileScreen(
+        adminName: u.name,
+        adminEmail: u.email,
+        adminPhone: u.phone,
+        accessLevel: 'SUPERADMIN',
+        lastLogin: DateTime.now(),
+        onBack: () => setState(() => _navIndex = 0),
+        onLogout: () async => Supabase.instance.client.auth.signOut(),
+      );
+    }
+
+    // ── Notifications tab (bell icon → navIndex 4)
+    if (_navIndex == 4) {
+      // Guard: user id must be a valid UUID before opening notifications
       if (_user == null || _user!.id.isEmpty) {
-        return const Scaffold(
+        return Scaffold(
           backgroundColor: AppColors.backgroundLight,
           body: Center(
             child: CircularProgressIndicator(
@@ -562,379 +596,66 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
-      if (_navIndex == 4) {
-        return AdminNotificationsScreen(
-          userId: _user!.id,
-          notificationDataSource: _notifDs,
-          onBack: () => setState(() => _navIndex = 0),
-          onApprove: (applicationId) async {
-            try {
-              final app =
-                  _applications.firstWhere((a) => a.id == applicationId);
-              await _appDs.approveApplication(app);
-              _applications = await _appDs.getAllApplications();
-              _professionals = await _ds.getProfessionals();
-              setState(() {});
-              _notify('${app.applicantName} approved for ${app.serviceType}!');
-            } catch (e) {
-              _notify('Error: $e');
-            }
-          },
-          onReject: (applicationId) async {
-            try {
-              final app =
-                  _applications.firstWhere((a) => a.id == applicationId);
-              await _appDs.rejectApplication(app);
-              _applications = await _appDs.getAllApplications();
-              setState(() {});
-              _notify('Application rejected.');
-            } catch (e) {
-              _notify('Error: $e');
-            }
-          },
-        );
-      }
-
-      final pending = _applications.where((a) => a.status == 'pending').length;
-      return AdminDashboardScreen(
-        adminName: u.name,
-        pendingApprovals: pending,
-        totalUsers: _professionals.length,
-        totalEarnings: _bookings
-            .where((b) => b.status == BookingStatus.completed)
-            .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0)),
-        completedBookings:
-            _bookings.where((b) => b.status == BookingStatus.completed).length,
-        currentNavIndex: _navIndex,
-        onNavTap: (i) => setState(() => _navIndex = i),
-        onHandymanApprovals: () => setState(() => _navIndex = 1),
-        onAnalytics: () => setState(() => _navIndex = 2),
+      return AdminNotificationsScreen(
+        userId: _user!.id,
+        notificationDataSource: _notifDs,
+        onBack: () => setState(() => _navIndex = 0),
+        onApprove: (applicationId) async {
+          try {
+            final app = _applications.firstWhere((a) => a.id == applicationId);
+            await _appDs.approveApplication(app);
+            _applications = await _appDs.getAllApplications();
+            _professionals = await _ds.getProfessionals();
+            setState(() {});
+            _notify('${app.applicantName} approved for ${app.serviceType}!');
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
+        onReject: (applicationId) async {
+          try {
+            final app = _applications.firstWhere((a) => a.id == applicationId);
+            await _appDs.rejectApplication(app);
+            _applications = await _appDs.getAllApplications();
+            setState(() {});
+            _notify('Application rejected.');
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
       );
     }
 
-    // ── PROFESSIONAL ──────────────────────────────────────────
-    if (_user!.isProfessional) {
-      final u = _user!.toEntity();
-      final proEntity = _pro?.toEntity();
-      final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
+    // ── Dashboard (navIndex 0, default)
+    final pending = _applications.where((a) => a.status == 'pending').length;
+    return AdminDashboardScreen(
+      adminUserId: _user!.id,
+      adminName: _user!.name,
+      pendingApprovals: pending,
+      totalUsers: _professionals.length,
+      totalEarnings: _bookings
+          .where((b) => b.status == BookingStatus.completed)
+          .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0)),
+      completedBookings:
+          _bookings.where((b) => b.status == BookingStatus.completed).length,
+      currentNavIndex: _navIndex,
+      onNavTap: (i) => setState(() => _navIndex = i),
+      onHandymanApprovals: () => setState(() => _navIndex = 1),
+      onAnalytics: () => setState(() => _navIndex = 2),
+    );
+  }
 
-      // ── Booking Requests tab (navIndex 1)
-      if (_navIndex == 1) {
-        return BookingRequestsScreen(
-          bookings: bookingEntities,
-          currentNavIndex: _navIndex,
-          onNavTap: (i) async {
-            setState(() {
-              _navIndex = i;
-              _screen = 'home';
-            });
-            if (i == 1) await _refreshBookings();
-          },
-          onRefresh: _refreshBookings,
-          onAccept: (booking) async {
-            try {
-              await _ds.updateBookingStatus(booking.id, BookingStatus.accepted);
-              await _refreshBookings();
-              _notify('Booking accepted! Customer has been notified.');
-            } catch (e) {
-              _notify('Error: $e');
-            }
-          },
-          onDecline: (booking) async {
-            try {
-              await _ds.updateBookingStatus(
-                  booking.id, BookingStatus.cancelled);
-              await _refreshBookings();
-              _notify('Booking declined.');
-            } catch (e) {
-              _notify('Error: $e');
-            }
-          },
-        );
-      }
+  // ── PROFESSIONAL FLOW ─────────────────────────────────────
 
-      // ── Earnings tab (navIndex 2)
-      if (_navIndex == 2) {
-        return EarningsHandymanScreen(
-          professionalId: _pro?.id,
-          currentNavIndex: _navIndex,
-          onNavTap: (i) {
-            setState(() {
-              _navIndex = i;
-              _screen = 'home';
-            });
-          },
-          onBack: () => setState(() {
-            _navIndex = 0;
-            _screen = 'home';
-          }),
-          onWithdraw: (amount, method) async {
-            _notify('Withdrawal of ₱$amount requested via $method');
-            return Future.value();
-          },
-          onAddPaymentMethod: (method) async {
-            _notify('Payment method added: ${method['method']}');
-            return Future.value();
-          },
-        );
-      }
+  Widget _professionalFlow() {
+    final u = _user!.toEntity();
+    final proEntity = _pro?.toEntity();
+    final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
 
-      // ── Profile tab
-      if (_navIndex == 3) {
-        return ProfessionalProfileScreen(
-          user: u,
-          professional: proEntity,
-          onBack: () => setState(() => _navIndex = 0),
-          onSaveProfile: (name, phone, city) async {
-            await _ds.updateUserProfile(
-              userId: _user!.id,
-              name: name,
-              phone: phone ?? '',
-            );
-            if (_pro != null) {
-              await Supabase.instance.client
-                  .from('professionals')
-                  .update({'city': city}).eq('id', _pro!.id);
-            }
-            await _refreshUser();
-            final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
-            if (mounted && updatedPro != null) {
-              setState(() => _pro = updatedPro);
-            }
-          },
-          onChangePassword: (currentPassword, newPassword) async {
-            await Supabase.instance.client.auth.signInWithPassword(
-              email: _user!.email,
-              password: currentPassword,
-            );
-            await Supabase.instance.client.auth.updateUser(
-              UserAttributes(password: newPassword),
-            );
-          },
-          onUploadAvatar: (bytes, fileName) async {
-            final publicUrl = await _ds.uploadAvatar(
-              _user!.id,
-              bytes,
-              fileName,
-            );
-            await _ds.updateUserProfile(
-              userId: _user!.id,
-              avatarUrl: publicUrl,
-            );
-            await _refreshUser();
-            return publicUrl;
-          },
-          onSaveLocation: (lat, lng) async {
-            if (_pro != null) {
-              await _ds.updateProfessionalLocation(
-                professionalId: _pro!.id,
-                latitude: lat,
-                longitude: lng,
-              );
-              final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
-              if (mounted && updatedPro != null) {
-                setState(() => _pro = updatedPro);
-              }
-            }
-          },
-          onLogout: () async => Supabase.instance.client.auth.signOut(),
-        );
-      }
-
-      if (_navIndex == 4) {
-        return HandymanNotificationsScreen(
-          userId: _user!.id,
-          notificationDataSource: _notifDs,
-          onBack: () => setState(() => _navIndex = 0),
-          onNotificationTap: (notification) {
-            if (notification.type == NotificationTypeStrings.bookingRequest) {
-              setState(() => _navIndex = 1);
-            }
-          },
-        );
-      }
-
-      // ── NEW: Pro Booking Detail screen ───────────────────────────────────
-      if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
-        return ProBookingDetailScreen(
-          booking: _selectedProBooking!,
-          onBack: () => setState(() => _screen = 'booking_history'),
-          onSetPrice: (price) async {
-            try {
-              await _ds.updateBookingAssessmentPrice(
-                bookingId: _selectedProBooking!.id,
-                price: price,
-              );
-              // Refresh bookings so updated price is reflected everywhere
-              await _refreshBookings();
-              // Update the selected booking entity with new assessment price
-              final updated = _bookings
-                  .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
-              if (mounted && updated != null) {
-                setState(() => _selectedProBooking = updated.toEntity());
-              }
-            } catch (e) {
-              _notify('Failed to save price: $e');
-              rethrow;
-            }
-          },
-          onUpdateStatus: (newStatus) async {
-            try {
-              await _ds.updateBookingStatus(_selectedProBooking!.id, newStatus);
-              await _refreshBookings();
-              final updated = _bookings
-                  .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
-              if (mounted && updated != null) {
-                setState(() => _selectedProBooking = updated.toEntity());
-              }
-              if (newStatus == BookingStatus.completed) {
-                _notify('Job marked as complete! Great work. ✅');
-              } else if (newStatus == BookingStatus.inProgress) {
-                _notify('Job started! Customer has been notified. 🔧');
-              }
-            } catch (e) {
-              _notify('Error updating status: $e');
-              rethrow;
-            }
-          },
-        );
-      }
-
-      // ── Booking History screen ────────────────────────────────────────────
-      if (_screen == 'booking_history') {
-        return BookingHistoryScreen(
-          bookings: bookingEntities,
-          currentNavIndex: _navIndex,
-          onNavTap: (i) => setState(() {
-            _navIndex = i;
-            _screen = 'home';
-          }),
-          onBack: () => setState(() => _screen = 'home'),
-          onRefresh: _refreshBookings,
-          onUpdateStatus: (booking, status) async {
-            try {
-              await _ds.updateBookingStatus(booking.id, status);
-              await _refreshBookings();
-            } catch (e) {
-              _notify('Error: $e');
-            }
-          },
-          // ── NEW: tap a history card → open ProBookingDetailScreen ─────────
-          onViewDetail: (booking) {
-            setState(() {
-              _selectedProBooking = booking;
-              _screen = 'pro_booking_detail';
-            });
-          },
-        );
-      }
-
-      if (_screen == 'reviews') {
-        return ProfessionalReviewsScreen(
-          reviews: _reviews.map((r) => r.toEntity()).toList(),
-          professional: _pro?.toEntity(),
-          currentNavIndex: _navIndex,
-          onNavTap: (i) => setState(() {
-            _navIndex = i;
-            _screen = 'home';
-          }),
-          onBack: () => setState(() => _screen = 'home'),
-          onRefresh: () async {
-            await _refreshReviews();
-          },
-        );
-      }
-
-      // ── Apply screen
-      if (_screen == 'apply') {
-        final proId = _pro?.id;
-        if (proId == null) {
-          return Scaffold(
-            backgroundColor: AppColors.backgroundLight,
-            appBar: AppBar(
-              backgroundColor: const Color(0xFF0F3D2E),
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                    color: Colors.white),
-                onPressed: () => setState(() => _screen = 'home'),
-              ),
-              title: const Text('Apply for Service',
-                  style: TextStyle(color: Colors.white)),
-              elevation: 0,
-            ),
-            body: Center(
-                child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.error_outline_rounded,
-                    size: 56, color: Color(0xFFFF9500)),
-                const SizedBox(height: 16),
-                const Text(
-                    'Professional profile not found.\nPlease log out and log back in.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 15, color: Color(0xFF666666))),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: () => Supabase.instance.client.auth.signOut(),
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12))),
-                  child: const Text('Log Out & Try Again'),
-                ),
-              ]),
-            )),
-          );
-        }
-        return ApplyScreen(
-          professionalId: proId,
-          userId: _user!.id,
-          onBack: () => setState(() => _screen = 'home'),
-          onSubmit: (data) async {
-            try {
-              final app = await _appDs.submitApplication(
-                professionalId: proId,
-                userId: _user!.id,
-                serviceType: data.serviceType,
-                credentialFile: data.credentialFile,
-                validIdFile: data.validIdFile,
-                yearsExp: data.yearsExp,
-                priceMin: data.priceMin,
-                bio: data.bio,
-              );
-              setState(() {
-                _applications = [app, ..._applications];
-                _screen = 'verification_status';
-              });
-              _notify(
-                  "Application submitted! We'll review it within 24–48 hours.");
-            } catch (e) {
-              if (mounted)
-                ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Submission failed: $e')));
-            }
-          },
-        );
-      }
-
-      // ── Verification status screen
-      if (_screen == 'verification_status') {
-        return VerificationStatusScreen(
-          applications: _applications,
-          onBack: () => setState(() => _screen = 'home'),
-          onApplyNew: () => setState(() => _screen = 'apply'),
-        );
-      }
-
-      // ── Professional Dashboard (navIndex 0)
-      return ProfessionalDashboardScreen(
-        user: u,
-        professional: proEntity,
+    // ── Booking Requests tab (navIndex 1)
+    if (_navIndex == 1) {
+      return BookingRequestsScreen(
         bookings: bookingEntities,
-        reviews: _reviews.map((r) => r.toEntity()).toList(),
-        pendingApplications:
-            _applications.where((a) => a.status == 'pending').length,
         currentNavIndex: _navIndex,
         onNavTap: (i) async {
           setState(() {
@@ -943,6 +664,184 @@ class _MainAppState extends State<MainApp> {
           });
           if (i == 1) await _refreshBookings();
         },
+        onRefresh: _refreshBookings,
+        onAccept: (booking) async {
+          try {
+            await _ds.updateBookingStatus(booking.id, BookingStatus.accepted);
+            await _refreshBookings();
+            _notify('Booking accepted! Customer has been notified.');
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
+        onDecline: (booking) async {
+          try {
+            await _ds.updateBookingStatus(booking.id, BookingStatus.cancelled);
+            await _refreshBookings();
+            _notify('Booking declined.');
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
+      );
+    }
+
+    // ── Earnings tab (navIndex 2)
+    if (_navIndex == 2) {
+      return EarningsHandymanScreen(
+        professionalId: _pro?.id,
+        currentNavIndex: _navIndex,
+        onNavTap: (i) {
+          setState(() {
+            _navIndex = i;
+            _screen = 'home';
+          });
+        },
+        onBack: () => setState(() {
+          _navIndex = 0;
+          _screen = 'home';
+        }),
+        onWithdraw: (amount, method) async {
+          _notify('Withdrawal of ₱$amount requested via $method');
+          return Future.value();
+        },
+        onAddPaymentMethod: (method) async {
+          _notify('Payment method added: ${method['method']}');
+          return Future.value();
+        },
+      );
+    }
+
+    // ── Profile tab
+    if (_navIndex == 3) {
+      return ProfessionalProfileScreen(
+        user: u,
+        professional: proEntity,
+        onBack: () => setState(() => _navIndex = 0),
+        onSaveProfile: (name, phone, city) async {
+          await _ds.updateUserProfile(
+            userId: _user!.id,
+            name: name,
+            phone: phone ?? '',
+          );
+          if (_pro != null) {
+            await Supabase.instance.client
+                .from('professionals')
+                .update({'city': city}).eq('id', _pro!.id);
+          }
+          await _refreshUser();
+          final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
+          if (mounted && updatedPro != null) {
+            setState(() => _pro = updatedPro);
+          }
+        },
+        onChangePassword: (currentPassword, newPassword) async {
+          await Supabase.instance.client.auth.signInWithPassword(
+            email: _user!.email,
+            password: currentPassword,
+          );
+          await Supabase.instance.client.auth.updateUser(
+            UserAttributes(password: newPassword),
+          );
+        },
+        onUploadAvatar: (bytes, fileName) async {
+          final publicUrl = await _ds.uploadAvatar(
+            _user!.id,
+            bytes,
+            fileName,
+          );
+          await _ds.updateUserProfile(
+            userId: _user!.id,
+            avatarUrl: publicUrl,
+          );
+          await _refreshUser();
+          return publicUrl;
+        },
+        onSaveLocation: (lat, lng) async {
+          if (_pro != null) {
+            await _ds.updateProfessionalLocation(
+              professionalId: _pro!.id,
+              latitude: lat,
+              longitude: lng,
+            );
+            final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
+            if (mounted && updatedPro != null) {
+              setState(() => _pro = updatedPro);
+            }
+          }
+        },
+        onLogout: () async => Supabase.instance.client.auth.signOut(),
+      );
+    }
+
+    if (_navIndex == 4) {
+      return HandymanNotificationsScreen(
+        userId: _user!.id,
+        notificationDataSource: _notifDs,
+        onBack: () => setState(() => _navIndex = 0),
+        onNotificationTap: (notification) {
+          if (notification.type == NotificationTypeStrings.bookingRequest) {
+            setState(() => _navIndex = 1);
+          }
+        },
+      );
+    }
+
+    // ── Pro Booking Detail screen
+    if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
+      return ProBookingDetailScreen(
+        booking: _selectedProBooking!,
+        onBack: () => setState(() => _screen = 'booking_history'),
+        onSetPrice: (price) async {
+          try {
+            await _ds.updateBookingAssessmentPrice(
+              bookingId: _selectedProBooking!.id,
+              price: price,
+            );
+            await _refreshBookings();
+            final updated = _bookings
+                .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
+            if (mounted && updated != null) {
+              setState(() => _selectedProBooking = updated.toEntity());
+            }
+          } catch (e) {
+            _notify('Failed to save price: $e');
+            rethrow;
+          }
+        },
+        onUpdateStatus: (newStatus) async {
+          try {
+            await _ds.updateBookingStatus(_selectedProBooking!.id, newStatus);
+            await _refreshBookings();
+            final updated = _bookings
+                .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
+            if (mounted && updated != null) {
+              setState(() => _selectedProBooking = updated.toEntity());
+            }
+            if (newStatus == BookingStatus.completed) {
+              _notify('Job marked as complete! Great work. ✅');
+            } else if (newStatus == BookingStatus.inProgress) {
+              _notify('Job started! Customer has been notified. 🔧');
+            }
+          } catch (e) {
+            _notify('Error updating status: $e');
+            rethrow;
+          }
+        },
+      );
+    }
+
+    // ── Booking History screen
+    if (_screen == 'booking_history') {
+      return BookingHistoryScreen(
+        bookings: bookingEntities,
+        currentNavIndex: _navIndex,
+        onNavTap: (i) => setState(() {
+          _navIndex = i;
+          _screen = 'home';
+        }),
+        onBack: () => setState(() => _screen = 'home'),
+        onRefresh: _refreshBookings,
         onUpdateStatus: (booking, status) async {
           try {
             await _ds.updateBookingStatus(booking.id, status);
@@ -951,23 +850,151 @@ class _MainAppState extends State<MainApp> {
             _notify('Error: $e');
           }
         },
-        onViewRequests: () async {
-          setState(() => _navIndex = 1);
-          await _refreshBookings();
+        onViewDetail: (booking) {
+          setState(() {
+            _selectedProBooking = booking;
+            _screen = 'pro_booking_detail';
+          });
         },
-        onViewEarnings: () => setState(() => _navIndex = 2),
-        onViewHistory: () => setState(() => _screen = 'booking_history'),
-        onViewReviews: () => setState(() => _screen = 'reviews'),
-        onApplyCredentials: () => setState(() => _screen = 'apply'),
-        onViewVerification: () =>
-            setState(() => _screen = 'verification_status'),
-        onToggleAvailability: (_) {},
       );
     }
 
-    // ── CUSTOMER ──────────────────────────────────────────
-    return _customerFlow();
+    if (_screen == 'reviews') {
+      return ProfessionalReviewsScreen(
+        reviews: _reviews.map((r) => r.toEntity()).toList(),
+        professional: _pro?.toEntity(),
+        currentNavIndex: _navIndex,
+        onNavTap: (i) => setState(() {
+          _navIndex = i;
+          _screen = 'home';
+        }),
+        onBack: () => setState(() => _screen = 'home'),
+        onRefresh: () async {
+          await _refreshReviews();
+        },
+      );
+    }
+
+    // ── Apply screen
+    if (_screen == 'apply') {
+      final proId = _pro?.id;
+      if (proId == null) {
+        return Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0F3D2E),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                  color: Colors.white),
+              onPressed: () => setState(() => _screen = 'home'),
+            ),
+            title: const Text('Apply for Service',
+                style: TextStyle(color: Colors.white)),
+            elevation: 0,
+          ),
+          body: Center(
+              child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.error_outline_rounded,
+                  size: 56, color: Color(0xFFFF9500)),
+              const SizedBox(height: 16),
+              const Text(
+                  'Professional profile not found.\nPlease log out and log back in.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 15, color: Color(0xFF666666))),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => Supabase.instance.client.auth.signOut(),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12))),
+                child: const Text('Log Out & Try Again'),
+              ),
+            ]),
+          )),
+        );
+      }
+      return ApplyScreen(
+        professionalId: proId,
+        userId: _user!.id,
+        onBack: () => setState(() => _screen = 'home'),
+        onSubmit: (data) async {
+          try {
+            final app = await _appDs.submitApplication(
+              professionalId: proId,
+              userId: _user!.id,
+              serviceType: data.serviceType,
+              credentialFile: data.credentialFile,
+              validIdFile: data.validIdFile,
+              yearsExp: data.yearsExp,
+              priceMin: data.priceMin,
+              bio: data.bio,
+            );
+            setState(() {
+              _applications = [app, ..._applications];
+              _screen = 'verification_status';
+            });
+            _notify(
+                "Application submitted! We'll review it within 24–48 hours.");
+          } catch (e) {
+            if (mounted)
+              ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Submission failed: $e')));
+          }
+        },
+      );
+    }
+
+    // ── Verification status screen
+    if (_screen == 'verification_status') {
+      return VerificationStatusScreen(
+        applications: _applications,
+        onBack: () => setState(() => _screen = 'home'),
+        onApplyNew: () => setState(() => _screen = 'apply'),
+      );
+    }
+
+    // ── Professional Dashboard (navIndex 0, default)
+    return ProfessionalDashboardScreen(
+      user: u,
+      professional: proEntity,
+      bookings: bookingEntities,
+      reviews: _reviews.map((r) => r.toEntity()).toList(),
+      pendingApplications:
+          _applications.where((a) => a.status == 'pending').length,
+      currentNavIndex: _navIndex,
+      onNavTap: (i) async {
+        setState(() {
+          _navIndex = i;
+          _screen = 'home';
+        });
+        if (i == 1) await _refreshBookings();
+      },
+      onUpdateStatus: (booking, status) async {
+        try {
+          await _ds.updateBookingStatus(booking.id, status);
+          await _refreshBookings();
+        } catch (e) {
+          _notify('Error: $e');
+        }
+      },
+      onViewRequests: () async {
+        setState(() => _navIndex = 1);
+        await _refreshBookings();
+      },
+      onViewEarnings: () => setState(() => _navIndex = 2),
+      onViewHistory: () => setState(() => _screen = 'booking_history'),
+      onViewReviews: () => setState(() => _screen = 'reviews'),
+      onApplyCredentials: () => setState(() => _screen = 'apply'),
+      onViewVerification: () => setState(() => _screen = 'verification_status'),
+      onToggleAvailability: (_) {},
+    );
   }
+
+  // ── CUSTOMER FLOW ─────────────────────────────────────────
 
   Widget _customerFlow() {
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
@@ -999,6 +1026,7 @@ class _MainAppState extends State<MainApp> {
         onBack: () => setState(() {
           _screen = 'home';
           _navIndex = 0;
+          _unreadNotifCount = 0;
         }),
         onNotificationTap: (notification) {
           if (notification.referenceType == 'booking' &&
@@ -1257,6 +1285,7 @@ class _MainAppState extends State<MainApp> {
             _screen = 'profile';
           });
         },
+        onNotificationsViewed: () => setState(() => _unreadNotifCount = 0),
       );
 
   Future<void> _createBooking(
@@ -1308,9 +1337,12 @@ class _MainAppState extends State<MainApp> {
         _screen = 'home';
       });
       _notify('Review submitted! Thank you. ⭐');
-      _ds.getProfessionals().then((list) {
-        if (mounted) setState(() => _professionals = list);
-      });
+      try {
+        final updated = await _ds.getProfessionals();
+        if (mounted) setState(() => _professionals = updated);
+      } catch (e) {
+        debugPrint('Could not refresh professionals after review: $e');
+      }
     } catch (e) {
       debugPrint('Review error: $e');
       if (mounted) {

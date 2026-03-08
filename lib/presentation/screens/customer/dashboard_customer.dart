@@ -1,47 +1,23 @@
 // lib/presentation/screens/customer/dashboard_customer.dart
-//
-// CustomerDashboardScreen — home screen for the Customer role.
-//
-// Key behaviour:
-//  • Service Offers section only shows services whose category has at least
-//    one verified+available professional.  If a category has no pro, the
-//    service card shows an "Unavailable" badge instead of hiding entirely
-//    (keeps the catalogue visible while being honest with the user).
-//  • Tapping a service card opens ServiceDetailScreen (rich info + Book Now).
-//  • Tapping "Book Now" calls onRequestServiceWithType(serviceType, serviceName)
-//    which opens RequestServiceScreen with that type AND problem title pre-filled.
-//  • "Top Professionals" list is shown below; if the filtered category has
-//    no pros it shows the same "none found" empty state.
-//
-// Props (unchanged from previous version + new ones):
-//   onBookingTap              → Function(BookingEntity)?
-//   onViewBookings            → VoidCallback?
-//   onRequestService          → VoidCallback?                    (generic, from CTA)
-//   onRequestServiceWithType  → Function(String type, String name)?  (from service card)
 
 import 'dart:ui';
+import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
-import 'package:fixify/presentation/screens/customer/profile_customer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/widgets/shared_widgets.dart';
 import 'package:fixify/presentation/screens/customer/serviceoffers/service_detail_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class CustomerDashboardScreen extends StatefulWidget {
   final UserEntity? user;
   final List<ProfessionalEntity> professionals;
   final List<BookingEntity> recentBookings;
   final VoidCallback? onRequestService;
-
-  /// Called after the user taps "Book Now" on a service detail screen.
-  /// Receives the service category [serviceType] (e.g. 'Plumbing') AND the
-  /// specific [serviceName] (e.g. 'Pipe Leak Repair') so RequestServiceScreen
-  /// can pre-fill both the type selector and the Problem Title field.
   final Function(String serviceType, String serviceName)?
       onRequestServiceWithType;
-
   final VoidCallback? onViewBookings;
   final Function(String skill)? onFilterBySkill;
   final Function(ProfessionalEntity)? onProfessionalTap;
@@ -50,6 +26,7 @@ class CustomerDashboardScreen extends StatefulWidget {
   final VoidCallback? onNotificationTap;
   final VoidCallback? onProfileTap;
   final int currentNavIndex;
+  final VoidCallback? onNotificationsViewed;
 
   const CustomerDashboardScreen({
     super.key,
@@ -66,6 +43,7 @@ class CustomerDashboardScreen extends StatefulWidget {
     this.onBookingTap,
     this.onNotificationTap,
     this.onProfileTap,
+    this.onNotificationsViewed,
   });
 
   @override
@@ -73,7 +51,7 @@ class CustomerDashboardScreen extends StatefulWidget {
       _CustomerDashboardScreenState();
 }
 
-// ── Service catalogue (static) ────────────────────────────────────────────────
+// ── Service catalogue ─────────────────────────────────────────────────────────
 
 class _ServiceDef {
   final String id, name, description, image, category;
@@ -186,7 +164,7 @@ const _categories = [
 
 // ── Service detail data ───────────────────────────────────────────────────────
 
-Map<String, Map<String, dynamic>> _serviceDetails = {
+final Map<String, Map<String, dynamic>> _serviceDetails = {
   'p1': {
     'color': const Color(0xFF007AFF),
     'icon': Icons.water_drop_rounded,
@@ -364,6 +342,29 @@ Map<String, Map<String, dynamic>> _serviceDetails = {
 class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   String _selectedSkill = 'All';
 
+  // ── Unread count — owned entirely by this state, fetched from Supabase ──
+  int _unreadNotifCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUnreadCount();
+  }
+
+  /// Fetches the real unread count directly from Supabase.
+  /// Called on init and after returning from NotificationsScreen.
+  Future<void> _fetchUnreadCount() async {
+    try {
+      final userId = widget.user?.id;
+      if (userId == null || userId.isEmpty) return;
+      final ds = NotificationDataSource(Supabase.instance.client);
+      final count = await ds.getUnreadCount(userId);
+      if (mounted) setState(() => _unreadNotifCount = count);
+    } catch (_) {
+      // Fail silently — dot simply won't show if fetch fails
+    }
+  }
+
   Set<String> get _availableCategories {
     final cats = <String>{};
     for (final p in widget.professionals) {
@@ -390,8 +391,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     final d = _serviceDetails[service.id];
     if (d == null) return;
 
-    // The detail screen now pops with a record containing both
-    // serviceType (category) and serviceName (specific title).
     final result = await Navigator.of(context).push<(String, String)>(
       MaterialPageRoute(
         builder: (_) => ServiceDetailScreen(
@@ -405,19 +404,62 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           duration: d['duration'] as String,
           includes: List<String>.from(d['includes'] as List),
           tips: d['tip'] as String?,
-          // Pop with a record (serviceType, serviceName) instead of calling
-          // the callback directly — avoids PopScope interception.
           onBookNow: (type, name) => Navigator.of(context).pop((type, name)),
         ),
       ),
     );
 
-    // Called only AFTER the detail screen is fully removed from the stack.
     if (result != null && mounted) {
       final (serviceType, serviceName) = result;
       widget.onRequestServiceWithType?.call(serviceType, serviceName);
     }
   }
+
+  // ── Avatar chip: shows real photo if available, else initial ─────────────
+  Widget _buildAvatarChip(String name) {
+    final avatarUrl = widget.user?.avatarUrl;
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        gradient: (avatarUrl == null || avatarUrl.isEmpty)
+            ? const LinearGradient(
+                colors: [Color(0xFF34C759), Color(0xFF2E7D5E)],
+              )
+            : null,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.3),
+          width: 1.5,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(11),
+        child: (avatarUrl != null && avatarUrl.isNotEmpty)
+            ? Image.network(
+                avatarUrl,
+                width: 40,
+                height: 40,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _fallbackInitial(name),
+              )
+            : _fallbackInitial(name),
+      ),
+    );
+  }
+
+  Widget _fallbackInitial(String name) => Container(
+        color: const Color(0xFF2E7D5E),
+        alignment: Alignment.center,
+        child: Text(
+          name.isNotEmpty ? name[0].toUpperCase() : 'C',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -485,7 +527,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     );
   }
 
-  // ── HEADER ─────────────────────────────────────────────────────────────────
+  // ── HEADER ────────────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
     final name = widget.user?.name ?? 'Customer';
@@ -519,6 +561,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
+                      // ── Logo ──────────────────────────────────────────────
                       Row(
                         children: [
                           Container(
@@ -557,19 +600,27 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                           ),
                         ],
                       ),
+                      // ── Action buttons ────────────────────────────────────
                       Row(
                         children: [
-                          // Notification Icon Button
+                          // Bell icon — dot only shown when _unreadNotifCount > 0
                           IconButton(
-                            onPressed: () {
-                              Navigator.push(
+                            onPressed: () async {
+                              await Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => NotificationsScreen(
+                                  builder: (_) => NotificationsScreen(
                                     userId: widget.user?.id ?? '',
                                   ),
                                 ),
                               );
+                              // Re-fetch real count after user returns —
+                              // this correctly handles mark-as-read, delete,
+                              // and clear-all done inside NotificationsScreen.
+                              if (mounted) {
+                                await _fetchUnreadCount();
+                                widget.onNotificationsViewed?.call();
+                              }
                             },
                             icon: Stack(
                               clipBehavior: Clip.none,
@@ -587,51 +638,30 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                                     size: 20,
                                   ),
                                 ),
-                                const Positioned(
-                                  top: 7,
-                                  right: 7,
-                                  child: CircleAvatar(
-                                    radius: 3.5,
-                                    backgroundColor: Color(0xFFFF3B30),
+                                // Red dot — driven by real fetched count
+                                if (_unreadNotifCount > 0)
+                                  Positioned(
+                                    top: 7,
+                                    right: 7,
+                                    child: Container(
+                                      width: 7,
+                                      height: 7,
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFFFF3B30),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
                                   ),
-                                ),
                               ],
                             ),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                           ),
                           const SizedBox(width: 8),
-
-                          // Profile Icon Button
+                          // Profile avatar
                           IconButton(
                             onPressed: widget.onProfileTap,
-                            icon: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    Color(0xFF34C759),
-                                    Color(0xFF2E7D5E)
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.3),
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  name.isNotEmpty ? name[0].toUpperCase() : 'C',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ),
-                            ),
+                            icon: _buildAvatarChip(name),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                           ),
@@ -728,44 +758,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             shape: BoxShape.circle, color: Colors.white.withOpacity(opacity)),
       );
 
-  Widget _headerIconBtn(IconData icon) => Stack(children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12)),
-          child: Icon(icon, color: Colors.white, size: 20),
-        ),
-        Positioned(
-            top: 7,
-            right: 7,
-            child: Container(
-              width: 7,
-              height: 7,
-              decoration: const BoxDecoration(
-                  color: Color(0xFFFF3B30), shape: BoxShape.circle),
-            )),
-      ]);
-
-  Widget _avatarChip(String name) => Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-              colors: [Color(0xFF34C759), Color(0xFF2E7D5E)]),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withOpacity(0.3), width: 1.5),
-        ),
-        child: Center(
-            child: Text(
-          name.isNotEmpty ? name[0].toUpperCase() : 'C',
-          style: const TextStyle(
-              color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
-        )),
-      );
-
-  // ── CTA ─────────────────────────────────────────────────────────────────────
+  // ── CTA ──────────────────────────────────────────────────────────────────
 
   Widget _buildRequestCTA() => GestureDetector(
         onTap: widget.onRequestService,
@@ -830,7 +823,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ),
       );
 
-  // ── SERVICE OFFERS ──────────────────────────────────────────────────────────
+  // ── SERVICE OFFERS ────────────────────────────────────────────────────────
 
   Widget _buildServiceOffers() {
     final services = _filteredServices;
@@ -844,8 +837,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           child: SectionHeader(title: 'Service Offers'),
         ),
         const SizedBox(height: 16),
-
-        // Category chips
         SizedBox(
           height: 40,
           child: ListView.separated(
@@ -895,10 +886,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             },
           ),
         ),
-
         const SizedBox(height: 10),
-
-        // Services list
         if (!catHasPro && _selectedSkill != 'All')
           _buildNoProsForCategory(_selectedSkill)
         else if (services.isEmpty)
@@ -959,9 +947,9 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),
-            Text(
+            const Text(
               'Check back soon — we\'re always adding verified handymen to the platform.',
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 13, color: AppColors.textLight, height: 1.5),
               textAlign: TextAlign.center,
             ),
@@ -1003,7 +991,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     }
   }
 
-  // ── RECENT BOOKINGS ─────────────────────────────────────────────────────────
+  // ── RECENT BOOKINGS ───────────────────────────────────────────────────────
 
   Widget _buildRecentBookings() => SizedBox(
         height: 110,
@@ -1022,7 +1010,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ),
       );
 
-  // ── EMPTY PROS ──────────────────────────────────────────────────────────────
+  // ── EMPTY PROS ────────────────────────────────────────────────────────────
 
   Widget _buildEmptyPros() => Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
@@ -1047,7 +1035,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ]),
       );
 
-  // ── BOTTOM NAV ──────────────────────────────────────────────────────────────
+  // ── BOTTOM NAV ────────────────────────────────────────────────────────────
 
   Widget _buildBottomNav() {
     const items = [
@@ -1149,7 +1137,6 @@ class _ServiceCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ── Image ──────────────────────────────────
                 SizedBox(
                   height: 120,
                   width: double.infinity,
@@ -1186,7 +1173,6 @@ class _ServiceCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                // ── Info ────────────────────────────────────
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(11, 10, 11, 10),

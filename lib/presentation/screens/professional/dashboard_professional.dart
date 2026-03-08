@@ -3,29 +3,31 @@
 // ProfessionalDashboardScreen — MVP dashboard for Handyman (Professional) role.
 //
 // Shows:
-//   • Header with name, verified badge, availability toggle
+//   • Header with name, verified badge, availability toggle, dynamic bell dot
 //   • Stats row: earnings, total jobs, completion rate
 //   • Quick-action menu cards (Booking Requests, Booking History, Earnings Summary)
 //   • Ratings Overview card (avg rating, star breakdown bars, total jobs, completion %)
 //
 // Key props:
-//   user              → UserEntity?                          — logged-in user
-//   professional      → ProfessionalEntity?                  — professional profile data
-//   bookings          → List<BookingEntity>                  — all bookings for this pro
-//   onUpdateStatus    → Function(BookingEntity, BookingStatus)? — accept/decline/complete a booking
-//   onViewRequests    → VoidCallback?                        — "Booking Requests" tap
-//   onViewHistory     → VoidCallback?                        — "Booking History" tap
-//   onViewEarnings    → VoidCallback?                        — "Earnings Summary" tap
-//   onToggleAvailability → Function(bool)?                   — availability switch changed
-//   onNavTap          → Function(int)?                       — bottom nav (0=Dashboard,1=Requests,2=Earnings,3=Profile)
-//   currentNavIndex   → int                                  — active nav tab, default 0
+//   user              → UserEntity?
+//   professional      → ProfessionalEntity?
+//   bookings          → List<BookingEntity>
+//   onUpdateStatus    → Function(BookingEntity, BookingStatus)?
+//   onViewRequests    → VoidCallback?
+//   onViewHistory     → VoidCallback?
+//   onViewEarnings    → VoidCallback?
+//   onToggleAvailability → Function(bool)?
+//   onNavTap          → Function(int)?
+//   currentNavIndex   → int
 
 import 'dart:ui';
+import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:fixify/presentation/screens/professional/notificationhandyman.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ProfessionalDashboardScreen extends StatefulWidget {
   final UserEntity? user;
@@ -38,8 +40,8 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   final VoidCallback? onViewEarnings;
   final VoidCallback? onApplyCredentials;
   final VoidCallback? onViewVerification;
-  final VoidCallback? onViewReviews; // ← ADD
-  final List<ReviewEntity> reviews; // ← ADD
+  final VoidCallback? onViewReviews;
+  final List<ReviewEntity> reviews;
   final Function(bool)? onToggleAvailability;
   final Function(int)? onNavTap;
   final int currentNavIndex;
@@ -57,7 +59,7 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.onApplyCredentials,
     this.onViewVerification,
     this.onViewReviews,
-    this.reviews = const [], // ← ADD
+    this.reviews = const [],
     this.onToggleAvailability,
     this.onNavTap,
     this.currentNavIndex = 0,
@@ -72,10 +74,27 @@ class _ProfessionalDashboardScreenState
     extends State<ProfessionalDashboardScreen> {
   bool _available = true;
 
+  // ── Notification bell state ───────────────────────────────
+  int _unreadNotifCount = 0;
+  late final NotificationDataSource _notifDs;
+
   @override
   void initState() {
     super.initState();
     _available = widget.professional?.available ?? true;
+    _notifDs = NotificationDataSource(Supabase.instance.client);
+    _fetchUnreadCount();
+  }
+
+  Future<void> _fetchUnreadCount() async {
+    final userId = widget.user?.id;
+    if (userId == null || userId.isEmpty) return;
+    try {
+      final count = await _notifDs.getUnreadCount(userId);
+      if (mounted) setState(() => _unreadNotifCount = count);
+    } catch (e) {
+      debugPrint('[ProDashboard] Could not fetch unread count: $e');
+    }
   }
 
   // ── Derived stats ─────────────────────────────────────────
@@ -101,11 +120,9 @@ class _ProfessionalDashboardScreenState
 
   double get _avgRating {
     if (widget.reviews.isNotEmpty) {
-      // Compute live from the actual review entities passed in
       final total = widget.reviews.fold<int>(0, (sum, r) => sum + r.rating);
       return total / widget.reviews.length;
     }
-    // Fallback to the cached value on the professional record
     return widget.professional?.rating ?? 0.0;
   }
 
@@ -127,7 +144,6 @@ class _ProfessionalDashboardScreenState
               child: _buildStatsRow(),
             ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
           ),
-          // Verification banner — shown when pro is not yet verified
           if (!(widget.professional?.verified ?? false))
             SliverToBoxAdapter(
               child: Padding(
@@ -250,53 +266,49 @@ class _ProfessionalDashboardScreenState
                               letterSpacing: -0.3,
                             )),
                       ]),
-                      Row(
-                        children: [
-                          // Notification Icon Button
-                          IconButton(
-                            onPressed: () {
-                              // Direct navigation without callback
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      HandymanNotificationsScreen(
-                                          userId: widget.user?.id ?? ''),
-                                ),
-                              );
-                            },
-                            icon: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.12),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(
-                                    Icons.notifications_outlined,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
-                                // Red dot for notifications
-                                const Positioned(
-                                  top: 7,
-                                  right: 7,
-                                  child: CircleAvatar(
-                                    radius: 3.5,
-                                    backgroundColor: Color(0xFFFF3B30),
-                                  ),
-                                ),
-                              ],
+                      // Bell with dynamic red dot
+                      IconButton(
+                        onPressed: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => HandymanNotificationsScreen(
+                                userId: widget.user?.id ?? '',
+                              ),
                             ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
+                          );
+                          // Re-fetch count after returning from notifications
+                          _fetchUnreadCount();
+                        },
+                        icon: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.notifications_outlined,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                            if (_unreadNotifCount > 0)
+                              const Positioned(
+                                top: 7,
+                                right: 7,
+                                child: CircleAvatar(
+                                  radius: 3.5,
+                                  backgroundColor: Color(0xFFFF3B30),
+                                ),
+                              ),
+                          ],
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
                       ),
                     ],
                   ),
@@ -304,7 +316,6 @@ class _ProfessionalDashboardScreenState
                   // Pro info row
                   Row(
                     children: [
-                      // Avatar
                       Container(
                         width: 64,
                         height: 64,
@@ -551,28 +562,32 @@ class _ProfessionalDashboardScreenState
         ),
         const SizedBox(width: 12),
         Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(
-            hasPending
-                ? 'Application Under Review'
-                : 'Get Verified to Receive Bookings',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: hasPending
-                  ? const Color(0xFFFF9500)
-                  : const Color(0xFF5856D6),
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                hasPending
+                    ? 'Application Under Review'
+                    : 'Get Verified to Receive Bookings',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: hasPending
+                      ? const Color(0xFFFF9500)
+                      : const Color(0xFF5856D6),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                hasPending
+                    ? 'Your credentials are being reviewed by the admin (24–48 hrs).'
+                    : 'Submit your credentials and valid ID to get approved.',
+                style:
+                    const TextStyle(fontSize: 11, color: AppColors.textMedium),
+              ),
+            ],
           ),
-          const SizedBox(height: 3),
-          Text(
-            hasPending
-                ? 'Your credentials are being reviewed by the admin (24–48 hrs).'
-                : 'Submit your credentials and valid ID to get approved.',
-            style: const TextStyle(fontSize: 11, color: AppColors.textMedium),
-          ),
-        ])),
+        ),
         const SizedBox(width: 10),
         GestureDetector(
           onTap: hasPending
@@ -792,11 +807,11 @@ class _ProfessionalDashboardScreenState
   }
 
   // ── RATINGS CARD ──────────────────────────────────────────
+
   Widget _buildRatingsCard() {
     final avg = _avgRating.clamp(0.0, 5.0);
     final total = widget.reviews.length;
 
-    // ── Real star distribution from actual review entities ──────────────────
     Map<int, double> realDistribution() {
       if (total == 0) return {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
       final counts = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
@@ -825,7 +840,6 @@ class _ProfessionalDashboardScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Title row + "See All" button
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -859,8 +873,6 @@ class _ProfessionalDashboardScreenState
             ],
           ),
           const SizedBox(height: 20),
-
-          // No reviews yet state
           if (total == 0)
             Center(
               child: Padding(
@@ -870,13 +882,11 @@ class _ProfessionalDashboardScreenState
                     Icon(Icons.star_outline_rounded,
                         size: 40, color: AppColors.textLight.withOpacity(0.4)),
                     const SizedBox(height: 10),
-                    const Text(
-                      'No reviews yet',
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textLight),
-                    ),
+                    const Text('No reviews yet',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textLight)),
                     const SizedBox(height: 4),
                     const Text(
                       'Reviews from completed bookings\nwill appear here.',
@@ -891,7 +901,6 @@ class _ProfessionalDashboardScreenState
           else ...[
             Row(
               children: [
-                // Big score
                 Column(
                   children: [
                     Container(
@@ -919,7 +928,6 @@ class _ProfessionalDashboardScreenState
                   ],
                 ),
                 const SizedBox(width: 20),
-                // Real star bars
                 Expanded(
                   child: Column(
                     children: List.generate(5, (i) {
@@ -951,7 +959,6 @@ class _ProfessionalDashboardScreenState
                               ),
                             ),
                             const SizedBox(width: 6),
-                            // Show actual count per star
                             SizedBox(
                               width: 18,
                               child: Text(
@@ -980,8 +987,6 @@ class _ProfessionalDashboardScreenState
                     'Completion', const Color(0xFF34C759)),
               ],
             ),
-
-            // Latest review preview (most recent one)
             if (widget.reviews.isNotEmpty) ...[
               const SizedBox(height: 16),
               const Divider(height: 1, color: Color(0xFFEEEEEE)),
@@ -1064,20 +1069,6 @@ class _ProfessionalDashboardScreenState
             style: const TextStyle(fontSize: 11, color: AppColors.textLight)),
       ],
     );
-  }
-
-  /// Generates a plausible star distribution from avg rating
-  Map<int, double> _mockStarDistribution(double avg, int total) {
-    if (total == 0) return {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
-    final fiveW = (avg - 1) / 4;
-    final oneW = 1 - fiveW;
-    return {
-      5: (fiveW * 0.7).clamp(0, 1),
-      4: (fiveW * 0.5).clamp(0, 1),
-      3: 0.15,
-      2: (oneW * 0.08).clamp(0, 1),
-      1: (oneW * 0.05).clamp(0, 1),
-    };
   }
 
   // ── BOTTOM NAV ────────────────────────────────────────────

@@ -1,12 +1,15 @@
 // lib/presentation/screens/admin/dashboard_admin.dart
 
 import 'dart:ui';
+import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-class AdminDashboardScreen extends StatelessWidget {
+class AdminDashboardScreen extends StatefulWidget {
   final String adminName;
+  final String? adminUserId;
   final int pendingApprovals;
   final int totalUsers;
   final double totalEarnings;
@@ -21,6 +24,7 @@ class AdminDashboardScreen extends StatelessWidget {
   const AdminDashboardScreen({
     super.key,
     this.adminName = 'Admin',
+    this.adminUserId,
     this.pendingApprovals = 0,
     this.totalUsers = 0,
     this.totalEarnings = 0,
@@ -32,6 +36,33 @@ class AdminDashboardScreen extends StatelessWidget {
     this.onNavTap,
     this.currentNavIndex = 0,
   });
+
+  @override
+  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  // ── Notification bell state ───────────────────────────────
+  int _unreadNotifCount = 0;
+  late final NotificationDataSource _notifDs;
+
+  @override
+  void initState() {
+    super.initState();
+    _notifDs = NotificationDataSource(Supabase.instance.client);
+    _fetchUnreadCount();
+  }
+
+  Future<void> _fetchUnreadCount() async {
+    final userId = widget.adminUserId;
+    if (userId == null || userId.isEmpty) return;
+    try {
+      final count = await _notifDs.getUnreadCount(userId);
+      if (mounted) setState(() => _unreadNotifCount = count);
+    } catch (e) {
+      debugPrint('[AdminDashboard] Could not fetch unread count: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -69,9 +100,11 @@ class AdminDashboardScreen extends StatelessWidget {
                   iconColor: const Color(0xFF34C759),
                   title: 'Handyman Approvals',
                   subtitle: 'Review and approve handyman applications',
-                  badge: pendingApprovals > 0 ? '$pendingApprovals' : null,
+                  badge: widget.pendingApprovals > 0
+                      ? '${widget.pendingApprovals}'
+                      : null,
                   badgeColor: const Color(0xFFFF3B30),
-                  onTap: onHandymanApprovals,
+                  onTap: widget.onHandymanApprovals,
                   delay: 260,
                 ),
                 const SizedBox(height: 12),
@@ -80,7 +113,7 @@ class AdminDashboardScreen extends StatelessWidget {
                   iconColor: const Color(0xFF007AFF),
                   title: 'Analytics',
                   subtitle: 'View platform insights and statistics',
-                  onTap: onAnalytics,
+                  onTap: widget.onAnalytics,
                   delay: 310,
                 ),
                 const SizedBox(height: 12),
@@ -89,7 +122,7 @@ class AdminDashboardScreen extends StatelessWidget {
                   iconColor: const Color(0xFF5856D6),
                   title: 'User Management',
                   subtitle: 'Manage customers and handymen accounts',
-                  onTap: onUserManagement,
+                  onTap: widget.onUserManagement,
                   delay: 360,
                 ),
                 const SizedBox(height: 12),
@@ -98,7 +131,7 @@ class AdminDashboardScreen extends StatelessWidget {
                   iconColor: const Color(0xFFFF9500),
                   title: 'Booking Overview',
                   subtitle: 'View and manage all platform bookings',
-                  onTap: onBookingOverview,
+                  onTap: widget.onBookingOverview,
                   delay: 410,
                 ),
               ]),
@@ -196,45 +229,41 @@ class AdminDashboardScreen extends StatelessWidget {
                           ),
                         ],
                       ),
-                      Row(
-                        children: [
-                          // FIX: Use onNavTap(4) instead of Navigator.push
-                          // with a hardcoded empty userId. This routes through
-                          // main.dart which has the real _user!.id available.
-                          IconButton(
-                            onPressed: () => onNavTap?.call(4),
-                            icon: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.12),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(
-                                    Icons.notifications_outlined,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
-                                if (pendingApprovals > 0)
-                                  const Positioned(
-                                    top: 7,
-                                    right: 7,
-                                    child: CircleAvatar(
-                                      radius: 3.5,
-                                      backgroundColor: Color(0xFFFF3B30),
-                                    ),
-                                  ),
-                              ],
+                      // Bell with dynamic red dot
+                      IconButton(
+                        onPressed: () async {
+                          await widget.onNavTap?.call(4);
+                          _fetchUnreadCount();
+                        },
+                        icon: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.notifications_outlined,
+                                color: Colors.white,
+                                size: 20,
+                              ),
                             ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
+                            if (_unreadNotifCount > 0)
+                              const Positioned(
+                                top: 7,
+                                right: 7,
+                                child: CircleAvatar(
+                                  radius: 3.5,
+                                  backgroundColor: Color(0xFFFF3B30),
+                                ),
+                              ),
+                          ],
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
                       ),
                     ],
                   ),
@@ -256,7 +285,7 @@ class AdminDashboardScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '$adminName! 👋',
+                              '${widget.adminName}! 👋',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 24,
@@ -328,25 +357,25 @@ class AdminDashboardScreen extends StatelessWidget {
     final stats = [
       {
         'label': 'Pending Approvals',
-        'value': '$pendingApprovals',
+        'value': '${widget.pendingApprovals}',
         'icon': Icons.pending_actions_rounded,
         'color': const Color(0xFFFF9500),
       },
       {
         'label': 'Total Users',
-        'value': '$totalUsers',
+        'value': '${widget.totalUsers}',
         'icon': Icons.handyman_rounded,
         'color': AppColors.primary,
       },
       {
         'label': 'Total Earnings',
-        'value': '₱${totalEarnings.toStringAsFixed(0)}',
+        'value': '₱${widget.totalEarnings.toStringAsFixed(0)}',
         'icon': Icons.payments_rounded,
         'color': const Color(0xFF007AFF),
       },
       {
         'label': 'Completed',
-        'value': '$completedBookings',
+        'value': '${widget.completedBookings}',
         'icon': Icons.check_circle_rounded,
         'color': const Color(0xFF34C759),
       },
@@ -540,9 +569,9 @@ class AdminDashboardScreen extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: List.generate(items.length, (i) {
-              final active = i == currentNavIndex;
+              final active = i == widget.currentNavIndex;
               return GestureDetector(
-                onTap: () => onNavTap?.call(i),
+                onTap: () => widget.onNavTap?.call(i),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding:

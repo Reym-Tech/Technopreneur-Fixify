@@ -49,22 +49,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _loadNotifications({bool silent = false}) async {
-    if (!silent)
+    if (!silent) {
       setState(() {
         _loading = true;
         _error = null;
       });
+    }
     try {
       final list = await _ds.getNotifications(userId: widget.userId);
       if (mounted) setState(() => _notifications = list);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
           _refreshing = false;
         });
+      }
     }
   }
 
@@ -80,7 +82,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   int get _unreadCount => _notifications.where((n) => !n.isRead).length;
 
   Future<void> _markAsRead(AppNotification notification) async {
-    if (notification.isRead) return;
+    if (notification.isRead) {
+      widget.onNotificationTap?.call(notification);
+      return;
+    }
     // Optimistic update
     setState(() {
       _notifications = _notifications
@@ -90,20 +95,117 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     try {
       await _ds.markAsRead(notification.id);
     } catch (_) {
-      // Revert on failure
-      if (mounted) await _loadNotifications(silent: true);
+      // Revert on failure — but do NOT reload, just undo the optimistic change
+      if (mounted) {
+        setState(() {
+          _notifications = _notifications
+              .map((n) => n.id == notification.id ? notification : n)
+              .toList();
+        });
+      }
     }
     widget.onNotificationTap?.call(notification);
   }
 
   Future<void> _markAllAsRead() async {
+    final previous = List<AppNotification>.from(_notifications);
     setState(() {
       _notifications = _notifications.map((n) => n.copyAsRead()).toList();
     });
     try {
       await _ds.markAllAsRead(widget.userId);
     } catch (_) {
-      if (mounted) await _loadNotifications(silent: true);
+      // Revert on failure
+      if (mounted) setState(() => _notifications = previous);
+    }
+  }
+
+  Future<void> _deleteNotification(AppNotification notification) async {
+    // Optimistic removal
+    setState(() {
+      _notifications =
+          _notifications.where((n) => n.id != notification.id).toList();
+    });
+    try {
+      await _ds.deleteNotification(notification.id);
+      // Success — do nothing, optimistic state is correct
+    } catch (e) {
+      // Revert — put it back at original position
+      if (mounted) {
+        setState(() {
+          _notifications = [notification, ..._notifications];
+          _notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to delete notification'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          'Clear All Notifications',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
+        ),
+        content: const Text(
+          'This will permanently delete all your notifications. This cannot be undone.',
+          style: TextStyle(fontSize: 14, color: AppColors.textMedium),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textMedium)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            child: const Text('Clear All',
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final previous = List<AppNotification>.from(_notifications);
+    // Optimistic clear
+    setState(() => _notifications = []);
+    try {
+      await _ds.clearAllNotifications(widget.userId);
+      // Success — stay empty
+    } catch (e) {
+      // Revert on failure
+      if (mounted) {
+        setState(() => _notifications = previous);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to clear notifications'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
     }
   }
 
@@ -193,20 +295,42 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                 color: AppColors.textDark,
                               ),
                             ),
-                            if (_unreadCount > 0)
-                              TextButton(
-                                onPressed: _markAllAsRead,
-                                style: TextButton.styleFrom(
-                                    foregroundColor: AppColors.primary),
-                                child: const Text(
-                                  'Mark all as read',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.primary,
+                            Row(children: [
+                              if (_unreadCount > 0)
+                                TextButton(
+                                  onPressed: _markAllAsRead,
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: AppColors.primary,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8),
+                                  ),
+                                  child: const Text(
+                                    'Mark all read',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.primary,
+                                    ),
                                   ),
                                 ),
-                              ),
+                              if (_notifications.isNotEmpty)
+                                TextButton(
+                                  onPressed: _clearAll,
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: AppColors.error,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8),
+                                  ),
+                                  child: const Text(
+                                    'Clear All',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.error,
+                                    ),
+                                  ),
+                                ),
+                            ]),
                           ],
                         ),
                       ).animate().fadeIn(delay: 150.ms),
@@ -220,16 +344,51 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         delegate: SliverChildBuilderDelegate(
                           (context, index) {
                             final n = _notifications[index];
-                            return _NotificationTile(
-                              notification: n,
-                              timestamp: _formatTimestamp(n.createdAt),
-                              color: _colorFor(n.type),
-                              icon: _iconFor(n.type),
-                              onTap: () => _markAsRead(n),
-                            )
-                                .animate()
-                                .fadeIn(delay: (200 + index * 50).ms)
-                                .slideX(begin: 0.05, end: 0);
+                            return Dismissible(
+                              key: Key(n.id),
+                              direction: DismissDirection.endToStart,
+                              // confirmDismiss lets us do the actual delete
+                              // and prevent the default removal if it fails
+                              confirmDismiss: (_) async {
+                                await _deleteNotification(n);
+                                // Return false — _deleteNotification already
+                                // handled the optimistic state update, so we
+                                // don't want Dismissible to also remove it
+                                return false;
+                              },
+                              background: Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: AppColors.error,
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 20),
+                                child: const Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.delete_rounded,
+                                        color: Colors.white, size: 26),
+                                    SizedBox(height: 4),
+                                    Text('Delete',
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                              ),
+                              child: _NotificationTile(
+                                notification: n,
+                                timestamp: _formatTimestamp(n.createdAt),
+                                color: _colorFor(n.type),
+                                icon: _iconFor(n.type),
+                                onTap: () => _markAsRead(n),
+                              )
+                                  .animate()
+                                  .fadeIn(delay: (200 + index * 50).ms)
+                                  .slideX(begin: 0.05, end: 0),
+                            );
                           },
                           childCount: _notifications.length,
                         ),
@@ -485,7 +644,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       );
 }
 
-// ── Tile widget (unchanged structure) ────────────────────────
+// ── Tile widget ───────────────────────────────────────────────
 
 class _NotificationTile extends StatelessWidget {
   final AppNotification notification;
@@ -529,7 +688,6 @@ class _NotificationTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Icon
             Container(
               width: 52,
               height: 52,
@@ -540,7 +698,6 @@ class _NotificationTile extends StatelessWidget {
               child: Icon(icon, color: color, size: 26),
             ),
             const SizedBox(width: 16),
-            // Content
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -590,6 +747,13 @@ class _NotificationTile extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 11,
                             color: AppColors.textLight.withOpacity(0.8))),
+                    const Spacer(),
+                    Text(
+                      'Swipe to delete',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textLight.withOpacity(0.4)),
+                    ),
                   ]),
                 ],
               ),

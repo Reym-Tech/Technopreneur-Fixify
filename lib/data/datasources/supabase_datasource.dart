@@ -80,7 +80,12 @@ class SupabaseDataSource {
   }) async {
     var query = _client
         .from(AppConfig.professionalsTable)
-        .select('*, users(id, name, avatar_url)')
+        .select(
+          'id, user_id, skills, verified, rating, review_count, '
+          'price_range, price_min, price_max, city, bio, '
+          'years_experience, available, latitude, longitude, '
+          'users(id, name, avatar_url)',
+        )
         .eq('available', true);
 
     if (verified != null) query = query.eq('verified', verified);
@@ -408,30 +413,10 @@ class SupabaseDataSource {
         .select('*, users!customer_id(name, avatar_url)')
         .single();
 
-    try {
-      final allReviews = await _client
-          .from(AppConfig.reviewsTable)
-          .select('rating')
-          .eq('professional_id', professionalId);
-
-      final reviewList = allReviews as List;
-      final count = reviewList.length;
-      final avgRating = count > 0
-          ? reviewList.fold<double>(
-                  0.0, (sum, r) => sum + ((r['rating'] as num).toDouble())) /
-              count
-          : 0.0;
-
-      await _client.from(AppConfig.professionalsTable).update({
-        'rating': double.parse(avgRating.toStringAsFixed(2)),
-        'review_count': count,
-      }).eq('id', professionalId);
-
-      debugPrint(
-          '[Review] Updated professional $professionalId → avg: $avgRating, count: $count');
-    } catch (e) {
-      debugPrint('[Review] Warning — could not update professional stats: $e');
-    }
+    // ── The DB trigger handles updating rating + review_count automatically.
+    // No manual Dart update needed.
+    debugPrint('[Review] Inserted review for professional $professionalId — '
+        'DB trigger will update rating and review_count.');
 
     return ReviewModel.fromJson(data);
   }

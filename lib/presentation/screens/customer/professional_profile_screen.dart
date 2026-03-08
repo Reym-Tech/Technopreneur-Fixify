@@ -177,7 +177,7 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
                               const SizedBox(height: 4),
                               Text(
                                 pro.priceMin != null && pro.priceMax != null
-                                    ? '\$${pro.priceMin!.toInt()} - \$${pro.priceMax!.toInt()} / service'
+                                    ? '₱${pro.priceMin!.toInt()} – ₱${pro.priceMax!.toInt()} / service'
                                     : pro.priceRange ?? 'Contact for pricing',
                                 style: const TextStyle(
                                   color: Colors.white,
@@ -413,20 +413,26 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
               ],
             ),
             const SizedBox(height: 6),
-            if (pro.city != null)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.location_on_rounded,
-                      size: 14, color: Colors.white.withOpacity(0.6)),
-                  const SizedBox(width: 4),
-                  Text(
-                    pro.city!,
-                    style: TextStyle(
-                        color: Colors.white.withOpacity(0.6), fontSize: 13),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.location_on_rounded,
+                    size: 14,
+                    color: Colors.white
+                        .withOpacity(pro.city != null ? 0.6 : 0.35)),
+                const SizedBox(width: 4),
+                Text(
+                  pro.city ?? 'Location not set',
+                  style: TextStyle(
+                    color:
+                        Colors.white.withOpacity(pro.city != null ? 0.6 : 0.35),
+                    fontSize: 13,
+                    fontStyle:
+                        pro.city != null ? FontStyle.normal : FontStyle.italic,
                   ),
-                ],
-              ),
+                ),
+              ],
+            ),
             const SizedBox(height: 6),
             RatingStars(rating: pro.rating, size: 18),
             const SizedBox(height: 24),
@@ -904,20 +910,6 @@ class _BookingScreenState extends State<BookingScreen> {
                                     fontWeight: FontWeight.w600)),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text('Platform Fee',
-                                style: TextStyle(
-                                    color: Colors.white.withOpacity(0.6),
-                                    fontSize: 13)),
-                            const Text('\$5.00',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           child: Divider(color: Colors.white.withOpacity(0.2)),
@@ -1010,7 +1002,7 @@ class _BookingScreenState extends State<BookingScreen> {
   String _getEstimatedPrice() {
     final pro = widget.professional;
     if (pro.priceMin != null && pro.priceMax != null) {
-      return '\$${pro.priceMin!.toInt()} - \$${pro.priceMax!.toInt()}';
+      return '₱${pro.priceMin!.toInt()} – ₱${pro.priceMax!.toInt()}';
     }
     return 'TBD';
   }
@@ -1018,7 +1010,7 @@ class _BookingScreenState extends State<BookingScreen> {
   String _getTotalPrice() {
     final pro = widget.professional;
     if (pro.priceMin != null) {
-      return '\$${(pro.priceMin! + 5).toInt()}+';
+      return '₱${pro.priceMin!.toInt()}+';
     }
     return 'TBD';
   }

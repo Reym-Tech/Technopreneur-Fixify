@@ -158,6 +158,14 @@ class NotificationDataSource {
         .toList();
   }
 
+  Future<void> deleteNotification(String notificationId) async {
+    await _client.from('notifications').delete().eq('id', notificationId);
+  }
+
+  Future<void> clearAllNotifications(String userId) async {
+    await _client.from('notifications').delete().eq('user_id', userId);
+  }
+
   // ── Mark a single notification as read ───────────────────
   Future<void> markAsRead(String notificationId) async {
     if (!_isValidUuid(notificationId)) return;
