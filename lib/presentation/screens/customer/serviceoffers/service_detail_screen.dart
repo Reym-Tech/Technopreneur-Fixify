@@ -15,7 +15,9 @@
 //   priceRange      → String        — e.g. '₱500 – ₱1,500'
 //   duration        → String        — e.g. '1–3 hours'
 //   tips            → String?       — optional tip/note for the customer
-//   onBookNow       → Function(String serviceType)
+//   onBookNow       → Function(String serviceType, String serviceName)
+//                     ↑ now passes BOTH so the request wizard can pre-fill
+//                       the Problem Title field with the specific service name.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -32,7 +34,12 @@ class ServiceDetailScreen extends StatelessWidget {
   final String priceRange;
   final String duration;
   final String? tips;
-  final Function(String serviceType)? onBookNow;
+
+  /// Called when the user taps "Book Now".
+  /// Receives [serviceType] (category, e.g. 'Plumbing') AND
+  /// [serviceName] (specific service, e.g. 'Pipe Leak Repair') so the
+  /// RequestServiceScreen wizard can pre-populate the Problem Title field.
+  final Function(String serviceType, String serviceName)? onBookNow;
 
   const ServiceDetailScreen({
     super.key,
@@ -117,13 +124,16 @@ class ServiceDetailScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Quick stats row
-                  Row(children: [
-                    _statChip(
-                        Icons.attach_money_rounded, priceRange, accentColor),
-                    const SizedBox(width: 12),
-                    _statChip(
-                        Icons.schedule_rounded, duration, AppColors.primary),
-                  ]).animate().fadeIn(delay: 100.ms).slideY(begin: 0.1),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: [
+                      _statChip(
+                          Icons.attach_money_rounded, priceRange, accentColor),
+                      const SizedBox(width: 12),
+                      _statChip(
+                          Icons.schedule_rounded, duration, AppColors.primary),
+                    ]),
+                  ).animate().fadeIn(delay: 100.ms).slideY(begin: 0.1),
 
                   const SizedBox(height: 20),
 
@@ -253,7 +263,8 @@ class ServiceDetailScreen extends StatelessWidget {
             child: ElevatedButton(
               onPressed: () {
                 if (onBookNow != null) {
-                  onBookNow!(serviceType);
+                  // Pass BOTH serviceType (category) and serviceName (specific)
+                  onBookNow!(serviceType, serviceName);
                 } else {
                   Navigator.of(context).pop();
                 }

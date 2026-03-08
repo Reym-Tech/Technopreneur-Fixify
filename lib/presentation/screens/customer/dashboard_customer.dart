@@ -8,16 +8,16 @@
 //    service card shows an "Unavailable" badge instead of hiding entirely
 //    (keeps the catalogue visible while being honest with the user).
 //  • Tapping a service card opens ServiceDetailScreen (rich info + Book Now).
-//  • Tapping "Book Now" calls onRequestServiceWithType(serviceType) which
-//    opens RequestServiceScreen with that type pre-selected.
+//  • Tapping "Book Now" calls onRequestServiceWithType(serviceType, serviceName)
+//    which opens RequestServiceScreen with that type AND problem title pre-filled.
 //  • "Top Professionals" list is shown below; if the filtered category has
 //    no pros it shows the same "none found" empty state.
 //
 // Props (unchanged from previous version + new ones):
 //   onBookingTap              → Function(BookingEntity)?
 //   onViewBookings            → VoidCallback?
-//   onRequestService          → VoidCallback?           (generic, from CTA)
-//   onRequestServiceWithType  → Function(String type)?  (from service card)
+//   onRequestService          → VoidCallback?                    (generic, from CTA)
+//   onRequestServiceWithType  → Function(String type, String name)?  (from service card)
 
 import 'dart:ui';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
@@ -34,13 +34,20 @@ class CustomerDashboardScreen extends StatefulWidget {
   final List<ProfessionalEntity> professionals;
   final List<BookingEntity> recentBookings;
   final VoidCallback? onRequestService;
-  final Function(String serviceType)? onRequestServiceWithType;
+
+  /// Called after the user taps "Book Now" on a service detail screen.
+  /// Receives the service category [serviceType] (e.g. 'Plumbing') AND the
+  /// specific [serviceName] (e.g. 'Pipe Leak Repair') so RequestServiceScreen
+  /// can pre-fill both the type selector and the Problem Title field.
+  final Function(String serviceType, String serviceName)?
+      onRequestServiceWithType;
+
   final VoidCallback? onViewBookings;
   final Function(String skill)? onFilterBySkill;
   final Function(ProfessionalEntity)? onProfessionalTap;
   final Function(int)? onNavTap;
   final Function(BookingEntity)? onBookingTap;
-  final VoidCallback? onNotificationTap; // <-- NEW
+  final VoidCallback? onNotificationTap;
   final VoidCallback? onProfileTap;
   final int currentNavIndex;
 
@@ -57,7 +64,7 @@ class CustomerDashboardScreen extends StatefulWidget {
     this.onNavTap,
     this.currentNavIndex = 0,
     this.onBookingTap,
-    this.onNotificationTap, // <-- NEW
+    this.onNotificationTap,
     this.onProfileTap,
   });
 
@@ -178,7 +185,6 @@ const _categories = [
 ];
 
 // ── Service detail data ───────────────────────────────────────────────────────
-// Used when opening ServiceDetailScreen from a service card.
 
 Map<String, Map<String, dynamic>> _serviceDetails = {
   'p1': {
@@ -358,7 +364,6 @@ Map<String, Map<String, dynamic>> _serviceDetails = {
 class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   String _selectedSkill = 'All';
 
-  // Categories that have at least one verified+available professional.
   Set<String> get _availableCategories {
     final cats = <String>{};
     for (final p in widget.professionals) {
@@ -384,9 +389,10 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   void _openServiceDetail(_ServiceDef service) async {
     final d = _serviceDetails[service.id];
     if (d == null) return;
-    // Await the result — onBookNow returns the serviceType as a Navigator result
-    // instead of calling the callback directly, to avoid PopScope interception.
-    final bookedType = await Navigator.of(context).push<String>(
+
+    // The detail screen now pops with a record containing both
+    // serviceType (category) and serviceName (specific title).
+    final result = await Navigator.of(context).push<(String, String)>(
       MaterialPageRoute(
         builder: (_) => ServiceDetailScreen(
           serviceName: service.name,
@@ -399,14 +405,17 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           duration: d['duration'] as String,
           includes: List<String>.from(d['includes'] as List),
           tips: d['tip'] as String?,
-          // Return the serviceType as Navigator pop result instead of calling callback
-          onBookNow: (type) => Navigator.of(context).pop(type),
+          // Pop with a record (serviceType, serviceName) instead of calling
+          // the callback directly — avoids PopScope interception.
+          onBookNow: (type, name) => Navigator.of(context).pop((type, name)),
         ),
       ),
     );
-    // Only called AFTER the detail screen is fully removed from the Navigator stack
-    if (bookedType != null && mounted) {
-      widget.onRequestServiceWithType?.call(bookedType);
+
+    // Called only AFTER the detail screen is fully removed from the stack.
+    if (result != null && mounted) {
+      final (serviceType, serviceName) = result;
+      widget.onRequestServiceWithType?.call(serviceType, serviceName);
     }
   }
 
@@ -553,7 +562,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                           // Notification Icon Button
                           IconButton(
                             onPressed: () {
-                              // Direct navigation without callback
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
@@ -579,7 +587,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                                     size: 20,
                                   ),
                                 ),
-                                // Red dot for notifications
                                 const Positioned(
                                   top: 7,
                                   right: 7,
@@ -597,8 +604,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
                           // Profile Icon Button
                           IconButton(
-                            onPressed: widget
-                                .onProfileTap, // <-- Use the callback instead of direct navigation
+                            onPressed: widget.onProfileTap,
                             icon: Container(
                               width: 40,
                               height: 40,
@@ -713,7 +719,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ],
       ),
     ).animate().fadeIn().slideY(begin: -0.05, end: 0);
-  } // <-- Th
+  }
 
   Widget _circle(double size, double opacity) => Container(
         width: size,
@@ -1143,7 +1149,7 @@ class _ServiceCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ── Image (fixed 120px) ──────────────────
+                // ── Image ──────────────────────────────────
                 SizedBox(
                   height: 120,
                   width: double.infinity,
@@ -1159,7 +1165,6 @@ class _ServiceCard extends StatelessWidget {
                               size: 40, color: accentColor),
                         ),
                       ),
-                      // Unavailable overlay
                       if (!available)
                         Container(
                           color: Colors.black.withOpacity(0.5),
@@ -1181,7 +1186,7 @@ class _ServiceCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                // ── Info (remaining 100px) ───────────────
+                // ── Info ────────────────────────────────────
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(11, 10, 11, 10),

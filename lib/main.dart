@@ -293,6 +293,7 @@ class _MainAppState extends State<MainApp> {
   DateTime? _lastBackPress;
 
   String? _preselectedServiceType;
+  String? _preselectedProblemTitle;
   UserModel? _user;
   ProfessionalModel? _pro;
   List<ProfessionalModel> _professionals = [];
@@ -1020,9 +1021,11 @@ class _MainAppState extends State<MainApp> {
         return RequestServiceScreen(
           professionals: _professionals,
           initialServiceType: _preselectedServiceType,
+          initialProblemTitle: _preselectedProblemTitle,
           onBack: () => setState(() {
             _screen = 'home';
             _preselectedServiceType = null;
+            _preselectedProblemTitle = null;
           }),
           onSubmit: (result) async {
             try {
@@ -1214,8 +1217,9 @@ class _MainAppState extends State<MainApp> {
           _preselectedServiceType = null;
           _screen = 'request_service';
         }),
-        onRequestServiceWithType: (serviceType) => setState(() {
+        onRequestServiceWithType: (serviceType, serviceName) => setState(() {
           _preselectedServiceType = serviceType;
+          _preselectedProblemTitle = serviceName;
           _screen = 'request_service';
         }),
         onViewBookings: () => setState(() {

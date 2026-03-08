@@ -1,27 +1,9 @@
 // lib/presentation/screens/professional/pro_booking_detail_screen.dart
-//
-// ProBookingDetailScreen — shown when a professional taps an accepted/ongoing booking.
-//
-// Features:
-//  • Customer info card (name, address, service type, notes)
-//  • Google Map showing handyman's location → customer's service location
-//  • Assessment Price setter: text field + "Set Price" button → calls onSetPrice
-//  • Status action bar:
-//    - Accepted    → "Start Job" (→ inProgress)
-//    - In Progress → "Mark Complete" (→ completed)
-//    - Completed   → review badge (read-only)
-//    - Cancelled   → cancelled badge (read-only)
-//
-// Props:
-//   booking        → BookingEntity (required)
-//   onSetPrice     → Future<void> Function(double price)?  — saves assessment_price to Supabase
-//   onUpdateStatus → Future<void> Function(BookingStatus)? — updates booking status
-//   onBack         → VoidCallback?
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 
@@ -44,102 +26,73 @@ class ProBookingDetailScreen extends StatefulWidget {
 }
 
 class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
-  // ── Map ───────────────────────────────────────────────────────────────────
+  // ── Google Maps deep link ─────────────────────────────────────────────────
+  //
+  // Uses the professional's saved lat/lng as origin (if set) so Maps opens
+  // with turn-by-turn directions straight to the customer's location.
+  // Falls back gracefully: coords → address search → nothing.
 
-  GoogleMapController? _mapCtrl;
-  bool _mapReady = false;
+  Future<void> _openInGoogleMaps() async {
+    final custLat = widget.booking.latitude;
+    final custLng = widget.booking.longitude;
+    final address = widget.booking.address ?? '';
+    final proLat = widget.booking.professional?.latitude;
+    final proLng = widget.booking.professional?.longitude;
 
-  LatLng? get _customerLatLng {
-    final lat = widget.booking.latitude;
-    final lng = widget.booking.longitude;
-    if (lat == null || lng == null) return null;
-    return LatLng(lat, lng);
-  }
+    Uri uri;
 
-  LatLng? get _proLatLng {
-    final lat = widget.booking.professional?.latitude;
-    final lng = widget.booking.professional?.longitude;
-    if (lat == null || lng == null) return null;
-    return LatLng(lat, lng);
-  }
-
-  bool get _hasAnyPin => _customerLatLng != null || _proLatLng != null;
-  bool get _hasBothPins => _customerLatLng != null && _proLatLng != null;
-
-  LatLng get _initialCamera {
-    if (_hasBothPins) {
-      return LatLng(
-        (_customerLatLng!.latitude + _proLatLng!.latitude) / 2,
-        (_customerLatLng!.longitude + _proLatLng!.longitude) / 2,
-      );
-    }
-    return _customerLatLng ?? _proLatLng ?? const LatLng(7.0707, 125.6087);
-  }
-
-  Set<Marker> get _markers {
-    final m = <Marker>{};
-    if (_customerLatLng != null) {
-      m.add(Marker(
-        markerId: const MarkerId('customer'),
-        position: _customerLatLng!,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        infoWindow: InfoWindow(
-          title: 'Service Location',
-          snippet: widget.booking.address ?? '',
-        ),
-      ));
-    }
-    if (_proLatLng != null) {
-      m.add(Marker(
-        markerId: const MarkerId('pro'),
-        position: _proLatLng!,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-        infoWindow: const InfoWindow(title: 'Your Location'),
-      ));
-    }
-    return m;
-  }
-
-  Set<Polyline> get _polylines {
-    if (!_hasBothPins) return {};
-    return {
-      Polyline(
-        polylineId: const PolylineId('route'),
-        points: [_proLatLng!, _customerLatLng!],
-        color: AppColors.primary,
-        width: 4,
-        patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-      ),
-    };
-  }
-
-  void _fitBounds() {
-    if (_mapCtrl == null) return;
-    if (_hasBothPins) {
-      _mapCtrl!.animateCamera(CameraUpdate.newLatLngBounds(
-        LatLngBounds(
-          southwest: LatLng(
-            _customerLatLng!.latitude < _proLatLng!.latitude
-                ? _customerLatLng!.latitude
-                : _proLatLng!.latitude,
-            _customerLatLng!.longitude < _proLatLng!.longitude
-                ? _customerLatLng!.longitude
-                : _proLatLng!.longitude,
-          ),
-          northeast: LatLng(
-            _customerLatLng!.latitude > _proLatLng!.latitude
-                ? _customerLatLng!.latitude
-                : _proLatLng!.latitude,
-            _customerLatLng!.longitude > _proLatLng!.longitude
-                ? _customerLatLng!.longitude
-                : _proLatLng!.longitude,
-          ),
-        ),
-        80,
-      ));
+    if (custLat != null && custLng != null) {
+      // Best case: exact coordinates
+      if (proLat != null && proLng != null) {
+        // Directions: pro location → customer location
+        uri = Uri.parse(
+          'https://www.google.com/maps/dir/?api=1'
+          '&origin=$proLat,$proLng'
+          '&destination=$custLat,$custLng'
+          '&travelmode=driving',
+        );
+      } else {
+        // Just show the destination pin
+        uri = Uri.parse(
+          'https://www.google.com/maps/search/?api=1'
+          '&query=$custLat,$custLng',
+        );
+      }
+    } else if (address.isNotEmpty) {
+      // Fallback: address string (old bookings without lat/lng)
+      final encoded = Uri.encodeComponent(address);
+      if (proLat != null && proLng != null) {
+        uri = Uri.parse(
+          'https://www.google.com/maps/dir/?api=1'
+          '&origin=$proLat,$proLng'
+          '&destination=$encoded'
+          '&travelmode=driving',
+        );
+      } else {
+        uri = Uri.parse(
+          'https://www.google.com/maps/search/?api=1&query=$encoded',
+        );
+      }
     } else {
-      _mapCtrl!.animateCamera(CameraUpdate.newLatLngZoom(_initialCamera, 14));
+      _snack('No location available for this booking.');
+      return;
     }
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      _snack('Could not open Google Maps.');
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: AppColors.primary,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
   }
 
   // ── Price setter ──────────────────────────────────────────────────────────
@@ -151,7 +104,6 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
   @override
   void initState() {
     super.initState();
-    // Pre-fill with existing assessment price if already set
     final existing =
         widget.booking.assessmentPrice ?? widget.booking.priceEstimate;
     if (existing != null) _priceCtrl.text = existing.toStringAsFixed(2);
@@ -177,15 +129,13 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     try {
       await widget.onSetPrice?.call(parsed);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Assessment price saved!'),
-            backgroundColor: AppColors.primary,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Assessment price saved!'),
+          backgroundColor: AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ));
       }
     } catch (e) {
       if (mounted)
@@ -285,37 +235,33 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
       body: Column(children: [
         Expanded(
           child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
             child: Column(children: [
-              // Map
-              _buildMapSection(),
+              // Location card — always shown at top
+              _buildLocationCard(),
+              const SizedBox(height: 16),
 
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                child: Column(children: [
-                  // Customer card
-                  _buildCustomerCard(),
-                  const SizedBox(height: 16),
+              // Customer card
+              _buildCustomerCard(),
+              const SizedBox(height: 16),
 
-                  // Service details
-                  _buildServiceCard(),
-                  const SizedBox(height: 16),
+              // Service details
+              _buildServiceCard(),
+              const SizedBox(height: 16),
 
-                  // Price setter — only for accepted/in-progress
-                  if (isEditable) ...[
-                    _buildPriceSetter(),
-                    const SizedBox(height: 16),
-                  ],
+              // Price setter (accepted / in-progress only)
+              if (isEditable) ...[
+                _buildPriceSetter(),
+                const SizedBox(height: 16),
+              ],
 
-                  // Read-only price display for completed/cancelled
-                  if (!isEditable &&
-                      widget.booking.assessmentPrice != null) ...[
-                    _buildPriceReadOnly(),
-                    const SizedBox(height: 16),
-                  ],
+              // Price read-only (completed / cancelled)
+              if (!isEditable && widget.booking.assessmentPrice != null) ...[
+                _buildPriceReadOnly(),
+                const SizedBox(height: 16),
+              ],
 
-                  const SizedBox(height: 12),
-                ]),
-              ),
+              const SizedBox(height: 12),
             ]),
           ),
         ),
@@ -324,160 +270,140 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     );
   }
 
-  // ── Map section ───────────────────────────────────────────────────────────
+  // ── Location card ─────────────────────────────────────────────────────────
 
-  Widget _buildMapSection() {
-    if (!_hasAnyPin) {
-      return Container(
-        height: 200,
-        color: const Color(0xFFF0F4F2),
-        child: Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.map_outlined,
-                size: 44, color: AppColors.textLight),
-            const SizedBox(height: 8),
-            const Text('Service location not pinned yet',
-                style: TextStyle(fontSize: 13, color: AppColors.textLight)),
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Text(
-                widget.booking.address ?? 'No address provided',
-                style:
-                    const TextStyle(fontSize: 11, color: AppColors.textLight),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+  Widget _buildLocationCard() {
+    final hasCoords =
+        widget.booking.latitude != null && widget.booking.longitude != null;
+    final hasAddress =
+        widget.booking.address != null && widget.booking.address!.isNotEmpty;
+    final hasAnyLocation = hasCoords || hasAddress;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.07),
+              blurRadius: 14,
+              offset: const Offset(0, 4))
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          const Row(children: [
+            Icon(Icons.location_on_rounded, size: 15, color: AppColors.primary),
+            SizedBox(width: 6),
+            Text('Service Location',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary)),
+          ]),
+          const SizedBox(height: 14),
+
+          if (hasAnyLocation) ...[
+            // Address text
+            if (hasAddress)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F8F5),
+                  borderRadius: BorderRadius.circular(14),
+                  border:
+                      Border.all(color: AppColors.primary.withOpacity(0.12)),
+                ),
+                child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.place_rounded,
+                          size: 16, color: AppColors.primary.withOpacity(0.6)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.booking.address!,
+                          style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textDark,
+                              height: 1.4),
+                        ),
+                      ),
+                    ]),
+              ),
+
+            // Coordinates chip (shows if available)
+            if (hasCoords) ...[
+              const SizedBox(height: 10),
+              Row(children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF34C759).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: const Color(0xFF34C759).withOpacity(0.3)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.my_location_rounded,
+                        size: 12, color: Color(0xFF34C759)),
+                    const SizedBox(width: 5),
+                    const Text('Exact GPS location available',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF34C759))),
+                  ]),
+                ),
+              ]),
+            ],
+
+            const SizedBox(height: 14),
+
+            // Get Directions button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.directions_rounded, size: 18),
+                label: const Text('Get Directions in Google Maps'),
+                onPressed: _openInGoogleMaps,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1A73E8),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  textStyle: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 14),
+                  elevation: 0,
+                ),
               ),
             ),
-          ]),
-        ),
-      );
-    }
-
-    return Stack(children: [
-      SizedBox(
-        height: 240,
-        child: GoogleMap(
-          initialCameraPosition:
-              CameraPosition(target: _initialCamera, zoom: 13),
-          onMapCreated: (c) {
-            _mapCtrl = c;
-            setState(() => _mapReady = true);
-            Future.delayed(const Duration(milliseconds: 500), _fitBounds);
-          },
-          markers: _markers,
-          polylines: _polylines,
-          myLocationEnabled: false,
-          myLocationButtonEnabled: false,
-          zoomControlsEnabled: false,
-          mapToolbarEnabled: false,
-          compassEnabled: false,
-        ),
-      ),
-
-      // Banner when partial data
-      if (!_hasBothPins)
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            color: const Color(0xFFFF9500).withOpacity(0.88),
-            child: Row(children: [
-              const Icon(Icons.info_outline_rounded,
-                  size: 14, color: Colors.white),
-              const SizedBox(width: 6),
-              Expanded(
+          ] else ...[
+            // No location at all
+            Row(children: [
+              const Icon(Icons.location_off_rounded,
+                  size: 18, color: AppColors.textLight),
+              const SizedBox(width: 10),
+              const Expanded(
                 child: Text(
-                  _customerLatLng == null
-                      ? 'Customer location not pinned yet.'
-                      : 'Your location not set on profile.',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600),
+                  'No location provided. Ask the customer for their address.',
+                  style: TextStyle(
+                      fontSize: 13, color: AppColors.textLight, height: 1.4),
                 ),
               ),
             ]),
-          ),
-        ),
-
-      // Legend
-      Positioned(
-        bottom: 12,
-        left: 12,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.93),
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2))
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_proLatLng != null)
-                _legendDot(const Color(0xFF1565C0), 'Your Location'),
-              if (_proLatLng != null && _customerLatLng != null)
-                const SizedBox(height: 4),
-              if (_customerLatLng != null)
-                _legendDot(const Color(0xFFE53935), 'Service Location'),
-            ],
-          ),
-        ),
-      ),
-
-      // Fit bounds button
-      if (_mapReady)
-        Positioned(
-          top: _hasBothPins ? 12 : 44,
-          right: 12,
-          child: GestureDetector(
-            onTap: _fitBounds,
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2))
-                ],
-              ),
-              child: const Icon(Icons.fit_screen_rounded,
-                  size: 20, color: AppColors.primary),
-            ),
-          ),
-        ),
-    ]);
-  }
-
-  Widget _legendDot(Color color, String label) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-          const SizedBox(width: 6),
-          Text(label,
-              style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textDark)),
+          ],
         ],
-      );
+      ),
+    ).animate().fadeIn(duration: 300.ms);
+  }
 
   // ── Customer card ─────────────────────────────────────────────────────────
 
@@ -485,7 +411,6 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     final customer = widget.booking.customer;
     final name = customer?.name ?? 'Customer';
     final phone = customer?.phone;
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'C';
     final avatarUrl = customer?.avatarUrl;
 
     return Container(
@@ -512,10 +437,8 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         ]),
         const SizedBox(height: 12),
         Row(children: [
-          // Avatar
           _CustomerAvatar(name: name, avatarUrl: avatarUrl, size: 52),
           const SizedBox(width: 14),
-
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -539,8 +462,6 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
               ],
             ]),
           ),
-
-          // Call / message button placeholder
           if (phone != null && phone.isNotEmpty)
             Container(
               width: 38,
@@ -557,7 +478,7 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     ).animate().fadeIn(delay: 100.ms, duration: 300.ms);
   }
 
-  // ── Service details card ──────────────────────────────────────────────────
+  // ── Service details ───────────────────────────────────────────────────────
 
   Widget _buildServiceCard() {
     return Container(
@@ -597,39 +518,37 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     ).animate().fadeIn(delay: 150.ms, duration: 300.ms);
   }
 
-  Widget _detailRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.07),
-            borderRadius: BorderRadius.circular(9),
+  Widget _detailRow(IconData icon, String label, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.07),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, size: 16, color: AppColors.primary),
           ),
-          child: Icon(icon, size: 16, color: AppColors.primary),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label,
-                style: const TextStyle(
-                    fontSize: 10,
-                    color: AppColors.textLight,
-                    fontWeight: FontWeight.w500)),
-            const SizedBox(height: 2),
-            Text(value,
-                style: const TextStyle(
-                    fontSize: 13,
-                    color: AppColors.textDark,
-                    fontWeight: FontWeight.w600)),
-          ]),
-        ),
-      ]),
-    );
-  }
+          const SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textLight,
+                      fontWeight: FontWeight.w500)),
+              const SizedBox(height: 2),
+              Text(value,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textDark,
+                      fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ]),
+      );
 
   // ── Price setter ──────────────────────────────────────────────────────────
 
@@ -642,7 +561,7 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
           end: Alignment.bottomRight,
           colors: [
             AppColors.primary.withOpacity(0.05),
-            AppColors.primary.withOpacity(0.11)
+            AppColors.primary.withOpacity(0.11),
           ],
         ),
         borderRadius: BorderRadius.circular(20),
@@ -666,7 +585,6 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         ),
         const SizedBox(height: 16),
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Currency prefix
           Container(
             height: 52,
             padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -684,8 +602,6 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
                       color: AppColors.primary)),
             ),
           ),
-
-          // Text field
           Expanded(
             child: TextField(
               controller: _priceCtrl,
@@ -765,7 +681,7 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     ).animate().fadeIn(delay: 200.ms, duration: 300.ms);
   }
 
-  // ── Price read-only display ───────────────────────────────────────────────
+  // ── Price read-only ───────────────────────────────────────────────────────
 
   Widget _buildPriceReadOnly() {
     final price = widget.booking.assessmentPrice;
@@ -816,7 +732,6 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
 
   Widget _buildActionBar() {
     final s = widget.booking.status;
-
     return Container(
       padding: EdgeInsets.fromLTRB(
           20, 12, 20, MediaQuery.of(context).padding.bottom + 12),
@@ -835,19 +750,14 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
   }
 
   Widget _buildActionContent(BookingStatus s) {
-    // Completed
     if (s == BookingStatus.completed) {
       return _statusBadge(
           const Color(0xFF34C759), Icons.check_circle_rounded, 'Job Completed');
     }
-
-    // Cancelled
     if (s == BookingStatus.cancelled) {
       return _statusBadge(
           const Color(0xFFFF3B30), Icons.cancel_rounded, 'Booking Cancelled');
     }
-
-    // In Progress → Mark Complete
     if (s == BookingStatus.inProgress) {
       return SizedBox(
         width: double.infinity,
@@ -877,7 +787,6 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         ),
       );
     }
-
     // Accepted → Start Job
     return SizedBox(
       width: double.infinity,
@@ -906,24 +815,22 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     );
   }
 
-  Widget _statusBadge(Color color, IconData icon, String label) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.25)),
-      ),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, color: color, size: 20),
-        const SizedBox(width: 8),
-        Text(label,
-            style: TextStyle(
-                color: color, fontWeight: FontWeight.w700, fontSize: 15)),
-      ]),
-    );
-  }
+  Widget _statusBadge(Color color, IconData icon, String label) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withOpacity(0.25)),
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 8),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontWeight: FontWeight.w700, fontSize: 15)),
+        ]),
+      );
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -973,12 +880,13 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
       'Nov',
       'Dec'
     ];
-    return '${months[d.month]} ${d.day}, ${d.year}  ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    return '${months[d.month]} ${d.day}, ${d.year}  '
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Customer Avatar widget — shows photo if available, else coloured initial
+// Customer Avatar
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _CustomerAvatar extends StatelessWidget {
@@ -992,7 +900,6 @@ class _CustomerAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final initial = name.isNotEmpty ? name[0].toUpperCase() : 'C';
-
     if (avatarUrl != null && avatarUrl!.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(size * 0.27),

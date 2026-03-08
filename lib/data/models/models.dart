@@ -169,6 +169,28 @@ class ProfessionalModel extends Equatable {
     );
   }
 
+  /// Creates a copy with updated lat/lng — used for live location polling.
+  ProfessionalModel copyWithLocation(double? lat, double? lng) =>
+      ProfessionalModel(
+        id: id,
+        userId: userId,
+        name: name,
+        avatarUrl: avatarUrl,
+        skills: skills,
+        verified: verified,
+        rating: rating,
+        reviewCount: reviewCount,
+        priceRange: priceRange,
+        priceMin: priceMin,
+        priceMax: priceMax,
+        city: city,
+        bio: bio,
+        yearsExperience: yearsExperience,
+        available: available,
+        latitude: lat,
+        longitude: lng,
+      );
+
   ProfessionalEntity toEntity() => ProfessionalEntity(
         id: id,
         userId: userId,
@@ -233,7 +255,6 @@ class BookingModel extends Equatable {
   final double? longitude;
 
   /// Price set by the handyman during the assessment phase.
-  /// Null until the professional sets it; falls back to priceEstimate on the UI.
   final double? assessmentPrice;
 
   const BookingModel({
@@ -257,6 +278,22 @@ class BookingModel extends Equatable {
 
   factory BookingModel.fromJson(Map<String, dynamic> json) {
     try {
+      // ── Resolve the join collision ──────────────────────────────────────
+      //
+      // When getProfessionalBookings fetches:
+      //   users!customer_id(...)  → lands in json['users']  (customer data)
+      //   professionals!professional_id(...) → lands in json['professionals']
+      //     └─ which itself has users(...) → nested inside professionals map
+      //
+      // When getCustomerBookings fetches:
+      //   professionals(*, users(...)) → lands in json['professionals']
+      //     └─ customer data is NOT joined at the top level
+      //
+      // So:
+      //  • json['users']          → customer UserModel (pro-side query only)
+      //  • json['professionals']  → ProfessionalModel (both queries)
+      //  • json['professionals']['users'] → professional's user row
+
       final proJson = json['professionals'] as Map<String, dynamic>?;
       final custJson = json['users'] as Map<String, dynamic>?;
 
@@ -365,7 +402,6 @@ class BookingModel extends Equatable {
         assessmentPrice: assessmentPrice,
       );
 
-  /// Copy with a new status (used when updating locally before API confirms).
   BookingModel copyWithStatus(BookingStatus newStatus) => BookingModel(
         id: id,
         customerId: customerId,
@@ -379,6 +415,27 @@ class BookingModel extends Equatable {
         notes: notes,
         createdAt: createdAt,
         professional: professional,
+        customer: customer,
+        latitude: latitude,
+        longitude: longitude,
+        assessmentPrice: assessmentPrice,
+      );
+
+  /// Returns a copy with the professional's location updated.
+  /// Used by the live location polling timer.
+  BookingModel copyWithProLocation(double? lat, double? lng) => BookingModel(
+        id: id,
+        customerId: customerId,
+        professionalId: professionalId,
+        serviceType: serviceType,
+        description: description,
+        priceEstimate: priceEstimate,
+        status: status,
+        scheduledDate: scheduledDate,
+        address: address,
+        notes: notes,
+        createdAt: createdAt,
+        professional: professional?.copyWithLocation(lat, lng),
         customer: customer,
         latitude: latitude,
         longitude: longitude,

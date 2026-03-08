@@ -2,18 +2,15 @@
 //
 // AssessmentScreen — shown after a handyman accepts a booking.
 //
-// Changes:
-//  • Confirm & Start is DISABLED (greyed out) when assessmentPrice is null —
-//    shows a "Waiting for price" banner so the customer knows to wait.
-//  • Map placeholder cleaned up — no more dev-note text.
-//  • Map shows customer pin only (red) if pro lat/lng not set — no "both pins
-//    required" restriction. Falls back gracefully.
-//  • Price card shows "Awaiting handyman's price…" with a pulsing indicator
-//    when assessmentPrice is null, instead of "To be discussed".
+// Map removed entirely. Location is now shown as:
+//   • Address card + "Get Directions in Google Maps" button (deep link)
+//   • Falls back gracefully if no address exists.
+//
+// Requires: url_launcher: ^6.3.0 in pubspec.yaml
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 
@@ -36,136 +33,104 @@ class AssessmentScreen extends StatefulWidget {
 }
 
 class _AssessmentScreenState extends State<AssessmentScreen> {
-  GoogleMapController? _mapCtrl;
   bool _confirming = false;
   bool _declining = false;
-  bool _mapReady = false;
 
-  // ── Coordinates ──────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
-  LatLng? get _customerLatLng {
-    final lat = widget.booking.latitude;
-    final lng = widget.booking.longitude;
-    if (lat == null || lng == null) return null;
-    return LatLng(lat, lng);
-  }
-
-  LatLng? get _proLatLng {
-    final lat = widget.booking.professional?.latitude;
-    final lng = widget.booking.professional?.longitude;
-    if (lat == null || lng == null) return null;
-    return LatLng(lat, lng);
-  }
-
-  bool get _hasAnyPin => _customerLatLng != null || _proLatLng != null;
-  bool get _hasBothPins => _customerLatLng != null && _proLatLng != null;
-
-  LatLng get _initialCamera {
-    if (_hasBothPins) {
-      return LatLng(
-        (_customerLatLng!.latitude + _proLatLng!.latitude) / 2,
-        (_customerLatLng!.longitude + _proLatLng!.longitude) / 2,
-      );
-    }
-    return _customerLatLng ?? _proLatLng ?? const LatLng(7.0707, 125.6087);
-  }
-
-  Set<Marker> get _markers {
-    final m = <Marker>{};
-    if (_customerLatLng != null) {
-      m.add(Marker(
-        markerId: const MarkerId('customer'),
-        position: _customerLatLng!,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        infoWindow: InfoWindow(
-          title: 'Service Location',
-          snippet: widget.booking.address ?? '',
-        ),
-      ));
-    }
-    if (_proLatLng != null) {
-      m.add(Marker(
-        markerId: const MarkerId('handyman'),
-        position: _proLatLng!,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-        infoWindow: InfoWindow(
-          title: widget.booking.professional?.name ?? 'Handyman',
-          snippet: 'Handyman location',
-        ),
-      ));
-    }
-    return m;
-  }
-
-  Set<Polyline> get _polylines {
-    if (!_hasBothPins) return {};
-    return {
-      Polyline(
-        polylineId: const PolylineId('route'),
-        points: [_proLatLng!, _customerLatLng!],
-        color: AppColors.primary,
-        width: 4,
-        patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-      ),
-    };
-  }
-
-  void _fitBounds() {
-    if (_mapCtrl == null) return;
-    if (_hasBothPins) {
-      final sw = LatLng(
-        _customerLatLng!.latitude < _proLatLng!.latitude
-            ? _customerLatLng!.latitude
-            : _proLatLng!.latitude,
-        _customerLatLng!.longitude < _proLatLng!.longitude
-            ? _customerLatLng!.longitude
-            : _proLatLng!.longitude,
-      );
-      final ne = LatLng(
-        _customerLatLng!.latitude > _proLatLng!.latitude
-            ? _customerLatLng!.latitude
-            : _proLatLng!.latitude,
-        _customerLatLng!.longitude > _proLatLng!.longitude
-            ? _customerLatLng!.longitude
-            : _proLatLng!.longitude,
-      );
-      _mapCtrl!.animateCamera(CameraUpdate.newLatLngBounds(
-          LatLngBounds(southwest: sw, northeast: ne), 80));
-    } else {
-      _mapCtrl!.animateCamera(CameraUpdate.newLatLngZoom(_initialCamera, 15));
-    }
-  }
-
-  // ── Price ────────────────────────────────────────────────────────────────
-
-  /// True only when the handyman has explicitly set a price.
   bool get _priceSet => widget.booking.assessmentPrice != null;
-
   double? get _price =>
       widget.booking.assessmentPrice ?? widget.booking.priceEstimate;
   String get _priceDisplay =>
       _price == null ? 'Awaiting price…' : '₱${_price!.toStringAsFixed(2)}';
 
-  // ── Actions ──────────────────────────────────────────────────────────────
+  bool get _hasAddress =>
+      widget.booking.address != null && widget.booking.address!.isNotEmpty;
+  bool get _hasCoords =>
+      widget.booking.latitude != null && widget.booking.longitude != null;
+
+  // ── Google Maps deep link ─────────────────────────────────────────────────
+
+  Future<void> _openInGoogleMaps() async {
+    final custLat = widget.booking.latitude;
+    final custLng = widget.booking.longitude;
+    final address = widget.booking.address ?? '';
+
+    // Handyman's location — used as origin so the customer can see
+    // how far the handyman is from the service location.
+    final proLat = widget.booking.professional?.latitude;
+    final proLng = widget.booking.professional?.longitude;
+
+    Uri uri;
+
+    if (custLat != null && custLng != null) {
+      if (proLat != null && proLng != null) {
+        // Directions: handyman location → service location
+        uri = Uri.parse(
+          'https://www.google.com/maps/dir/?api=1'
+          '&origin=$proLat,$proLng'
+          '&destination=$custLat,$custLng'
+          '&travelmode=driving',
+        );
+      } else {
+        // No handyman location — just show the service pin
+        uri = Uri.parse(
+          'https://www.google.com/maps/search/?api=1'
+          '&query=$custLat,$custLng',
+        );
+      }
+    } else if (address.isNotEmpty) {
+      final encoded = Uri.encodeComponent(address);
+      if (proLat != null && proLng != null) {
+        uri = Uri.parse(
+          'https://www.google.com/maps/dir/?api=1'
+          '&origin=$proLat,$proLng'
+          '&destination=$encoded'
+          '&travelmode=driving',
+        );
+      } else {
+        uri = Uri.parse(
+          'https://www.google.com/maps/search/?api=1&query=$encoded',
+        );
+      }
+    } else {
+      _snack('No location available for this booking.');
+      return;
+    }
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      _snack('Could not open Google Maps.');
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: AppColors.primary,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
+  }
+
+  // ── Actions ───────────────────────────────────────────────────────────────
 
   Future<void> _handleConfirm() async {
-    // Guard: block if no assessment price set yet
     if (!_priceSet) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Row(children: [
-            Icon(Icons.info_rounded, color: Colors.white, size: 18),
-            SizedBox(width: 10),
-            Expanded(
-                child: Text(
-                    'Please wait for the handyman to set a price before confirming.')),
-          ]),
-          backgroundColor: const Color(0xFFFF9500),
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Row(children: [
+          Icon(Icons.info_rounded, color: Colors.white, size: 18),
+          SizedBox(width: 10),
+          Expanded(
+              child: Text(
+                  'Please wait for the handyman to set a price before confirming.')),
+        ]),
+        backgroundColor: const Color(0xFFFF9500),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
       return;
     }
     if (!await _confirmDialog()) return;
@@ -297,26 +262,31 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
       body: Column(children: [
         Expanded(
           child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
             child: Column(children: [
-              _buildMapSection(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                child: Column(children: [
-                  // Waiting-for-price banner — shown prominently when price not set
-                  if (!_priceSet) ...[
-                    _buildWaitingBanner(),
-                    const SizedBox(height: 16),
-                  ],
-                  if (pro != null) ...[
-                    _buildHandymanCard(pro),
-                    const SizedBox(height: 16)
-                  ],
-                  _buildServiceDetailsCard(),
-                  const SizedBox(height: 16),
-                  _buildPriceCard(),
-                  const SizedBox(height: 20),
-                ]),
-              ),
+              // Waiting banner — shown when price not yet set
+              if (!_priceSet) ...[
+                _buildWaitingBanner(),
+                const SizedBox(height: 16),
+              ],
+
+              // Location card — replaces the in-app map
+              _buildLocationCard(),
+              const SizedBox(height: 16),
+
+              // Handyman card
+              if (pro != null) ...[
+                _buildHandymanCard(pro),
+                const SizedBox(height: 16),
+              ],
+
+              // Service details
+              _buildServiceDetailsCard(),
+              const SizedBox(height: 16),
+
+              // Price card
+              _buildPriceCard(),
+              const SizedBox(height: 20),
             ]),
           ),
         ),
@@ -359,7 +329,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
             ),
             SizedBox(height: 4),
             Text(
-              'The handyman hasn\'t set a price yet. Once they do, you\'ll be able to confirm or decline the service.',
+              "The handyman hasn't set a price yet. Once they do, you'll be able to confirm or decline the service.",
               style: TextStyle(
                   fontSize: 12, color: Color(0xFFAA6600), height: 1.4),
             ),
@@ -377,165 +347,126 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
         );
   }
 
-  // ── Map ───────────────────────────────────────────────────────────────────
+  // ── Location card ─────────────────────────────────────────────────────────
 
-  Widget _buildMapSection() {
-    if (!_hasAnyPin) {
-      return Container(
-        height: 200,
-        color: const Color(0xFFF0F4F2),
-        child: Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.map_outlined,
-                size: 44, color: AppColors.textLight),
-            const SizedBox(height: 10),
-            const Text('Service location not yet available',
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textLight)),
-            const SizedBox(height: 4),
-            if (widget.booking.address != null &&
-                widget.booking.address!.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Text(
-                  widget.booking.address!,
-                  textAlign: TextAlign.center,
-                  style:
-                      const TextStyle(fontSize: 11, color: AppColors.textLight),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ]),
-        ),
-      );
-    }
-
-    return Stack(children: [
-      SizedBox(
-        height: 240,
-        child: GoogleMap(
-          initialCameraPosition:
-              CameraPosition(target: _initialCamera, zoom: 13),
-          onMapCreated: (c) {
-            _mapCtrl = c;
-            setState(() => _mapReady = true);
-            Future.delayed(const Duration(milliseconds: 600), _fitBounds);
-          },
-          markers: _markers,
-          polylines: _polylines,
-          myLocationEnabled: false,
-          myLocationButtonEnabled: false,
-          zoomControlsEnabled: false,
-          mapToolbarEnabled: false,
-          compassEnabled: false,
-        ),
+  Widget _buildLocationCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.07),
+              blurRadius: 14,
+              offset: const Offset(0, 4))
+        ],
       ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Header
+        const Row(children: [
+          Icon(Icons.location_on_rounded, size: 15, color: AppColors.primary),
+          SizedBox(width: 6),
+          Text('Service Location',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primary)),
+        ]),
+        const SizedBox(height: 14),
 
-      // Info banner when only one pin is available
-      if (!_hasBothPins)
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            color: const Color(0xFFFF9500).withOpacity(0.88),
-            child: Row(children: [
-              const Icon(Icons.info_outline_rounded,
-                  size: 14, color: Colors.white),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  _customerLatLng == null
-                      ? 'Service location not pinned — see address below.'
-                      : 'Handyman location not yet set on their profile.',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600),
-                ),
-              ),
-            ]),
-          ),
-        ),
-
-      // Legend
-      Positioned(
-        bottom: 12,
-        left: 12,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.93),
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2))
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_customerLatLng != null)
-                _legendDot(const Color(0xFFE53935), 'Service Location'),
-              if (_customerLatLng != null && _proLatLng != null)
-                const SizedBox(height: 4),
-              if (_proLatLng != null)
-                _legendDot(const Color(0xFF43A047), 'Handyman Location'),
-            ],
-          ),
-        ),
-      ),
-
-      // Fit-bounds button
-      if (_mapReady)
-        Positioned(
-          top: _hasBothPins ? 12 : 44,
-          right: 12,
-          child: GestureDetector(
-            onTap: _fitBounds,
-            child: Container(
-              width: 40,
-              height: 40,
+        if (_hasAddress || _hasCoords) ...[
+          // Address text
+          if (_hasAddress)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2))
-                ],
+                color: const Color(0xFFF5F8F5),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.primary.withOpacity(0.12)),
               ),
-              child: const Icon(Icons.fit_screen_rounded,
-                  size: 20, color: AppColors.primary),
+              child:
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(Icons.place_rounded,
+                    size: 16, color: AppColors.primary.withOpacity(0.6)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.booking.address!,
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textDark,
+                        height: 1.4),
+                  ),
+                ),
+              ]),
+            ),
+
+          // GPS available chip
+          if (_hasCoords) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFF34C759).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+                border:
+                    Border.all(color: const Color(0xFF34C759).withOpacity(0.3)),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.my_location_rounded,
+                    size: 12, color: Color(0xFF34C759)),
+                SizedBox(width: 5),
+                Text('Exact GPS location pinned',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF34C759))),
+              ]),
+            ),
+          ],
+
+          const SizedBox(height: 14),
+
+          // Get Directions button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.directions_rounded, size: 18),
+              label: const Text('View Location in Google Maps'),
+              onPressed: _openInGoogleMaps,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1A73E8),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                textStyle:
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                elevation: 0,
+              ),
             ),
           ),
-        ),
-    ]);
-  }
-
-  Widget _legendDot(Color color, String label) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-          const SizedBox(width: 6),
-          Text(label,
-              style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textDark)),
+        ] else ...[
+          // No location at all
+          const Row(children: [
+            Icon(Icons.location_off_rounded,
+                size: 18, color: AppColors.textLight),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'No location was provided for this booking.',
+                style: TextStyle(
+                    fontSize: 13, color: AppColors.textLight, height: 1.4),
+              ),
+            ),
+          ]),
         ],
-      );
+      ]),
+    ).animate().fadeIn(duration: 300.ms);
+  }
 
   // ── Handyman card ─────────────────────────────────────────────────────────
 
@@ -691,8 +622,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
         const SizedBox(height: 12),
         _detailRow(
             Icons.build_circle_rounded, 'Service', widget.booking.serviceType),
-        if (widget.booking.address != null &&
-            widget.booking.address!.isNotEmpty)
+        if (_hasAddress)
           _detailRow(
               Icons.location_on_rounded, 'Location', widget.booking.address!),
         if (widget.booking.notes != null && widget.booking.notes!.isNotEmpty)
@@ -735,15 +665,13 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   // ── Price card ────────────────────────────────────────────────────────────
 
   Widget _buildPriceCard() {
-    final hasPriceSet = _priceSet;
-
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: hasPriceSet
+          colors: _priceSet
               ? [
                   AppColors.primary.withOpacity(0.06),
                   AppColors.primary.withOpacity(0.12)
@@ -752,7 +680,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
         ),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: hasPriceSet
+          color: _priceSet
               ? AppColors.primary.withOpacity(0.2)
               : const Color(0xFFDDDDDD),
         ),
@@ -760,11 +688,11 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
       child: Column(children: [
         Row(children: [
           Icon(
-            hasPriceSet
+            _priceSet
                 ? Icons.price_check_rounded
                 : Icons.hourglass_empty_rounded,
             size: 16,
-            color: hasPriceSet ? AppColors.primary : AppColors.textLight,
+            color: _priceSet ? AppColors.primary : AppColors.textLight,
           ),
           const SizedBox(width: 6),
           Text(
@@ -772,7 +700,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w700,
-              color: hasPriceSet ? AppColors.primary : AppColors.textLight,
+              color: _priceSet ? AppColors.primary : AppColors.textLight,
             ),
           ),
         ]),
@@ -785,7 +713,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: hasPriceSet
+                color: _priceSet
                     ? AppColors.primary.withOpacity(0.1)
                     : Colors.black.withOpacity(0.04),
                 blurRadius: 12,
@@ -797,27 +725,24 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
             Text(
               "Handyman's Price",
               style: TextStyle(
-                fontSize: 12,
-                color: hasPriceSet ? AppColors.textLight : AppColors.textLight,
-                fontWeight: FontWeight.w500,
-              ),
+                  fontSize: 12,
+                  color: AppColors.textLight,
+                  fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 8),
-            if (hasPriceSet) ...[
+            if (_priceSet) ...[
               Text(
                 _priceDisplay,
                 style: const TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.primary,
-                  letterSpacing: -0.5,
-                ),
+                    fontSize: 32,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.primary,
+                    letterSpacing: -0.5),
               ),
               const SizedBox(height: 4),
               const Text('Inclusive of labor',
                   style: TextStyle(fontSize: 11, color: AppColors.textLight)),
             ] else ...[
-              // Pulsing "awaiting" indicator
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 SizedBox(
                   width: 14,
@@ -830,13 +755,12 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'Awaiting handyman\'s price…',
+                  "Awaiting handyman's price…",
                   style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textLight.withOpacity(0.7),
-                    letterSpacing: -0.2,
-                  ),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textLight.withOpacity(0.7),
+                      letterSpacing: -0.2),
                 ),
               ]),
               const SizedBox(height: 6),
@@ -844,15 +768,14 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                 'The handyman will set a price after assessing your request.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textLight.withOpacity(0.6),
-                  height: 1.4,
-                ),
+                    fontSize: 11,
+                    color: AppColors.textLight.withOpacity(0.6),
+                    height: 1.4),
               ),
             ],
           ]),
         ),
-        if (hasPriceSet) ...[
+        if (_priceSet) ...[
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -923,8 +846,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
           Expanded(
             flex: 2,
             child: ElevatedButton.icon(
-              // Visually disabled + tooltip-like when no price set
-              icon: (_confirming)
+              icon: _confirming
                   ? const SizedBox(
                       width: 16,
                       height: 16,
@@ -937,7 +859,6 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                       size: 18,
                     ),
               label: Text(_priceSet ? 'Confirm & Start' : 'Awaiting Price'),
-              // Disabled until handyman sets price
               onPressed: (_confirming || _declining || !_priceSet)
                   ? null
                   : _handleConfirm,
@@ -964,7 +885,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reusable avatar widget — shows photo with graceful initial-letter fallback
+// Pro Avatar
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _ProAvatar extends StatelessWidget {
@@ -978,7 +899,6 @@ class _ProAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final initial = name.isNotEmpty ? name[0].toUpperCase() : 'H';
-
     if (avatarUrl != null && avatarUrl!.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(size * 0.28),

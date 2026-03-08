@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'service_detail_screen.dart';
 
 class WallPaintingScreen extends StatelessWidget {
-  final Function(String)? onBookNow;
+  final Function(String, String)? onBookNow;
   const WallPaintingScreen({super.key, this.onBookNow});
 
   @override

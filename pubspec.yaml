@@ -45,6 +45,9 @@ dependencies:
   geolocator: ^11.0.0
   geocoding: ^3.0.0
 
+  # URL Launcher - GOOGLE MAPS APPLICATION
+  url_launcher: ^6.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

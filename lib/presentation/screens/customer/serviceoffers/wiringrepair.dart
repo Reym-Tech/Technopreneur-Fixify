@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'service_detail_screen.dart';
 
 class WiringRepairScreen extends StatelessWidget {
-  final Function(String)? onBookNow;
+  final Function(String, String)? onBookNow;
   const WiringRepairScreen({super.key, this.onBookNow});
 
   @override

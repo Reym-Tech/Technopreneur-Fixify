@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'service_detail_screen.dart';
 
 class DoorRepairScreen extends StatelessWidget {
-  final Function(String)? onBookNow;
+  final Function(String, String)? onBookNow;
   const DoorRepairScreen({super.key, this.onBookNow});
 
   @override

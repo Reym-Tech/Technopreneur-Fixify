@@ -2,6 +2,11 @@
 //
 // RequestServiceScreen — 4-step service request wizard.
 //
+// Changes vs previous version:
+//   • Added [initialProblemTitle] prop — when provided (e.g. "Pipe Leak Repair"),
+//     it pre-fills the Problem Title field in Step 2 so users don't have to
+//     retype the service name they already selected from the catalogue.
+//
 // Step 3 — Location:
 //   • Asks for location permission on entry (Once / Always / Deny)
 //   • Tap-to-pin on Google Maps with red marker
@@ -57,7 +62,14 @@ class RequestServiceScreen extends StatefulWidget {
   final List<ProfessionalModel> professionals;
   final Function(RequestServiceResult)? onSubmit;
   final VoidCallback? onBack;
-  final String? initialServiceType; // pre-selects service + skips to step 1
+
+  /// Pre-selects the service category and jumps straight to Step 2 (Describe).
+  final String? initialServiceType;
+
+  /// Pre-fills the Problem Title field in Step 2.
+  /// Typically set to the specific service name (e.g. "Pipe Leak Repair")
+  /// when the user arrives via a service card → Book Now flow.
+  final String? initialProblemTitle;
 
   const RequestServiceScreen({
     super.key,
@@ -65,6 +77,7 @@ class RequestServiceScreen extends StatefulWidget {
     this.onSubmit,
     this.onBack,
     this.initialServiceType,
+    this.initialProblemTitle, // ← NEW
   });
 
   @override
@@ -86,13 +99,13 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   // Step 3 — map
   GoogleMapController? _mapCtrl;
   LatLng? _pinned;
-  bool _showMap = true; // toggle between map and form-only
+  bool _showMap = true;
   bool _locating = false;
   bool _geocoding = false;
   bool _permissionDenied = false;
-  bool _permCheckDone = false; // true once permission flow has completed
+  bool _permCheckDone = false;
 
-  // Step 3 — address fields (auto-filled by geocoding, also manually editable)
+  // Step 3 — address fields
   final _streetCtrl = TextEditingController();
   final _barangayCtrl = TextEditingController();
   final _cityCtrl = TextEditingController();
@@ -171,7 +184,12 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     super.initState();
     if (widget.initialServiceType != null) {
       _serviceType = widget.initialServiceType;
-      _step = 1; // skip service selection, jump straight to problem description
+      _step = 1; // skip service selection, jump to problem description
+    }
+    // Pre-fill the Problem Title if a specific service name was passed in
+    if (widget.initialProblemTitle != null &&
+        widget.initialProblemTitle!.isNotEmpty) {
+      _titleCtrl.text = widget.initialProblemTitle!;
     }
   }
 
@@ -213,7 +231,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       return;
     }
     setState(() => _step++);
-    // On entering step 3, ask for permission & try to get location
     if (_step == 2) _initLocation();
   }
 
@@ -226,20 +243,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   // ── Location permission & GPS ──────────────────────────────
 
-  // ── Location permission & GPS ──────────────────────────────
-  //
-  // Flow:
-  //   1. Check if location service is on
-  //   2. If already granted → get location immediately, no dialogs
-  //   3. If denied (not forever) → show OUR explanation dialog first
-  //      → user taps "Allow" → THEN call Geolocator.requestPermission()
-  //        which shows the ONE system dialog
-  //   4. If deniedForever → show manual-entry banner
-  //
-  // myLocationEnabled on GoogleMap is set ONLY after permission is granted
-  // to prevent the map SDK from triggering its own extra permission request.
-
-  bool _locationPermissionGranted = false; // drives myLocationEnabled
+  bool _locationPermissionGranted = false;
 
   Future<void> _initLocation() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -274,7 +278,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       return;
     }
 
-    // status == denied — show our explanation dialog first
     if (!mounted) return;
     final choice = await _showPermissionDialog();
     if (choice == _LocationChoice.deny) {
@@ -286,7 +289,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       return;
     }
 
-    // User chose Allow → system dialog fires ONCE here
     final newStatus = await Geolocator.requestPermission();
     if (newStatus == LocationPermission.always ||
         newStatus == LocationPermission.whileInUse) {
@@ -339,7 +341,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   fontSize: 13, color: AppColors.textLight, height: 1.5),
             ),
             const SizedBox(height: 24),
-            // Allow — triggers system dialog
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -358,7 +359,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            // Not now
             SizedBox(
               width: double.infinity,
               child: TextButton(
@@ -719,6 +719,9 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   }
 
   // ── STEP 2: DESCRIBE ──────────────────────────────────────
+  // _titleCtrl is pre-filled from initialProblemTitle in initState,
+  // so the Problem Title field will already contain the service name
+  // (e.g. "Pipe Leak Repair") when arriving from a service card.
 
   Widget _buildStep2() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -818,11 +821,9 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   // ── STEP 3: LOCATION ──────────────────────────────────────
 
   Widget _buildStep3() {
-    // Default camera position: Davao City
     final initialPos = _pinned ?? const LatLng(7.0707, 125.6087);
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Title + map/form toggle
       Row(children: [
         const Expanded(
           child:
@@ -838,7 +839,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                 style: TextStyle(fontSize: 12, color: AppColors.textLight)),
           ]),
         ),
-        // Map / Form toggle pill
         GestureDetector(
           onTap: () => setState(() => _showMap = !_showMap),
           child: AnimatedContainer(
@@ -874,10 +874,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         ),
       ]),
       const SizedBox(height: 16),
-
-      // ── MAP VIEW ────────────────────────────────────────
       if (_showMap) ...[
-        // Show a loading indicator while permission check is running
         if (!_permCheckDone)
           Container(
             height: 270,
@@ -896,8 +893,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               ]),
             ),
           ),
-
-        // Permission denied banner (only shown after check completes)
         if (_permCheckDone && _permissionDenied)
           Container(
             margin: const EdgeInsets.only(bottom: 12),
@@ -927,8 +922,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               ),
             ]),
           ),
-
-        // Google Map — only rendered AFTER permission check is done
         if (_permCheckDone)
           ClipRRect(
             borderRadius: BorderRadius.circular(20),
@@ -940,7 +933,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                       CameraPosition(target: initialPos, zoom: 14),
                   onMapCreated: (c) {
                     _mapCtrl = c;
-                    // If we already have a pin from GPS, don't re-center
                     if (_pinned != null) {
                       c.animateCamera(CameraUpdate.newLatLngZoom(_pinned!, 17));
                     }
@@ -967,8 +959,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   mapToolbarEnabled: false,
                   compassEnabled: false,
                 ),
-
-                // GPS button (top-right)
                 Positioned(
                   top: 12,
                   right: 12,
@@ -1002,8 +992,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                     ),
                   ),
                 ),
-
-                // Zoom buttons (bottom-right)
                 Positioned(
                   bottom: 12,
                   right: 12,
@@ -1015,8 +1003,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                         () => _mapCtrl?.animateCamera(CameraUpdate.zoomOut())),
                   ]),
                 ),
-
-                // Geocoding spinner overlay
                 if (_geocoding)
                   Positioned(
                     bottom: 12,
@@ -1044,8 +1030,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                       ]),
                     ),
                   ),
-
-                // "Tap to pin" hint when no pin yet
                 if (_pinned == null && !_locating)
                   Center(
                       child: IgnorePointer(
@@ -1072,8 +1056,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           ),
         const SizedBox(height: 14),
       ],
-
-      // ── Pinned address preview card ──────────────────────
       AnimatedContainer(
         duration: 300.ms,
         padding: const EdgeInsets.all(14),
@@ -1143,8 +1125,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         ]),
       ),
       const SizedBox(height: 18),
-
-      // ── Editable address fields ───────────────────────────
       const Text('Confirm or Edit Address',
           style: TextStyle(
               fontSize: 14,
@@ -1154,7 +1134,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       const Text('Auto-filled from map pin — edit if needed',
           style: TextStyle(fontSize: 11, color: AppColors.textLight)),
       const SizedBox(height: 12),
-
       _label('Street / House No. *'),
       const SizedBox(height: 6),
       _field(
@@ -1163,7 +1142,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           icon: Icons.home_rounded,
           onChanged: (_) => setState(() {})),
       const SizedBox(height: 12),
-
       _label('Barangay'),
       const SizedBox(height: 6),
       _field(
@@ -1172,7 +1150,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           icon: Icons.map_rounded,
           onChanged: (_) => setState(() {})),
       const SizedBox(height: 12),
-
       _label('City / Municipality *'),
       const SizedBox(height: 6),
       _field(
@@ -1181,7 +1158,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           icon: Icons.location_city_rounded,
           onChanged: (_) => setState(() {})),
       const SizedBox(height: 18),
-
       const Text('Additional Notes (Optional)',
           style: TextStyle(
               fontSize: 14,

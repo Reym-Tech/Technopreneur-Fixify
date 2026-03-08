@@ -117,6 +117,26 @@ class SupabaseDataSource {
     return ProfessionalModel.fromJson(data);
   }
 
+  /// Fetches just the latest latitude/longitude for a professional.
+  /// Used for lightweight periodic location polling on the map screens.
+  Future<({double? latitude, double? longitude})> getProfessionalLocation(
+      String professionalId) async {
+    try {
+      final data = await _client
+          .from(AppConfig.professionalsTable)
+          .select('latitude, longitude')
+          .eq('id', professionalId)
+          .single();
+      return (
+        latitude: (data['latitude'] as num?)?.toDouble(),
+        longitude: (data['longitude'] as num?)?.toDouble(),
+      );
+    } catch (e) {
+      debugPrint('[getProfessionalLocation] error: $e');
+      return (latitude: null, longitude: null);
+    }
+  }
+
   Future<ProfessionalModel> createProfessionalProfile({
     required String userId,
     required List<String> skills,
@@ -150,8 +170,6 @@ class SupabaseDataSource {
 
   // ── BOOKINGS ──────────────────────────────────────────────
 
-  /// Creates a new booking, persisting the customer's GPS pin (latitude /
-  /// longitude) so the AssessmentScreen can draw the route later.
   Future<BookingModel> createBooking({
     required String customerId,
     required String professionalId,
@@ -192,15 +210,18 @@ class SupabaseDataSource {
     }
   }
 
-  // ── FIX 1: getCustomerBookings ────────────────────────────
-  // Include the full professionals join WITH latitude/longitude so that
-  // AssessmentScreen can draw the handyman's pin on the map.
-  // Also join users on professionals so avatarUrl comes through.
+  // ── FIX: getCustomerBookings ──────────────────────────────
+  // Joins professionals WITH their lat/lng + nested users for avatarUrl,
+  // so AssessmentScreen can render both the customer pin (booking.latitude /
+  // booking.longitude) and the handyman pin (booking.professional.latitude /
+  // booking.professional.longitude).
   Future<List<BookingModel>> getCustomerBookings(String customerId) async {
     final response = await _client
         .from(AppConfig.bookingsTable)
         .select(
-          '*, professionals(*, users(id, name, avatar_url, phone))',
+          '*, professionals(id, user_id, skills, verified, rating, review_count, '
+          'price_range, price_min, price_max, city, bio, years_experience, '
+          'available, latitude, longitude, users(id, name, avatar_url, phone))',
         )
         .eq('customer_id', customerId)
         .order('created_at', ascending: false);
@@ -209,21 +230,35 @@ class SupabaseDataSource {
         .toList();
   }
 
-  // ── FIX 2: getProfessionalBookings ────────────────────────
-  // Include the customer's latitude/longitude (already on the bookings row via
-  // select('*',...)) AND join users for customer name/phone/avatar.
+  // ── FIX: getProfessionalBookings ──────────────────────────
+  // Now fetches BOTH:
+  //   • users!customer_id  — customer name/phone/avatar
+  //   • professionals      — the pro's own lat/lng so ProBookingDetailScreen
+  //                          can draw the blue "Your Location" pin
+  // The professionals row is looked up by professional_id on the booking.
   Future<List<BookingModel>> getProfessionalBookings(
       String professionalId) async {
     final response = await _client
         .from(AppConfig.bookingsTable)
         .select(
-          '*, users!customer_id(id, name, avatar_url, phone)',
+          '*, '
+          'users!customer_id(id, name, avatar_url, phone), '
+          'professionals!professional_id(id, user_id, skills, verified, rating, '
+          'review_count, price_range, price_min, price_max, city, bio, '
+          'years_experience, available, latitude, longitude, '
+          'users(id, name, avatar_url, phone))',
         )
         .eq('professional_id', professionalId)
         .order('created_at', ascending: false);
-    return (response as List)
-        .map((j) => BookingModel.fromJson(j as Map<String, dynamic>))
-        .toList();
+
+    return (response as List).map((j) {
+      final map = Map<String, dynamic>.from(j as Map<String, dynamic>);
+      // Supabase returns customer user data under 'users' key — but when we
+      // also join professionals->users it can conflict. Rename the top-level
+      // customer join to a stable key before parsing.
+      // The top-level 'users' key here is from users!customer_id.
+      return BookingModel.fromJson(map);
+    }).toList();
   }
 
   Future<void> updateBookingStatus(
@@ -232,7 +267,6 @@ class SupabaseDataSource {
         {'status': BookingModel.statusToString(status)}).eq('id', bookingId);
   }
 
-  /// Sets the handyman's proposed price on a booking (assessment_price column).
   Future<void> updateBookingAssessmentPrice({
     required String bookingId,
     required double price,
@@ -242,7 +276,6 @@ class SupabaseDataSource {
         .update({'assessment_price': price}).eq('id', bookingId);
   }
 
-  /// Customer confirms the price → moves booking to InProgress.
   Future<void> confirmAssessment(String bookingId) async {
     await _client
         .from('bookings')
@@ -267,12 +300,15 @@ class SupabaseDataSource {
             value: bookingId,
           ),
           callback: (payload) async {
-            // Re-fetch with full joins instead of using bare payload.newRecord
             try {
+              // Re-fetch with full joins so lat/lng + professional flow through
               final data = await _client
                   .from(AppConfig.bookingsTable)
                   .select(
-                    '*, professionals(*, users(id, name, avatar_url, phone))',
+                    '*, professionals(id, user_id, skills, verified, rating, '
+                    'review_count, price_range, price_min, price_max, city, bio, '
+                    'years_experience, available, latitude, longitude, '
+                    'users(id, name, avatar_url, phone))',
                   )
                   .eq('id', bookingId)
                   .single();
@@ -303,12 +339,17 @@ class SupabaseDataSource {
             value: professionalId,
           ),
           callback: (payload) async {
-            // Re-fetch with customer join so name/avatar are available immediately
             try {
+              // Re-fetch with customer join + professional join
               final data = await _client
                   .from(AppConfig.bookingsTable)
                   .select(
-                    '*, users!customer_id(id, name, avatar_url, phone)',
+                    '*, '
+                    'users!customer_id(id, name, avatar_url, phone), '
+                    'professionals!professional_id(id, user_id, skills, verified, '
+                    'rating, review_count, price_range, price_min, price_max, city, '
+                    'bio, years_experience, available, latitude, longitude, '
+                    'users(id, name, avatar_url, phone))',
                   )
                   .eq('id', payload.newRecord['id'])
                   .single();
@@ -407,10 +448,8 @@ class SupabaseDataSource {
         .toList();
   }
 
-  // ── PROFESSIONAL LOCATION ────────────────────────────────
+  // ── PROFESSIONAL LOCATION ─────────────────────────────────
 
-  /// Saves the handyman's GPS location to the professionals table.
-  /// These coordinates appear as the green pin on the AssessmentScreen map.
   Future<void> updateProfessionalLocation({
     required String professionalId,
     required double latitude,
