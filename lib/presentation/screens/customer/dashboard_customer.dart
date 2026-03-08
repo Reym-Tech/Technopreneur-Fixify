@@ -2,6 +2,7 @@
 
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
+import 'package:fixify/presentation/screens/customer/all_professionals_screen.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -351,8 +352,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     _fetchUnreadCount();
   }
 
-  /// Fetches the real unread count directly from Supabase.
-  /// Called on init and after returning from NotificationsScreen.
   Future<void> _fetchUnreadCount() async {
     try {
       final userId = widget.user?.id;
@@ -360,10 +359,28 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       final ds = NotificationDataSource(Supabase.instance.client);
       final count = await ds.getUnreadCount(userId);
       if (mounted) setState(() => _unreadNotifCount = count);
-    } catch (_) {
-      // Fail silently — dot simply won't show if fetch fails
-    }
+    } catch (_) {}
   }
+
+  // ── Top Professionals helpers ─────────────────────────────────────────
+
+  /// All verified professionals sorted by (rating * reviewCount) descending.
+  /// Tiebreak: higher raw rating wins.
+  List<ProfessionalEntity> get _verifiedSorted {
+    final list = widget.professionals.where((p) => p.verified).toList();
+    list.sort((a, b) {
+      final scoreA = a.rating * a.reviewCount;
+      final scoreB = b.rating * b.reviewCount;
+      if (scoreB != scoreA) return scoreB.compareTo(scoreA);
+      return b.rating.compareTo(a.rating);
+    });
+    return list;
+  }
+
+  /// Only the top 3 for the dashboard preview.
+  List<ProfessionalEntity> get _topThree => _verifiedSorted.take(3).toList();
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   Set<String> get _availableCategories {
     final cats = <String>{};
@@ -415,7 +432,20 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     }
   }
 
-  // ── Avatar chip: shows real photo if available, else initial ─────────────
+  /// Opens the full paginated professionals list.
+  void _openAllProfessionals() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AllProfessionalsScreen(
+          professionals: widget.professionals,
+          onProfessionalTap: widget.onProfessionalTap,
+          onBack: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+  }
+
+  // ── Avatar chip ───────────────────────────────────────────────────────────
   Widget _buildAvatarChip(String name) {
     final avatarUrl = widget.user?.avatarUrl;
     return Container(
@@ -463,6 +493,9 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final topThree = _topThree;
+    final verifiedCount = _verifiedSorted.length;
+
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       body: CustomScrollView(
@@ -492,23 +525,29 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               child: _buildRecentBookings().animate().fadeIn(delay: 320.ms),
             ),
           ],
+
+          // ── Top Professionals header ─────────────────────────────────
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
               child: SectionHeader(
                 title: 'Top Professionals',
-                actionLabel: widget.professionals.isNotEmpty ? 'See All' : null,
+                // Show "See All" only when there are verified pros
+                actionLabel: verifiedCount > 0 ? 'See All' : null,
+                onAction: verifiedCount > 0 ? _openAllProfessionals : null,
               ),
             ).animate().fadeIn(delay: 360.ms),
           ),
-          widget.professionals.isEmpty
+
+          // ── Top 3 verified pros (or empty state) ────────────────────
+          topThree.isEmpty
               ? SliverToBoxAdapter(child: _buildEmptyPros())
               : SliverPadding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, i) {
-                        final pro = widget.professionals[i];
+                        final pro = topThree[i];
                         return ProfessionalCard(
                           professional: pro,
                           onTap: () => widget.onProfessionalTap?.call(pro),
@@ -517,7 +556,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                             .fadeIn(delay: (400 + i * 70).ms)
                             .slideX(begin: 0.04, end: 0);
                       },
-                      childCount: widget.professionals.length,
+                      childCount: topThree.length,
                     ),
                   ),
                 ),
@@ -537,7 +576,8 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         : hour < 17
             ? 'Good Afternoon'
             : 'Good Evening';
-    final proCount = widget.professionals.length;
+    // Show verified-only count in the header badge
+    final proCount = _verifiedSorted.length;
 
     return Container(
       decoration: const BoxDecoration(
@@ -561,7 +601,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // ── Logo ──────────────────────────────────────────────
+                      // Logo
                       Row(
                         children: [
                           Container(
@@ -600,10 +640,9 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                           ),
                         ],
                       ),
-                      // ── Action buttons ────────────────────────────────────
+                      // Action buttons
                       Row(
                         children: [
-                          // Bell icon — dot only shown when _unreadNotifCount > 0
                           IconButton(
                             onPressed: () async {
                               await Navigator.push(
@@ -614,9 +653,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                                   ),
                                 ),
                               );
-                              // Re-fetch real count after user returns —
-                              // this correctly handles mark-as-read, delete,
-                              // and clear-all done inside NotificationsScreen.
                               if (mounted) {
                                 await _fetchUnreadCount();
                                 widget.onNotificationsViewed?.call();
@@ -638,7 +674,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                                     size: 20,
                                   ),
                                 ),
-                                // Red dot — driven by real fetched count
                                 if (_unreadNotifCount > 0)
                                   Positioned(
                                     top: 7,
@@ -658,7 +693,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                             constraints: const BoxConstraints(),
                           ),
                           const SizedBox(width: 8),
-                          // Profile avatar
                           IconButton(
                             onPressed: widget.onProfileTap,
                             icon: _buildAvatarChip(name),
@@ -1024,14 +1058,15 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                 size: 48, color: AppColors.primary),
           ),
           const SizedBox(height: 16),
-          const Text('No professionals found',
+          const Text('No verified professionals yet',
               style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                   color: AppColors.textDark)),
           const SizedBox(height: 6),
-          const Text('Try a different category',
-              style: TextStyle(color: AppColors.textLight)),
+          const Text('Check back soon — we\'re always growing our network.',
+              style: TextStyle(color: AppColors.textLight),
+              textAlign: TextAlign.center),
         ]),
       );
 

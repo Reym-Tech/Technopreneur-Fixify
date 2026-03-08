@@ -7,7 +7,7 @@
 //     it pre-fills the Problem Title field in Step 2 so users don't have to
 //     retype the service name they already selected from the catalogue.
 //
-// Step 3 — Location:
+// Step 3 — Location (enhanced):
 //   • Asks for location permission on entry (Once / Always / Deny)
 //   • Tap-to-pin on Google Maps with red marker
 //   • "Use My Location" button (GPS crosshair)
@@ -15,7 +15,10 @@
 //   • Address fields are editable after autofill
 //   • Toggle between Map view and Form-only view (for slow devices)
 //   • Additional Notes field (P.S.)
+//   • "Use two fingers to move the map" hint on single-finger scroll
+//   • Map type toggle: bottom-left thumbnail switches Normal ↔ Satellite
 
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -67,8 +70,6 @@ class RequestServiceScreen extends StatefulWidget {
   final String? initialServiceType;
 
   /// Pre-fills the Problem Title field in Step 2.
-  /// Typically set to the specific service name (e.g. "Pipe Leak Repair")
-  /// when the user arrives via a service card → Book Now flow.
   final String? initialProblemTitle;
 
   const RequestServiceScreen({
@@ -77,7 +78,7 @@ class RequestServiceScreen extends StatefulWidget {
     this.onSubmit,
     this.onBack,
     this.initialServiceType,
-    this.initialProblemTitle, // ← NEW
+    this.initialProblemTitle,
   });
 
   @override
@@ -99,11 +100,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   // Step 3 — map
   GoogleMapController? _mapCtrl;
   LatLng? _pinned;
-  bool _showMap = true;
   bool _locating = false;
   bool _geocoding = false;
   bool _permissionDenied = false;
   bool _permCheckDone = false;
+
+  // ── Map type & gesture control ───────────────────────────
+  MapType _mapType = MapType.normal;
+  // When true the parent SingleChildScrollView is locked
+  bool _lockScroll = false;
+  final ScrollController _scrollCtrl = ScrollController();
 
   // Step 3 — address fields
   final _streetCtrl = TextEditingController();
@@ -184,9 +190,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     super.initState();
     if (widget.initialServiceType != null) {
       _serviceType = widget.initialServiceType;
-      _step = 1; // skip service selection, jump to problem description
+      _step = 1;
     }
-    // Pre-fill the Problem Title if a specific service name was passed in
     if (widget.initialProblemTitle != null &&
         widget.initialProblemTitle!.isNotEmpty) {
       _titleCtrl.text = widget.initialProblemTitle!;
@@ -195,6 +200,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   @override
   void dispose() {
+    _scrollCtrl.dispose();
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _streetCtrl.dispose();
@@ -203,6 +209,29 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     _notesCtrl.dispose();
     _mapCtrl?.dispose();
     super.dispose();
+  }
+
+  // ── Pointer tracking: lock page scroll while finger is on map ──
+
+  void _onMapPointerDown(PointerDownEvent e) {
+    if (!_lockScroll && mounted) setState(() => _lockScroll = true);
+  }
+
+  void _onMapPointerUp(PointerUpEvent e) {
+    if (_lockScroll && mounted) setState(() => _lockScroll = false);
+  }
+
+  void _onMapPointerCancel(PointerCancelEvent e) {
+    if (_lockScroll && mounted) setState(() => _lockScroll = false);
+  }
+
+  // ── NEW: map type toggle ───────────────────────────────────
+
+  void _toggleMapType() {
+    setState(() {
+      _mapType =
+          _mapType == MapType.normal ? MapType.satellite : MapType.normal;
+    });
   }
 
   // ── Navigation ─────────────────────────────────────────────
@@ -217,6 +246,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       return;
     }
     if (_step == 2) {
+      // Location permission is required — block if denied
+      if (_permissionDenied) {
+        _snack('Location access is required. Please allow it to continue.');
+        return;
+      }
+      // Must have a pinned location
+      if (_pinned == null) {
+        _snack('Please pin your location on the map first.');
+        return;
+      }
       if (_streetCtrl.text.trim().isEmpty) {
         _snack('Please enter your street or house number');
         return;
@@ -278,16 +317,9 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       return;
     }
 
+    // status == denied → show the mandatory allow dialog (no "Not now" option)
     if (!mounted) return;
-    final choice = await _showPermissionDialog();
-    if (choice == _LocationChoice.deny) {
-      setState(() {
-        _permissionDenied = true;
-        _locationPermissionGranted = false;
-        _permCheckDone = true;
-      });
-      return;
-    }
+    await _showPermissionDialog();
 
     final newStatus = await Geolocator.requestPermission();
     if (newStatus == LocationPermission.always ||
@@ -307,14 +339,14 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     }
   }
 
-  Future<_LocationChoice?> _showPermissionDialog() {
-    return showDialog<_LocationChoice>(
+  Future<void> _showPermissionDialog() {
+    return showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
               width: 64,
@@ -335,16 +367,38 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                     color: AppColors.textDark)),
             const SizedBox(height: 10),
             const Text(
-              'Fixify uses your location to pin the service address on the map and find the nearest available professional.',
+              'Fixify requires your location to accurately pin the service address and match you with the nearest available professional.',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 13, color: AppColors.textLight, height: 1.5),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(children: [
+                Icon(Icons.info_outline_rounded,
+                    color: AppColors.primary, size: 16),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Location access is required to proceed.',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, _LocationChoice.once),
+                onPressed: () => Navigator.pop(ctx),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
@@ -356,23 +410,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                 child: const Text('Allow Location',
                     style:
                         TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                onPressed: () => Navigator.pop(ctx, _LocationChoice.deny),
-                style: TextButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                child: const Text('Not now — I\'ll type my address',
-                    style: TextStyle(
-                        color: AppColors.textLight,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13)),
               ),
             ),
           ]),
@@ -412,16 +449,63 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           .timeout(const Duration(seconds: 8));
       if (marks.isNotEmpty && mounted) {
         final p = marks.first;
+
         setState(() {
-          if ((p.street ?? '').isNotEmpty) _streetCtrl.text = p.street!;
-          if ((p.subLocality ?? '').isNotEmpty)
-            _barangayCtrl.text = p.subLocality!;
-          else if ((p.subAdministrativeArea ?? '').isNotEmpty)
-            _barangayCtrl.text = p.subAdministrativeArea!;
-          final cityParts = [p.locality, p.administrativeArea]
-              .where((s) => s != null && s.isNotEmpty)
-              .toList();
-          if (cityParts.isNotEmpty) _cityCtrl.text = cityParts.join(', ');
+          // ── Street / House No. ────────────────────────────────
+          // p.street can return a Google Plus Code (e.g. "Q7CX+2PP") when
+          // there is no named street. Prefer a real street name from
+          // thoroughfare, then name, then street — skip Plus Codes entirely.
+          final plusCodePattern = RegExp(r'^[0-9A-Z]{4,}\+[0-9A-Z]{2,}');
+          String street = '';
+          for (final candidate in [
+            p.thoroughfare, // named road (most reliable)
+            p.name, // POI / landmark name — often has Purok/Sitio
+            p.street, // fallback
+          ]) {
+            final v = (candidate ?? '').trim();
+            if (v.isNotEmpty && !plusCodePattern.hasMatch(v)) {
+              street = v;
+              break;
+            }
+          }
+          if (street.isNotEmpty) _streetCtrl.text = street;
+
+          // ── Barangay ──────────────────────────────────────────
+          // Priority: subLocality (barangay in PH) → subThoroughfare
+          // (subdivision/purok) → name if it looks like a barangay.
+          // Deliberately skip subAdministrativeArea — that is the province.
+          String barangay = '';
+          for (final candidate in [
+            p.subLocality, // Barangay X in PH when available
+            p.subThoroughfare, // house-level detail, sometimes has Purok
+          ]) {
+            final v = (candidate ?? '').trim();
+            if (v.isNotEmpty) {
+              barangay = v;
+              break;
+            }
+          }
+          // Last resort: if p.name looks like a barangay/purok and street
+          // didn't use it already, use it here.
+          if (barangay.isEmpty) {
+            final nameVal = (p.name ?? '').trim();
+            final looksLikeBarangay = RegExp(
+              r'(barangay|brgy|purok|sitio|prk)',
+              caseSensitive: false,
+            ).hasMatch(nameVal);
+            if (nameVal.isNotEmpty &&
+                looksLikeBarangay &&
+                nameVal != _streetCtrl.text) {
+              barangay = nameVal;
+            }
+          }
+          if (barangay.isNotEmpty) _barangayCtrl.text = barangay;
+
+          // ── City / Municipality ───────────────────────────────
+          // p.locality is the city/municipality (e.g. "Digos City").
+          // p.administrativeArea is the region/province — NOT shown here.
+          final city = (p.locality ?? '').trim();
+          if (city.isNotEmpty) _cityCtrl.text = city;
         });
       }
     } catch (_) {
@@ -495,14 +579,23 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         _buildTopBar(),
         _buildStepper(),
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
-            child: [
-              _buildStep1(),
-              _buildStep2(),
-              _buildStep3(),
-              _buildStep4(),
-            ][_step],
+          child: NotificationListener<ScrollNotification>(
+            // Block the scroll bubbling up when fingers are on the map
+            onNotification: (n) => _lockScroll,
+            child: SingleChildScrollView(
+              controller: _scrollCtrl,
+              // Disable physics entirely while map is being touched
+              physics: _lockScroll
+                  ? const NeverScrollableScrollPhysics()
+                  : const ClampingScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
+              child: [
+                _buildStep1(),
+                _buildStep2(),
+                _buildStep3(),
+                _buildStep4(),
+              ][_step],
+            ),
           ),
         ),
         _buildFooter(),
@@ -719,9 +812,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   }
 
   // ── STEP 2: DESCRIBE ──────────────────────────────────────
-  // _titleCtrl is pre-filled from initialProblemTitle in initState,
-  // so the Problem Title field will already contain the service name
-  // (e.g. "Pipe Leak Repair") when arriving from a service card.
 
   Widget _buildStep2() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -755,64 +845,131 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           const SizedBox(height: 12),
           GestureDetector(
             onTap: _pickPhoto,
-            child: AnimatedContainer(
-              duration: 200.ms,
-              height: 140,
-              decoration: BoxDecoration(
-                color: _photoPath != null
-                    ? Colors.transparent
-                    : const Color(0xFFF0F4F2),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                    color: _photoPath != null
-                        ? AppColors.primary
-                        : const Color(0xFFDDDDDD),
-                    width: _photoPath != null ? 2 : 1),
-              ),
-              child: _pickingPhoto
-                  ? const Center(
+            child: _pickingPhoto
+                ? Container(
+                    width: double.infinity,
+                    height: 180,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F4F2),
+                      borderRadius: BorderRadius.circular(18),
+                      border:
+                          Border.all(color: const Color(0xFFDDDDDD), width: 1),
+                    ),
+                    child: const Center(
                       child: CircularProgressIndicator(
                           valueColor: AlwaysStoppedAnimation(AppColors.primary),
-                          strokeWidth: 2))
-                  : _photoPath != null
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Stack(fit: StackFit.expand, children: [
-                            Image.file(File(_photoPath!), fit: BoxFit.cover),
-                            Positioned(
-                                top: 8,
-                                right: 8,
-                                child: GestureDetector(
-                                  onTap: () =>
-                                      setState(() => _photoPath = null),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: const BoxDecoration(
-                                        color: Colors.black54,
-                                        shape: BoxShape.circle),
-                                    child: const Icon(Icons.close_rounded,
-                                        color: Colors.white, size: 16),
-                                  ),
-                                )),
-                          ]),
-                        )
-                      : Column(
+                          strokeWidth: 2),
+                    ),
+                  )
+                : _photoPath != null
+                    // ── Photo uploaded: show full image, natural height ──
+                    ? Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: Container(
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                    color: AppColors.primary, width: 2),
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: Image.file(
+                                  File(_photoPath!),
+                                  width: double.infinity,
+                                  // No fixed height — image shows at its
+                                  // natural aspect ratio
+                                  fit: BoxFit.fitWidth,
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Remove button
+                          Positioned(
+                            top: 10,
+                            right: 10,
+                            child: GestureDetector(
+                              onTap: () => setState(() => _photoPath = null),
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.55),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.close_rounded,
+                                    color: Colors.white, size: 18),
+                              ),
+                            ),
+                          ),
+                          // Tap-to-replace hint at bottom
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                  bottom: Radius.circular(16)),
+                              child: Container(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                color: Colors.black.withOpacity(0.35),
+                                child: const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.edit_rounded,
+                                        color: Colors.white, size: 13),
+                                    SizedBox(width: 5),
+                                    Text('Tap to change photo',
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    // ── Placeholder: full-width, fixed height ──
+                    : Container(
+                        width: double.infinity,
+                        height: 180,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0F4F2),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                              color: const Color(0xFFDDDDDD), width: 1.5),
+                        ),
+                        child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                              Icon(Icons.cloud_upload_outlined,
-                                  color: AppColors.textLight.withOpacity(0.5),
-                                  size: 36),
-                              const SizedBox(height: 8),
-                              const Text('Tap to upload a photo',
-                                  style: TextStyle(
-                                      color: AppColors.textLight,
-                                      fontSize: 13)),
-                              const SizedBox(height: 4),
-                              const Text('Optional',
-                                  style: TextStyle(
-                                      color: Color(0xFFBBBBBB), fontSize: 11)),
-                            ]),
-            ),
+                            Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withOpacity(0.08),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.add_photo_alternate_rounded,
+                                  color: AppColors.primary.withOpacity(0.6),
+                                  size: 28),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text('Tap to upload a photo',
+                                style: TextStyle(
+                                    color: AppColors.textDark,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 4),
+                            const Text('Optional · JPG, PNG',
+                                style: TextStyle(
+                                    color: AppColors.textLight, fontSize: 11)),
+                          ],
+                        ),
+                      ),
           ),
           const SizedBox(height: 20),
         ],
@@ -822,115 +979,162 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   Widget _buildStep3() {
     final initialPos = _pinned ?? const LatLng(7.0707, 125.6087);
+    final isSatellite = _mapType == MapType.satellite;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Pin Your Location',
-                style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.textDark,
-                    letterSpacing: -0.3)),
-            SizedBox(height: 2),
-            Text('Tap the map or use GPS to pin your location',
-                style: TextStyle(fontSize: 12, color: AppColors.textLight)),
-          ]),
-        ),
-        GestureDetector(
-          onTap: () => setState(() => _showMap = !_showMap),
-          child: AnimatedContainer(
-            duration: 200.ms,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: _showMap
-                  ? AppColors.primary.withOpacity(0.1)
-                  : const Color(0xFFF0F0F0),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                  color: _showMap
-                      ? AppColors.primary.withOpacity(0.3)
-                      : const Color(0xFFDDDDDD)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(
-                _showMap ? Icons.map_rounded : Icons.list_alt_rounded,
-                size: 15,
-                color: _showMap ? AppColors.primary : AppColors.textLight,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                _showMap ? 'Map' : 'Form',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: _showMap ? AppColors.primary : AppColors.textLight,
-                ),
-              ),
-            ]),
-          ),
-        ),
+      // ── Header (no Map/Form toggle) ───────────────────────
+      const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Pin Your Location',
+            style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: AppColors.textDark,
+                letterSpacing: -0.3)),
+        SizedBox(height: 2),
+        Text('Tap the map or use GPS to pin your location',
+            style: TextStyle(fontSize: 12, color: AppColors.textLight)),
       ]),
       const SizedBox(height: 16),
-      if (_showMap) ...[
-        if (!_permCheckDone)
-          Container(
-            height: 270,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0F0F0),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation(AppColors.primary),
-                    strokeWidth: 2),
-                SizedBox(height: 12),
-                Text('Checking location access…',
-                    style: TextStyle(fontSize: 12, color: AppColors.textLight)),
-              ]),
-            ),
+
+      // ── Loading / permission check ────────────────────────
+      if (!_permCheckDone)
+        Container(
+          height: 270,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0F0F0),
+            borderRadius: BorderRadius.circular(20),
           ),
-        if (_permCheckDone && _permissionDenied)
-          Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF9500).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(14),
-              border:
-                  Border.all(color: const Color(0xFFFF9500).withOpacity(0.3)),
-            ),
-            child: Row(children: [
-              const Icon(Icons.location_off_rounded,
-                  color: Color(0xFFFF9500), size: 18),
-              const SizedBox(width: 10),
-              const Expanded(
-                  child: Text(
-                'Location access denied. Tap the map to pin manually or fill in the address below.',
-                style: TextStyle(fontSize: 12, color: Color(0xFFAA6600)),
-              )),
-              GestureDetector(
-                onTap: _initLocation,
-                child: const Text('Retry',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFFFF9500))),
-              ),
+          child: const Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation(AppColors.primary),
+                  strokeWidth: 2),
+              SizedBox(height: 12),
+              Text('Checking location access…',
+                  style: TextStyle(fontSize: 12, color: AppColors.textLight)),
             ]),
           ),
-        if (_permCheckDone)
-          ClipRRect(
+        ),
+
+      // ── Permission denied — BLOCKING card ────────────────
+      if (_permCheckDone && _permissionDenied) ...[
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
             borderRadius: BorderRadius.circular(20),
-            child: SizedBox(
-              height: 270,
+            border: Border.all(color: const Color(0xFFFFD6D6), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.red.withOpacity(0.06),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4)),
+            ],
+          ),
+          child: Column(children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.location_off_rounded,
+                  color: Colors.red, size: 30),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Location Access Required',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textDark),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Fixify requires location access to accurately pin your service address. Manual address entry is not supported to ensure service quality.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 13, color: AppColors.textLight, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            // Open Settings button (for deniedForever)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  await Geolocator.openAppSettings();
+                  // Re-check after user returns from settings
+                  if (mounted) {
+                    setState(() {
+                      _permCheckDone = false;
+                      _permissionDenied = false;
+                    });
+                    await _initLocation();
+                  }
+                },
+                icon: const Icon(Icons.settings_rounded, size: 18),
+                label: const Text('Open App Settings',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Retry button (in case it was just a soft deny)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  setState(() {
+                    _permCheckDone = false;
+                    _permissionDenied = false;
+                  });
+                  await _initLocation();
+                },
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Try Again',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.primary),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 20),
+      ],
+
+      // ── Map widget (only when permission granted) ─────────
+      if (_permCheckDone && !_permissionDenied)
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: SizedBox(
+            height: 270,
+            child: Listener(
+              // Track every finger landing on / leaving the map area
+              onPointerDown: _onMapPointerDown,
+              onPointerUp: _onMapPointerUp,
+              onPointerCancel: _onMapPointerCancel,
               child: Stack(children: [
+                // ── Google Map ─────────────────────────
                 GoogleMap(
                   initialCameraPosition:
                       CameraPosition(target: initialPos, zoom: 14),
+                  mapType: _mapType,
                   onMapCreated: (c) {
                     _mapCtrl = c;
                     if (_pinned != null) {
@@ -959,6 +1163,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   mapToolbarEnabled: false,
                   compassEnabled: false,
                 ),
+
+                // ── GPS button (top-right) ──────────────
                 Positioned(
                   top: 12,
                   right: 12,
@@ -992,6 +1198,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                     ),
                   ),
                 ),
+
+                // ── Zoom controls (bottom-right) ────────
                 Positioned(
                   bottom: 12,
                   right: 12,
@@ -1003,9 +1211,77 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                         () => _mapCtrl?.animateCamera(CameraUpdate.zoomOut())),
                   ]),
                 ),
+
+                // ── NEW: Map type toggle thumbnail (bottom-left) ──
+                Positioned(
+                  bottom: 12,
+                  left: 12,
+                  child: GestureDetector(
+                    onTap: _toggleMapType,
+                    child: AnimatedContainer(
+                      duration: 200.ms,
+                      width: 54,
+                      height: 54,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white, width: 2.5),
+                        boxShadow: [
+                          BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2)),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(7.5),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            // Thumbnail preview of the OTHER map type
+                            isSatellite
+                                ? Container(
+                                    color: const Color(0xFF8DB8D6),
+                                    child: CustomPaint(
+                                      painter: _RoadMapPainter(),
+                                    ),
+                                  )
+                                : Container(
+                                    color: const Color(0xFF3A5E38),
+                                    child: CustomPaint(
+                                      painter: _SatellitePainter(),
+                                    ),
+                                  ),
+                            // Label at bottom
+                            Positioned(
+                              bottom: 0,
+                              left: 0,
+                              right: 0,
+                              child: Container(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 2),
+                                color: Colors.black.withOpacity(0.5),
+                                child: Text(
+                                  isSatellite ? 'Map' : 'Satellite',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // ── Geocoding indicator ─────────────────
                 if (_geocoding)
                   Positioned(
-                    bottom: 12,
+                    bottom: 74,
                     left: 12,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -1030,6 +1306,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                       ]),
                     ),
                   ),
+
+                // ── "Tap map to pin" hint ───────────────
                 if (_pinned == null && !_locating)
                   Center(
                       child: IgnorePointer(
@@ -1054,8 +1332,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               ]),
             ),
           ),
-        const SizedBox(height: 14),
-      ],
+        ),
+      const SizedBox(height: 14),
+
+      // ── Pinned location card ──────────────────────────────
       AnimatedContainer(
         duration: 300.ms,
         padding: const EdgeInsets.all(14),
@@ -1479,5 +1759,76 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   }
 }
 
-// ── Internal enum ──────────────────────────────────────────────
-enum _LocationChoice { once, always, deny }
+// ── Custom painters for map type thumbnail ─────────────────────
+
+/// Mimics a simple road-map style (used when currently in satellite mode)
+class _RoadMapPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bg = Paint()..color = const Color(0xFFD4E8F0);
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bg);
+
+    final road = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+
+    // Horizontal road
+    canvas.drawLine(Offset(0, size.height * 0.5),
+        Offset(size.width, size.height * 0.5), road);
+    // Vertical road
+    canvas.drawLine(Offset(size.width * 0.5, 0),
+        Offset(size.width * 0.5, size.height), road);
+
+    // Block fills
+    final block = Paint()..color = const Color(0xFFB8D4BC);
+    canvas.drawRect(
+        Rect.fromLTWH(4, 4, size.width * 0.4, size.height * 0.4), block);
+    canvas.drawRect(
+        Rect.fromLTWH(size.width * 0.55, size.height * 0.55, size.width * 0.4,
+            size.height * 0.4),
+        block);
+  }
+
+  @override
+  bool shouldRepaint(_) => false;
+}
+
+/// Mimics a satellite-view style (used when currently in normal map mode)
+class _SatellitePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Dark green base
+    final bg = Paint()..color = const Color(0xFF2D4A2A);
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bg);
+
+    // Lighter patches (vegetation / urban)
+    final patch1 = Paint()..color = const Color(0xFF3E6B38);
+    canvas.drawOval(
+        Rect.fromLTWH(2, 2, size.width * 0.5, size.height * 0.5), patch1);
+
+    final patch2 = Paint()..color = const Color(0xFF557A50);
+    canvas.drawOval(
+        Rect.fromLTWH(size.width * 0.4, size.height * 0.3, size.width * 0.55,
+            size.height * 0.55),
+        patch2);
+
+    // Road-like line
+    final road = Paint()
+      ..color = const Color(0xFFBBA96A)
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(0, size.height * 0.6),
+        Offset(size.width, size.height * 0.45), road);
+
+    // Water patch
+    final water = Paint()..color = const Color(0xFF3B6E8C);
+    canvas.drawOval(
+        Rect.fromLTWH(size.width * 0.05, size.height * 0.6, size.width * 0.3,
+            size.height * 0.35),
+        water);
+  }
+
+  @override
+  bool shouldRepaint(_) => false;
+}
