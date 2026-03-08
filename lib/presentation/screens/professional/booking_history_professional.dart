@@ -1,16 +1,18 @@
 // lib/presentation/screens/professional/booking_history_professional.dart
 //
-// BookingHistoryScreen — Professional's booking history (accepted/ongoing/completed/cancelled).
+// BookingHistoryScreen — Professional's booking history.
 //
 // Tabs: All / Ongoing / Completed / Cancelled
-// Cards show status + "Mark Complete" if inProgress.
+// Cards are now TAPPABLE → opens ProBookingDetailScreen via onViewDetail.
 //
 // Props:
 //   bookings        → List<BookingEntity>
 //   onUpdateStatus  → Function(BookingEntity, BookingStatus)?
+//   onViewDetail    → Function(BookingEntity)?   ← NEW: tap card to view detail
 //   onBack          → VoidCallback?
 //   onNavTap        → Function(int)?
 //   currentNavIndex → int
+//   onRefresh       → Future<void> Function()?
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -20,6 +22,7 @@ import 'package:fixify/domain/entities/entities.dart';
 class BookingHistoryScreen extends StatefulWidget {
   final List<BookingEntity> bookings;
   final Function(BookingEntity, BookingStatus)? onUpdateStatus;
+  final Function(BookingEntity)? onViewDetail;
   final VoidCallback? onBack;
   final Function(int)? onNavTap;
   final int currentNavIndex;
@@ -29,6 +32,7 @@ class BookingHistoryScreen extends StatefulWidget {
     super.key,
     this.bookings = const [],
     this.onUpdateStatus,
+    this.onViewDetail,
     this.onBack,
     this.onNavTap,
     this.currentNavIndex = 0,
@@ -83,25 +87,27 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
   @override
   Widget build(BuildContext context) {
     return PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) widget.onBack?.call(); // back → Dashboard
-        },
-        child: Scaffold(
-          backgroundColor: AppColors.backgroundLight,
-          body: Column(children: [
-            _buildHeader(),
-            _buildTabBar(),
-            Expanded(
-                child: TabBarView(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) widget.onBack?.call();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.backgroundLight,
+        body: Column(children: [
+          _buildHeader(),
+          _buildTabBar(),
+          Expanded(
+            child: TabBarView(
               controller: _tab,
               children: ['All', 'Ongoing', 'Completed', 'Cancelled']
                   .map((f) => _buildList(f))
                   .toList(),
-            )),
-          ]),
-          bottomNavigationBar: _buildBottomNav(),
-        ));
+            ),
+          ),
+        ]),
+        bottomNavigationBar: _buildBottomNav(),
+      ),
+    );
   }
 
   Widget _buildHeader() => Container(
@@ -114,28 +120,28 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
           borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
         ),
         child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-              child: Row(children: [
-                GestureDetector(
-                  onTap: widget.onBack ?? () => widget.onNavTap?.call(0),
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white, size: 18),
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Row(children: [
+              GestureDetector(
+                onTap: widget.onBack ?? () => widget.onNavTap?.call(0),
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  child: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white, size: 18),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       const Text('Booking History',
                           style: TextStyle(
                               color: Colors.white,
@@ -147,30 +153,29 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
                           style: TextStyle(
                               color: Colors.white.withOpacity(0.6),
                               fontSize: 13)),
-                    ])),
-                // Completed count badge
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF34C759).withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.check_circle_rounded,
-                        color: Color(0xFF34C759), size: 14),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${_filter('Completed').length} done',
+                    ]),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF34C759).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.check_circle_rounded,
+                      color: Color(0xFF34C759), size: 14),
+                  const SizedBox(width: 4),
+                  Text('${_filter('Completed').length} done',
                       style: const TextStyle(
                           color: Color(0xFF34C759),
                           fontSize: 12,
-                          fontWeight: FontWeight.w700),
-                    ),
-                  ]),
-                ),
-              ]),
-            )),
+                          fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            ]),
+          ),
+        ),
       );
 
   Widget _buildTabBar() => Container(
@@ -189,7 +194,7 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
             Tab(text: 'All'),
             Tab(text: 'Ongoing'),
             Tab(text: 'Completed'),
-            Tab(text: 'Cancelled'),
+            Tab(text: 'Cancelled')
           ],
         ),
       );
@@ -205,6 +210,9 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
         itemCount: list.length,
         itemBuilder: (ctx, i) => _HistoryCard(
           booking: list[i],
+          onTap: widget.onViewDetail != null
+              ? () => widget.onViewDetail!(list[i])
+              : null,
           onMarkComplete: list[i].status == BookingStatus.accepted ||
                   list[i].status == BookingStatus.inProgress
               ? () =>
@@ -263,57 +271,63 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
         ],
       ),
       child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: List.generate(items.length, (i) {
-                final active = i == widget.currentNavIndex;
-                return GestureDetector(
-                  onTap: () => widget.onNavTap?.call(i),
-                  child: AnimatedContainer(
-                    duration: 200.ms,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: active
-                          ? AppColors.primary.withOpacity(0.1)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(items[i]['icon'] as IconData,
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: List.generate(items.length, (i) {
+              final active = i == widget.currentNavIndex;
+              return GestureDetector(
+                onTap: () => widget.onNavTap?.call(i),
+                child: AnimatedContainer(
+                  duration: 200.ms,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? AppColors.primary.withOpacity(0.1)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(items[i]['icon'] as IconData,
+                        color: active ? AppColors.primary : AppColors.textLight,
+                        size: 24),
+                    const SizedBox(height: 4),
+                    Text(items[i]['label'] as String,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight:
+                              active ? FontWeight.w700 : FontWeight.w400,
                           color:
                               active ? AppColors.primary : AppColors.textLight,
-                          size: 24),
-                      const SizedBox(height: 4),
-                      Text(items[i]['label'] as String,
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontWeight:
-                                  active ? FontWeight.w700 : FontWeight.w400,
-                              color: active
-                                  ? AppColors.primary
-                                  : AppColors.textLight)),
-                    ]),
-                  ),
-                );
-              }),
-            ),
-          )),
+                        )),
+                  ]),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
     );
   }
 }
 
-// ── History Card ───────────────────────────────────────────────
+// ── History Card ──────────────────────────────────────────────────────────────
 
 class _HistoryCard extends StatelessWidget {
   final BookingEntity booking;
+  final VoidCallback? onTap;
   final VoidCallback? onMarkComplete;
   final VoidCallback? onMarkInProgress;
-  const _HistoryCard(
-      {required this.booking, this.onMarkComplete, this.onMarkInProgress});
+
+  const _HistoryCard({
+    required this.booking,
+    this.onTap,
+    this.onMarkComplete,
+    this.onMarkInProgress,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -321,134 +335,156 @@ class _HistoryCard extends StatelessWidget {
     final label = _statusLabel(booking.status);
     final isActionable = onMarkComplete != null || onMarkInProgress != null;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4))
-        ],
-      ),
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(13),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4))
+          ],
+        ),
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(_serviceIcon(booking.serviceType),
+                    color: color, size: 22),
               ),
-              child: Icon(_serviceIcon(booking.serviceType),
-                  color: color, size: 22),
-            ),
-            const SizedBox(width: 13),
-            Expanded(
+              const SizedBox(width: 13),
+              Expanded(
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text(booking.serviceType,
-                      style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textDark)),
-                  const SizedBox(height: 2),
-                  Text(
-                    booking.address ?? 'No address provided',
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textLight),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ])),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10),
+                      Text(booking.serviceType,
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textDark)),
+                      const SizedBox(height: 2),
+                      Text(
+                        booking.address ?? 'No address provided',
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.textLight),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ]),
               ),
-              child: Text(label,
-                  style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w700, color: color)),
-            ),
-          ]),
-        ),
-
-        // Footer
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: const BoxDecoration(
-            color: Color(0xFFF8F8F8),
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
-          ),
-          child: Column(children: [
-            Row(children: [
-              const Icon(Icons.calendar_today_outlined,
-                  size: 13, color: AppColors.textLight),
-              const SizedBox(width: 5),
-              Text(
-                '${booking.scheduledDate.day}/${booking.scheduledDate.month}/${booking.scheduledDate.year}',
-                style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textMedium,
-                    fontWeight: FontWeight.w500),
-              ),
-              if (booking.priceEstimate != null) ...[
-                const Spacer(),
-                Text('₱${booking.priceEstimate!.toStringAsFixed(0)}/hr',
-                    style: const TextStyle(
-                        fontSize: 12,
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(label,
+                    style: TextStyle(
+                        fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: AppColors.primary)),
+                        color: color)),
+              ),
+              // Chevron hint for tappable cards
+              if (onTap != null) ...[
+                const SizedBox(width: 6),
+                Icon(Icons.chevron_right_rounded,
+                    color: Colors.grey.shade400, size: 18),
               ],
             ]),
-            if (isActionable) ...[
-              const SizedBox(height: 10),
+          ),
+
+          // Footer
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF8F8F8),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+            ),
+            child: Column(children: [
               Row(children: [
-                if (onMarkInProgress != null)
-                  Expanded(
-                      child: OutlinedButton(
-                    onPressed: onMarkInProgress,
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(
-                          color: const Color(0xFF5856D6).withOpacity(0.5)),
-                      foregroundColor: const Color(0xFF5856D6),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                    child: const Text('Start Job',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 13)),
-                  )),
-                if (onMarkInProgress != null && onMarkComplete != null)
-                  const SizedBox(width: 10),
-                if (onMarkComplete != null)
-                  Expanded(
-                      child: ElevatedButton(
-                    onPressed: onMarkComplete,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF34C759),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      elevation: 0,
-                    ),
-                    child: const Text('Mark Complete',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 13)),
-                  )),
+                const Icon(Icons.calendar_today_outlined,
+                    size: 13, color: AppColors.textLight),
+                const SizedBox(width: 5),
+                Text(
+                  '${booking.scheduledDate.day}/${booking.scheduledDate.month}/${booking.scheduledDate.year}',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMedium,
+                      fontWeight: FontWeight.w500),
+                ),
+                if (booking.assessmentPrice != null) ...[
+                  const Spacer(),
+                  Text('₱${booking.assessmentPrice!.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary)),
+                ] else if (booking.priceEstimate != null) ...[
+                  const Spacer(),
+                  Text('₱${booking.priceEstimate!.toStringAsFixed(0)}/hr',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary)),
+                ],
               ]),
-            ],
-          ]),
-        ),
-      ]),
+              if (isActionable) ...[
+                const SizedBox(height: 10),
+                Row(children: [
+                  if (onMarkInProgress != null)
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: onMarkInProgress,
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                              color: const Color(0xFF5856D6).withOpacity(0.5)),
+                          foregroundColor: const Color(0xFF5856D6),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        child: const Text('Start Job',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w700, fontSize: 13)),
+                      ),
+                    ),
+                  if (onMarkInProgress != null && onMarkComplete != null)
+                    const SizedBox(width: 10),
+                  if (onMarkComplete != null)
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: onMarkComplete,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF34C759),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          elevation: 0,
+                        ),
+                        child: const Text('Mark Complete',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w700, fontSize: 13)),
+                      ),
+                    ),
+                ]),
+              ],
+            ]),
+          ),
+        ]),
+      ),
     );
   }
 

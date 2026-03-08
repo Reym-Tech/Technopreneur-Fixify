@@ -150,15 +150,19 @@ class SupabaseDataSource {
 
   // ── BOOKINGS ──────────────────────────────────────────────
 
+  /// Creates a new booking, persisting the customer's GPS pin (latitude /
+  /// longitude) so the AssessmentScreen can draw the route later.
   Future<BookingModel> createBooking({
     required String customerId,
     required String professionalId,
     required String serviceType,
-    String? description,
-    double? priceEstimate,
     required DateTime scheduledDate,
+    String? description,
     String? address,
     String? notes,
+    double? priceEstimate,
+    double? latitude,
+    double? longitude,
   }) async {
     final payload = {
       'customer_id': customerId,
@@ -170,6 +174,8 @@ class SupabaseDataSource {
       'scheduled_date': scheduledDate.toIso8601String(),
       'address': address,
       'notes': notes,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
     };
     try {
       debugPrint('[Supabase] createBooking payload: $payload');
@@ -186,10 +192,16 @@ class SupabaseDataSource {
     }
   }
 
+  // ── FIX 1: getCustomerBookings ────────────────────────────
+  // Include the full professionals join WITH latitude/longitude so that
+  // AssessmentScreen can draw the handyman's pin on the map.
+  // Also join users on professionals so avatarUrl comes through.
   Future<List<BookingModel>> getCustomerBookings(String customerId) async {
     final response = await _client
         .from(AppConfig.bookingsTable)
-        .select('*, professionals(*, users(name, avatar_url))')
+        .select(
+          '*, professionals(*, users(id, name, avatar_url, phone))',
+        )
         .eq('customer_id', customerId)
         .order('created_at', ascending: false);
     return (response as List)
@@ -197,11 +209,16 @@ class SupabaseDataSource {
         .toList();
   }
 
+  // ── FIX 2: getProfessionalBookings ────────────────────────
+  // Include the customer's latitude/longitude (already on the bookings row via
+  // select('*',...)) AND join users for customer name/phone/avatar.
   Future<List<BookingModel>> getProfessionalBookings(
       String professionalId) async {
     final response = await _client
         .from(AppConfig.bookingsTable)
-        .select('*, users!customer_id(name, avatar_url, phone)')
+        .select(
+          '*, users!customer_id(id, name, avatar_url, phone)',
+        )
         .eq('professional_id', professionalId)
         .order('created_at', ascending: false);
     return (response as List)
@@ -215,7 +232,25 @@ class SupabaseDataSource {
         {'status': BookingModel.statusToString(status)}).eq('id', bookingId);
   }
 
+  /// Sets the handyman's proposed price on a booking (assessment_price column).
+  Future<void> updateBookingAssessmentPrice({
+    required String bookingId,
+    required double price,
+  }) async {
+    await _client
+        .from('bookings')
+        .update({'assessment_price': price}).eq('id', bookingId);
+  }
+
+  /// Customer confirms the price → moves booking to InProgress.
+  Future<void> confirmAssessment(String bookingId) async {
+    await _client
+        .from('bookings')
+        .update({'status': 'in_progress'}).eq('id', bookingId);
+  }
+
   // ── REALTIME ──────────────────────────────────────────────
+
   RealtimeChannel subscribeToBookingUpdates({
     required String bookingId,
     required Function(BookingModel) onUpdate,
@@ -232,18 +267,19 @@ class SupabaseDataSource {
             value: bookingId,
           ),
           callback: (payload) async {
-            // Bug 5 fix: re-fetch with joins instead of using bare payload.newRecord
+            // Re-fetch with full joins instead of using bare payload.newRecord
             try {
               final data = await _client
                   .from(AppConfig.bookingsTable)
-                  .select('*, professionals(*, users(name, avatar_url))')
+                  .select(
+                    '*, professionals(*, users(id, name, avatar_url, phone))',
+                  )
                   .eq('id', bookingId)
                   .single();
               onUpdate(BookingModel.fromJson(data));
             } catch (e) {
               debugPrint(
                   '[Realtime] Could not re-fetch booking $bookingId: $e');
-              // Fallback to bare record so the status at least updates
               onUpdate(BookingModel.fromJson(payload.newRecord));
             }
           },
@@ -266,9 +302,22 @@ class SupabaseDataSource {
             column: 'professional_id',
             value: professionalId,
           ),
-          callback: (payload) => onNewBooking(
-            BookingModel.fromJson(payload.newRecord),
-          ),
+          callback: (payload) async {
+            // Re-fetch with customer join so name/avatar are available immediately
+            try {
+              final data = await _client
+                  .from(AppConfig.bookingsTable)
+                  .select(
+                    '*, users!customer_id(id, name, avatar_url, phone)',
+                  )
+                  .eq('id', payload.newRecord['id'])
+                  .single();
+              onNewBooking(BookingModel.fromJson(data));
+            } catch (e) {
+              debugPrint('[Realtime] Could not re-fetch new booking: $e');
+              onNewBooking(BookingModel.fromJson(payload.newRecord));
+            }
+          },
         )
         .subscribe();
   }
@@ -278,7 +327,6 @@ class SupabaseDataSource {
 
   // ── REVIEWS ───────────────────────────────────────────────
 
-  /// Returns true if the customer has already reviewed this booking.
   Future<bool> hasReviewedBooking({
     required String bookingId,
     required String customerId,
@@ -292,8 +340,6 @@ class SupabaseDataSource {
     return response != null;
   }
 
-  /// Inserts a review then recalculates the professional's avg rating and
-  /// review_count so the dashboard always shows accurate numbers.
   Future<ReviewModel> createReview({
     required String bookingId,
     required String customerId,
@@ -301,7 +347,6 @@ class SupabaseDataSource {
     required int rating,
     String? comment,
   }) async {
-    // ── Bug 3 fix: guard against duplicate reviews ──────────────────────────
     final alreadyReviewed = await hasReviewedBooking(
       bookingId: bookingId,
       customerId: customerId,
@@ -310,7 +355,6 @@ class SupabaseDataSource {
       throw Exception('You have already submitted a review for this booking.');
     }
 
-    // ── Insert the review ───────────────────────────────────────────────────
     final data = await _client
         .from(AppConfig.reviewsTable)
         .insert({
@@ -323,8 +367,6 @@ class SupabaseDataSource {
         .select('*, users!customer_id(name, avatar_url)')
         .single();
 
-    // ── Bug 1 fix: recalculate avg rating + review_count ────────────────────
-    // Fetch all reviews for this professional to compute a fresh average.
     try {
       final allReviews = await _client
           .from(AppConfig.reviewsTable)
@@ -347,7 +389,6 @@ class SupabaseDataSource {
       debugPrint(
           '[Review] Updated professional $professionalId → avg: $avgRating, count: $count');
     } catch (e) {
-      // Non-fatal: the review is saved; only the cached avg failed to update.
       debugPrint('[Review] Warning — could not update professional stats: $e');
     }
 
@@ -366,10 +407,23 @@ class SupabaseDataSource {
         .toList();
   }
 
+  // ── PROFESSIONAL LOCATION ────────────────────────────────
+
+  /// Saves the handyman's GPS location to the professionals table.
+  /// These coordinates appear as the green pin on the AssessmentScreen map.
+  Future<void> updateProfessionalLocation({
+    required String professionalId,
+    required double latitude,
+    required double longitude,
+  }) async {
+    await _client.from(AppConfig.professionalsTable).update({
+      'latitude': latitude,
+      'longitude': longitude,
+    }).eq('id', professionalId);
+  }
+
   // ── USER PROFILE ──────────────────────────────────────────
 
-  /// Update name, phone, and/or avatar_url in the users table.
-  /// Only fields that are non-null are written.
   Future<UserModel> updateUserProfile({
     required String userId,
     String? name,
@@ -382,13 +436,11 @@ class SupabaseDataSource {
     if (avatarUrl != null) updates['avatar_url'] = avatarUrl;
 
     if (updates.isEmpty) {
-      // Nothing to update — just return the current record
       return (await getCurrentUser())!;
     }
 
     await _client.from(AppConfig.usersTable).update(updates).eq('id', userId);
 
-    // Re-fetch and return the fresh record so callers always get truth
     final data = await _client
         .from(AppConfig.usersTable)
         .select()
@@ -397,11 +449,8 @@ class SupabaseDataSource {
     return UserModel.fromJson(data);
   }
 
-  /// Upload avatar bytes to Supabase Storage and return the public URL.
-  /// Uses upsert so re-uploading the same path overwrites cleanly.
   Future<String> uploadAvatar(
       String userId, List<int> fileBytes, String fileName) async {
-    // Always store under a fixed name per user so old files are replaced
     final path = '$userId/avatar.jpg';
 
     await _client.storage.from(AppConfig.avatarsBucket).uploadBinary(
@@ -409,11 +458,10 @@ class SupabaseDataSource {
           Uint8List.fromList(fileBytes),
           fileOptions: const FileOptions(
             contentType: 'image/jpeg',
-            upsert: true, // overwrite if already exists
+            upsert: true,
           ),
         );
 
-    // Return a cache-busted public URL so the Image widget re-fetches
     final base =
         _client.storage.from(AppConfig.avatarsBucket).getPublicUrl(path);
     final busted = '$base?t=${DateTime.now().millisecondsSinceEpoch}';

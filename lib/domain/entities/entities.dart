@@ -55,6 +55,11 @@ class ProfessionalEntity extends Equatable {
   final int yearsExperience;
   final bool available;
 
+  /// Handyman's registered GPS location — used to draw the route on the
+  /// AssessmentScreen map. Null when not yet set on the professional profile.
+  final double? latitude;
+  final double? longitude;
+
   const ProfessionalEntity({
     required this.id,
     required this.userId,
@@ -71,6 +76,8 @@ class ProfessionalEntity extends Equatable {
     this.bio,
     required this.yearsExperience,
     required this.available,
+    this.latitude,
+    this.longitude,
   });
 
   @override
@@ -99,6 +106,16 @@ class BookingEntity extends Equatable {
   final ProfessionalEntity? professional;
   final UserEntity? customer;
 
+  /// Customer's pinned GPS location from RequestServiceScreen step 3.
+  /// Used as the destination marker on the AssessmentScreen map.
+  final double? latitude;
+  final double? longitude;
+
+  /// Price set by the handyman after accepting the booking.
+  /// Shown on AssessmentScreen for the customer to confirm or decline.
+  /// Null means the handyman has not yet set a price (falls back to priceEstimate).
+  final double? assessmentPrice;
+
   const BookingEntity({
     required this.id,
     required this.customerId,
@@ -113,6 +130,9 @@ class BookingEntity extends Equatable {
     required this.createdAt,
     this.professional,
     this.customer,
+    this.latitude,
+    this.longitude,
+    this.assessmentPrice,
   });
 
   @override

@@ -1,7 +1,15 @@
 // lib/main.dart
+// Changes from previous version:
+//  1. Professional BookingHistoryScreen now passes onViewDetail → navigates to
+//     ProBookingDetailScreen.
+//  2. New _screen == 'pro_booking_detail' case renders ProBookingDetailScreen
+//     with onSetPrice (saves assessment_price) and onUpdateStatus.
+//  3. getCustomerBookings / getProfessionalBookings now use improved queries
+//     (see supabase_datasource.dart) so lat/lng and avatarUrl flow through.
 
 import 'package:fixify/presentation/screens/admin/superadmin_analytics.dart';
 import 'package:fixify/presentation/screens/professional/earnings.dart';
+import 'package:fixify/presentation/screens/professional/pro_booking_detail_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -25,6 +33,7 @@ import 'package:fixify/presentation/screens/customer/professional_profile_screen
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
 import 'package:fixify/presentation/screens/customer/review_screen.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
+import 'package:fixify/presentation/screens/customer/assessment_screen.dart';
 import 'package:fixify/presentation/screens/professional/dashboard_professional.dart';
 import 'package:fixify/presentation/screens/professional/profile_professional.dart';
 import 'package:fixify/presentation/screens/professional/apply_professional.dart';
@@ -64,7 +73,6 @@ class FixifyApp extends StatelessWidget {
       home: const AppNavigator());
 }
 
-// FIX: StatefulWidget so we react to auth changes properly
 class AppNavigator extends StatefulWidget {
   const AppNavigator({super.key});
   @override
@@ -109,7 +117,7 @@ class _AppNavigatorState extends State<AppNavigator> {
   }
 }
 
-// ── AUTH ──────────────────────────────────────────────────────
+// ── AUTH ──────────────────────────────────────────────────
 
 class AuthFlow extends StatefulWidget {
   const AuthFlow({super.key});
@@ -175,13 +183,11 @@ class _AuthFlowState extends State<AuthFlow> {
 
     try {
       debugPrint('👤 Starting registration for: $email (role: $role)');
-      debugPrint('🔐 Step 1: Creating auth account...');
       final res = await Supabase.instance.client.auth
           .signUp(email: email, password: password);
       debugPrint('✅ Auth account created: ${res.user?.id}');
 
       if (res.user != null) {
-        debugPrint('📝 Step 2: Creating user record...');
         await Supabase.instance.client.from('users').insert({
           'id': res.user!.id,
           'name': name,
@@ -190,11 +196,9 @@ class _AuthFlowState extends State<AuthFlow> {
           'phone': phone,
           'created_at': DateTime.now().toIso8601String(),
         });
-        debugPrint('✅ User record created');
 
         if (role == 'professional') {
           try {
-            debugPrint('🏢 Step 3: Creating professional record...');
             await Supabase.instance.client.from('professionals').insert({
               'user_id': res.user!.id,
               'skills': [],
@@ -204,14 +208,12 @@ class _AuthFlowState extends State<AuthFlow> {
               'available': true,
               'years_experience': 0,
             });
-            debugPrint('✅ Professional record created');
           } catch (proErr) {
             debugPrint('⚠️ Professional record warning: $proErr');
           }
         }
 
         dismissOverlay();
-        debugPrint('✅ Registration complete!');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text(
@@ -275,7 +277,7 @@ class _LoadingOverlay extends StatelessWidget {
   }
 }
 
-// ── MAIN APP ──────────────────────────────────────────────────
+// ── MAIN APP ──────────────────────────────────────────────
 
 class MainApp extends StatefulWidget {
   const MainApp({super.key});
@@ -288,10 +290,9 @@ class _MainAppState extends State<MainApp> {
   late final ApplicationDataSource _appDs;
   late final NotificationDataSource _notifDs;
 
-  DateTime? _lastBackPress; // for double-tap-to-exit
+  DateTime? _lastBackPress;
 
-  String?
-      _preselectedServiceType; // set when tapping "Book Now" on a service detail
+  String? _preselectedServiceType;
   UserModel? _user;
   ProfessionalModel? _pro;
   List<ProfessionalModel> _professionals = [];
@@ -302,9 +303,12 @@ class _MainAppState extends State<MainApp> {
   String _screen = 'home';
   ProfessionalModel? _selectedPro;
 
-  /// Tracks which booking IDs the customer has already reviewed this session. Combined with the DB guard in createReview, this prevents the "Write Review" button from reappearing after a review is submitted.
   final Set<String> _reviewedBookingIds = {};
   BookingModel? _selectedBooking;
+
+  // ── NEW: tracks which booking the pro tapped in history ──────────────────
+  BookingEntity? _selectedProBooking;
+
   bool _loading = true;
 
   @override
@@ -338,7 +342,6 @@ class _MainAppState extends State<MainApp> {
                 'years_experience': 0,
               });
               _pro = await _ds.getProfessionalByUserId(_user!.id);
-              debugPrint('✅ Professional record auto-created');
             } catch (e) {
               debugPrint('❌ Could not auto-create professional record: $e');
             }
@@ -374,7 +377,6 @@ class _MainAppState extends State<MainApp> {
           _applications = await _appDs.getAllApplications();
         } else {
           _bookings = await _ds.getCustomerBookings(_user!.id);
-          //Pre-load reviewed booking IDs so the button is hidden on restart
           for (final b in _bookings) {
             if (b.status == BookingStatus.completed) {
               final reviewed = await _ds.hasReviewedBooking(
@@ -418,10 +420,6 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // STEP 1 — Add this method inside _MainAppState, right after _refreshBookings()
-  // ══════════════════════════════════════════════════════════════════════════════
-
   Future<void> _refreshUser() async {
     try {
       final updated = await _ds.getCurrentUser();
@@ -459,18 +457,18 @@ class _MainAppState extends State<MainApp> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        // If a Navigator route (e.g. ServiceDetailScreen) is on top of the
-        // stack, let Flutter handle the pop normally — don't intercept it.
         final nav = Navigator.of(context);
         if (nav.canPop()) {
           nav.pop();
           return;
         }
-        // If on a sub-screen, go back within the app
         if (_screen != 'home') {
-          setState(() {
-            _screen = 'home';
-          });
+          // If coming back from pro booking detail → go back to history
+          if (_screen == 'pro_booking_detail') {
+            setState(() => _screen = 'booking_history');
+            return;
+          }
+          setState(() => _screen = 'home');
           return;
         }
         if (_navIndex != 0) {
@@ -480,7 +478,6 @@ class _MainAppState extends State<MainApp> {
           });
           return;
         }
-        // At root home: double-tap to exit
         final now = DateTime.now();
         if (_lastBackPress == null ||
             now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
@@ -491,7 +488,6 @@ class _MainAppState extends State<MainApp> {
             behavior: SnackBarBehavior.floating,
           ));
         } else {
-          // Actually exit
           // ignore: deprecated_member_use
           SystemNavigator.pop();
         }
@@ -554,14 +550,6 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
-      // ── STEP 6: Admin notifications screen ────────────────────────
-      // In _buildContent(), inside the admin block (role == 'admin').
-      // Add a new navIndex case:
-
-      // Guard: only open notifications when we have a confirmed, valid user id.
-      // Without this, tapping the notifications tab before _user is fully
-      // loaded passes an empty string to Postgres and throws:
-      //   "invalid input syntax for type uuid: """
       if (_user == null || _user!.id.isEmpty) {
         return const Scaffold(
           backgroundColor: AppColors.backgroundLight,
@@ -623,7 +611,7 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── PROFESSIONAL ──────────────────────────────────────
+    // ── PROFESSIONAL ──────────────────────────────────────────
     if (_user!.isProfessional) {
       final u = _user!.toEntity();
       final proEntity = _pro?.toEntity();
@@ -668,9 +656,8 @@ class _MainAppState extends State<MainApp> {
       if (_navIndex == 2) {
         return EarningsHandymanScreen(
           professionalId: _pro?.id,
-          currentNavIndex: _navIndex, // <-- ADD THIS
+          currentNavIndex: _navIndex,
           onNavTap: (i) {
-            // <-- ADD THIS
             setState(() {
               _navIndex = i;
               _screen = 'home';
@@ -697,44 +684,32 @@ class _MainAppState extends State<MainApp> {
           user: u,
           professional: proEntity,
           onBack: () => setState(() => _navIndex = 0),
-
-          // ── Edit Profile: save name + phone to users table,
-          //                  city to professionals table ────────────────────
           onSaveProfile: (name, phone, city) async {
-            // 1. Update users table (name + phone)
             await _ds.updateUserProfile(
               userId: _user!.id,
               name: name,
               phone: phone ?? '',
             );
-            // 2. Update professionals table (city)
             if (_pro != null) {
               await Supabase.instance.client
                   .from('professionals')
                   .update({'city': city}).eq('id', _pro!.id);
             }
-            // 3. Refresh both _user and _pro in local state
             await _refreshUser();
             final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
             if (mounted && updatedPro != null) {
               setState(() => _pro = updatedPro);
             }
           },
-
-          // ── Change Password ───────────────────────────────────────────────
           onChangePassword: (currentPassword, newPassword) async {
-            // Verify current password first
             await Supabase.instance.client.auth.signInWithPassword(
               email: _user!.email,
               password: currentPassword,
             );
-            // Then update to new password
             await Supabase.instance.client.auth.updateUser(
               UserAttributes(password: newPassword),
             );
           },
-
-          // ── Upload Avatar: Storage → update users.avatar_url ─────────────
           onUploadAvatar: (bytes, fileName) async {
             final publicUrl = await _ds.uploadAvatar(
               _user!.id,
@@ -748,19 +723,29 @@ class _MainAppState extends State<MainApp> {
             await _refreshUser();
             return publicUrl;
           },
-
+          onSaveLocation: (lat, lng) async {
+            if (_pro != null) {
+              await _ds.updateProfessionalLocation(
+                professionalId: _pro!.id,
+                latitude: lat,
+                longitude: lng,
+              );
+              final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
+              if (mounted && updatedPro != null) {
+                setState(() => _pro = updatedPro);
+              }
+            }
+          },
           onLogout: () async => Supabase.instance.client.auth.signOut(),
         );
       }
 
       if (_navIndex == 4) {
-        // adjust index to match your bottom nav
         return HandymanNotificationsScreen(
           userId: _user!.id,
           notificationDataSource: _notifDs,
           onBack: () => setState(() => _navIndex = 0),
           onNotificationTap: (notification) {
-            // Optional: navigate to booking requests when tapping a booking_request
             if (notification.type == NotificationTypeStrings.bookingRequest) {
               setState(() => _navIndex = 1);
             }
@@ -768,7 +753,53 @@ class _MainAppState extends State<MainApp> {
         );
       }
 
-      // ── Booking History screen (from dashboard "Booking History" card)
+      // ── NEW: Pro Booking Detail screen ───────────────────────────────────
+      if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
+        return ProBookingDetailScreen(
+          booking: _selectedProBooking!,
+          onBack: () => setState(() => _screen = 'booking_history'),
+          onSetPrice: (price) async {
+            try {
+              await _ds.updateBookingAssessmentPrice(
+                bookingId: _selectedProBooking!.id,
+                price: price,
+              );
+              // Refresh bookings so updated price is reflected everywhere
+              await _refreshBookings();
+              // Update the selected booking entity with new assessment price
+              final updated = _bookings
+                  .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
+              if (mounted && updated != null) {
+                setState(() => _selectedProBooking = updated.toEntity());
+              }
+            } catch (e) {
+              _notify('Failed to save price: $e');
+              rethrow;
+            }
+          },
+          onUpdateStatus: (newStatus) async {
+            try {
+              await _ds.updateBookingStatus(_selectedProBooking!.id, newStatus);
+              await _refreshBookings();
+              final updated = _bookings
+                  .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
+              if (mounted && updated != null) {
+                setState(() => _selectedProBooking = updated.toEntity());
+              }
+              if (newStatus == BookingStatus.completed) {
+                _notify('Job marked as complete! Great work. ✅');
+              } else if (newStatus == BookingStatus.inProgress) {
+                _notify('Job started! Customer has been notified. 🔧');
+              }
+            } catch (e) {
+              _notify('Error updating status: $e');
+              rethrow;
+            }
+          },
+        );
+      }
+
+      // ── Booking History screen ────────────────────────────────────────────
       if (_screen == 'booking_history') {
         return BookingHistoryScreen(
           bookings: bookingEntities,
@@ -787,8 +818,16 @@ class _MainAppState extends State<MainApp> {
               _notify('Error: $e');
             }
           },
+          // ── NEW: tap a history card → open ProBookingDetailScreen ─────────
+          onViewDetail: (booking) {
+            setState(() {
+              _selectedProBooking = booking;
+              _screen = 'pro_booking_detail';
+            });
+          },
         );
       }
+
       if (_screen == 'reviews') {
         return ProfessionalReviewsScreen(
           reviews: _reviews.map((r) => r.toEntity()).toList(),
@@ -892,7 +931,7 @@ class _MainAppState extends State<MainApp> {
         user: u,
         professional: proEntity,
         bookings: bookingEntities,
-        reviews: _reviews.map((r) => r.toEntity()).toList(), // ← ADD
+        reviews: _reviews.map((r) => r.toEntity()).toList(),
         pendingApplications:
             _applications.where((a) => a.status == 'pending').length,
         currentNavIndex: _navIndex,
@@ -917,7 +956,7 @@ class _MainAppState extends State<MainApp> {
         },
         onViewEarnings: () => setState(() => _navIndex = 2),
         onViewHistory: () => setState(() => _screen = 'booking_history'),
-        onViewReviews: () => setState(() => _screen = 'reviews'), // ← ADD
+        onViewReviews: () => setState(() => _screen = 'reviews'),
         onApplyCredentials: () => setState(() => _screen = 'apply'),
         onViewVerification: () =>
             setState(() => _screen = 'verification_status'),
@@ -932,7 +971,6 @@ class _MainAppState extends State<MainApp> {
   Widget _customerFlow() {
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
 
-    // ── Bookings tab (navIndex 1) — full list with tabs
     if (_navIndex == 1 && _screen == 'home') {
       return CustomerBookingsScreen(
         bookings: bookingEntities,
@@ -942,7 +980,6 @@ class _MainAppState extends State<MainApp> {
           _screen = i == 3 ? 'profile' : 'home';
         }),
         onRefresh: _refreshBookings,
-        // Tap any booking card → go to its status/detail screen
         onBookingTap: (booking) {
           final model = _bookings.firstWhere((b) => b.id == booking.id,
               orElse: () => _bookings.first);
@@ -954,11 +991,7 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── STEP 4: Customer notifications screen ─────────────────────
-    // In _customerFlow(), add a new case BEFORE the switch statement:
-
     if (_navIndex == 2 && _screen == 'notifications') {
-      // or wherever you navigate to it
       return NotificationsScreen(
         userId: _user!.id,
         notificationDataSource: _notifDs,
@@ -967,7 +1000,6 @@ class _MainAppState extends State<MainApp> {
           _navIndex = 0;
         }),
         onNotificationTap: (notification) {
-          // Optional: navigate to the referenced booking/screen
           if (notification.referenceType == 'booking' &&
               notification.referenceId != null) {
             final booking = _bookings
@@ -1006,6 +1038,8 @@ class _MainAppState extends State<MainApp> {
                 ].join('\n'),
                 address: result.address,
                 priceEstimate: result.matchedPro.priceMin,
+                latitude: result.latitude,
+                longitude: result.longitude,
               );
               setState(() {
                 _selectedBooking = booking;
@@ -1049,10 +1083,10 @@ class _MainAppState extends State<MainApp> {
         if (_selectedBooking == null) return _home();
         return BookingStatusScreen(
           booking: _selectedBooking!.toEntity(),
-          onBack: () => setState(() {
-            _screen = 'home';
-          }),
-          // Bug 4 fix: hide "Write Review" once the booking has been reviewed
+          onBack: () => setState(() => _screen = 'home'),
+          onViewAssessment: _selectedBooking!.status == BookingStatus.accepted
+              ? () => setState(() => _screen = 'assessment')
+              : null,
           onWriteReview: _selectedBooking!.status == BookingStatus.completed &&
                   !_reviewedBookingIds.contains(_selectedBooking!.id)
               ? () => setState(() => _screen = 'review')
@@ -1066,14 +1100,52 @@ class _MainAppState extends State<MainApp> {
                     final updated = _bookings.firstWhere(
                         (b) => b.id == _selectedBooking!.id,
                         orElse: () => _selectedBooking!);
-                    setState(() {
-                      _selectedBooking = updated;
-                    });
+                    setState(() => _selectedBooking = updated);
                   } catch (e) {
                     _notify('Error: $e');
                   }
                 }
               : null,
+        );
+
+      case 'assessment':
+        if (_selectedBooking == null) return _home();
+        return AssessmentScreen(
+          booking: _selectedBooking!.toEntity(),
+          onBack: () => setState(() => _screen = 'booking_status'),
+          onConfirm: () async {
+            try {
+              await _ds.confirmAssessment(_selectedBooking!.id);
+              await _refreshBookings();
+              final updated = _bookings.firstWhere(
+                  (b) => b.id == _selectedBooking!.id,
+                  orElse: () => _selectedBooking!);
+              setState(() {
+                _selectedBooking = updated;
+                _screen = 'booking_status';
+              });
+              _notify('Service started! Your handyman is on the way. 🔧');
+            } catch (e) {
+              _notify('Error: $e');
+            }
+          },
+          onDecline: () async {
+            try {
+              await _ds.updateBookingStatus(
+                  _selectedBooking!.id, BookingStatus.cancelled);
+              await _refreshBookings();
+              final updated = _bookings.firstWhere(
+                  (b) => b.id == _selectedBooking!.id,
+                  orElse: () => _selectedBooking!);
+              setState(() {
+                _selectedBooking = updated;
+                _screen = 'booking_status';
+              });
+              _notify('Booking cancelled.');
+            } catch (e) {
+              _notify('Error: $e');
+            }
+          },
         );
 
       case 'review':
@@ -1091,51 +1163,36 @@ class _MainAppState extends State<MainApp> {
             _screen = 'home';
             _navIndex = 0;
           }),
-
-          // ── Edit Profile: save name + phone to Supabase ──────────────────
           onSaveProfile: (name, phone) async {
             await _ds.updateUserProfile(
               userId: _user!.id,
               name: name,
-              // Always write phone; pass empty string as null so we can clear it
               phone: phone ?? '',
             );
             await _refreshUser();
           },
-
-          // ── Change Password ───────────────────────────────────────────────
-          // Re-authenticate first so we confirm the current password is correct,
-          // then call updateUser to set the new one.
           onChangePassword: (currentPassword, newPassword) async {
-            // Step 1: verify current password by re-signing in
             await Supabase.instance.client.auth.signInWithPassword(
               email: _user!.email,
               password: currentPassword,
             );
-            // Step 2: update to the new password
             await Supabase.instance.client.auth.updateUser(
               UserAttributes(password: newPassword),
             );
           },
-
-          // ── Upload Avatar: Storage → update users.avatar_url ─────────────
           onUploadAvatar: (bytes, fileName) async {
-            // Upload to Storage (upsert — overwrites previous avatar)
             final publicUrl = await _ds.uploadAvatar(
               _user!.id,
               bytes,
               fileName,
             );
-            // Persist the new URL in the users table
             await _ds.updateUserProfile(
               userId: _user!.id,
               avatarUrl: publicUrl,
             );
-            // Refresh local _user so the rest of the app sees the new avatar
             await _refreshUser();
             return publicUrl;
           },
-
           onLogout: () async => Supabase.instance.client.auth.signOut(),
         );
 
@@ -1151,7 +1208,7 @@ class _MainAppState extends State<MainApp> {
         currentNavIndex: _navIndex,
         onNavTap: (i) => setState(() {
           _navIndex = i;
-          _screen = i == 2 ? 'profile' : 'home'; // Profile is now index 2
+          _screen = i == 2 ? 'profile' : 'home';
         }),
         onRequestService: () => setState(() {
           _preselectedServiceType = null;
@@ -1190,17 +1247,17 @@ class _MainAppState extends State<MainApp> {
             _screen = 'professional_profile';
           });
         },
-        // ADD THIS FOR PROFILE ICON TAP:
         onProfileTap: () {
           setState(() {
-            _navIndex = 3; // Set to profile tab index
+            _navIndex = 3;
             _screen = 'profile';
           });
         },
       );
 
   Future<void> _createBooking(
-      DateTime date, String serviceType, String? notes, String? address) async {
+      DateTime date, String serviceType, String? notes, String? address,
+      {double? latitude, double? longitude}) async {
     if (_user == null || _selectedPro == null) return;
     try {
       final booking = await _ds.createBooking(
@@ -1211,6 +1268,8 @@ class _MainAppState extends State<MainApp> {
         notes: notes,
         address: address,
         priceEstimate: _selectedPro!.priceMin,
+        latitude: latitude,
+        longitude: longitude,
       );
       setState(() {
         _selectedBooking = booking;
@@ -1230,22 +1289,6 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
-  Future<void> _updateStatus(
-      BookingEntity booking, BookingStatus newStatus) async {
-    try {
-      await _ds.updateBookingStatus(booking.id, newStatus);
-      setState(() {
-        _bookings = _bookings
-            .map((b) => b.id == booking.id ? b.copyWithStatus(newStatus) : b)
-            .toList();
-        if (_selectedBooking?.id == booking.id)
-          _selectedBooking = _selectedBooking!.copyWithStatus(newStatus);
-      });
-    } catch (e) {
-      debugPrint('UpdateStatus error: $e');
-    }
-  }
-
   Future<void> _submitReview(int rating, String? comment) async {
     if (_user == null || _selectedBooking == null) return;
     try {
@@ -1256,21 +1299,15 @@ class _MainAppState extends State<MainApp> {
         rating: rating,
         comment: comment,
       );
-
-      // Bug 4 fix: mark this booking as reviewed so the button won't reappear
       setState(() {
         _reviewedBookingIds.add(_selectedBooking!.id);
         _screen = 'home';
       });
-
       _notify('Review submitted! Thank you. ⭐');
-
-      // Refresh professional list so updated rating shows immediately
       _ds.getProfessionals().then((list) {
         if (mounted) setState(() => _professionals = list);
       });
     } catch (e) {
-      // Bug 2 fix: surface the error to the user instead of silently swallowing
       debugPrint('Review error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

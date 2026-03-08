@@ -6,6 +6,7 @@
 //   • Edit Profile    — name, phone, city; saved via onSaveProfile
 //   • Change Password — current / new / confirm; saved via onChangePassword
 //   • Avatar upload   — gallery or camera; saved via onUploadAvatar
+//   • Service Location — map pin (Google Maps + GPS); saved via onSaveLocation  ← NEW
 //   • Privacy Policy  — tap handler
 //   • Logout          — confirmation dialog
 //
@@ -14,6 +15,7 @@
 //   professional      → ProfessionalEntity?
 //   onBack            → VoidCallback?
 //   onSaveProfile     → Future<void> Function(String name, String? phone, String? city)?
+//   onSaveLocation    → Future<void> Function(double lat, double lng)?            ← NEW
 //   onChangePassword  → Future<void> Function(String currentPw, String newPw)?
 //   onUploadAvatar    → Future<String?> Function(List<int> bytes, String fileName)?
 //   onServicesOffered → VoidCallback?
@@ -25,6 +27,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
@@ -35,6 +40,9 @@ class ProfessionalProfileScreen extends StatefulWidget {
   final VoidCallback? onBack;
   final Future<void> Function(String name, String? phone, String? city)?
       onSaveProfile;
+  // NEW — saves the handyman's GPS pin to professionals.latitude / .longitude
+  final Future<void> Function(double latitude, double longitude)?
+      onSaveLocation;
   final Future<void> Function(String currentPassword, String newPassword)?
       onChangePassword;
   final Future<String?> Function(List<int> bytes, String fileName)?
@@ -50,6 +58,7 @@ class ProfessionalProfileScreen extends StatefulWidget {
     this.professional,
     this.onBack,
     this.onSaveProfile,
+    this.onSaveLocation,
     this.onChangePassword,
     this.onUploadAvatar,
     this.onServicesOffered,
@@ -70,6 +79,10 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
   String? _avatarUrl;
   File? _avatarFile;
 
+  // Tracks whether a location has been saved (green = set, orange = not set)
+  double? _savedLat;
+  double? _savedLng;
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +90,9 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
     _phone = widget.user?.phone;
     _city = widget.professional?.city;
     _avatarUrl = widget.user?.avatarUrl;
+    // Pre-load existing coordinates from the entity if already saved
+    _savedLat = widget.professional?.latitude;
+    _savedLng = widget.professional?.longitude;
   }
 
   // ── SHARED CHROME HELPERS ─────────────────────────────────
@@ -670,6 +686,34 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
     }
   }
 
+  // ── 4. LOCATION SHEET ─────────────────────────────────────
+  // Opens _LocationPickerSheet where the handyman pins their service
+  // location on a Google Map (green marker).
+  // Saved to professionals.latitude / .longitude via onSaveLocation.
+  // These coords appear as the green pin on the customer's AssessmentScreen.
+
+  void _openLocationSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _LocationPickerSheet(
+        initialLat: _savedLat,
+        initialLng: _savedLng,
+        onSave: (lat, lng) async {
+          await widget.onSaveLocation?.call(lat, lng);
+          if (mounted)
+            setState(() {
+              _savedLat = lat;
+              _savedLng = lng;
+            });
+          _showSuccess(
+              'Location saved! Customers can now see your route on the map.');
+        },
+      ),
+    );
+  }
+
   // ── BUILD ─────────────────────────────────────────────────
 
   @override
@@ -958,6 +1002,7 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
         : '—';
 
     final verified = widget.professional?.verified ?? false;
+    final hasLocation = _savedLat != null && _savedLng != null;
 
     return _card(
       title: 'Professional Information',
@@ -978,6 +1023,68 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
             label: 'Price Range',
             value: price),
         _divider(),
+
+        // ── Service Location row (NEW) ─────────────────────────────────────
+        GestureDetector(
+          onTap: _openLocationSheet,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            child: Row(children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: hasLocation
+                      ? const Color(0xFF34C759).withOpacity(0.1)
+                      : const Color(0xFFFF9500).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  hasLocation
+                      ? Icons.location_on_rounded
+                      : Icons.location_off_rounded,
+                  color: hasLocation
+                      ? const Color(0xFF34C759)
+                      : const Color(0xFFFF9500),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('My Service Location',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textLight)),
+                      const SizedBox(height: 3),
+                      Text(
+                        hasLocation
+                            ? 'Location set  ·  Tap to update'
+                            : 'Not set yet  ·  Tap to pin your location',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: hasLocation
+                              ? const Color(0xFF34C759)
+                              : const Color(0xFFFF9500),
+                        ),
+                      ),
+                    ]),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: hasLocation
+                    ? const Color(0xFF34C759)
+                    : const Color(0xFFFF9500),
+                size: 20,
+              ),
+            ]),
+          ),
+        ),
+        _divider(),
+
+        // Verification status (unchanged)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           child: Row(children: [
@@ -1234,4 +1341,520 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
 
   Widget _divider() => const Divider(
       height: 1, indent: 72, endIndent: 20, color: Color(0xFFEEEEEE));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _LocationPickerSheet
+//
+// Near-full-screen bottom sheet with:
+//   • Google Map — tap anywhere to drop a green marker
+//   • GPS button (top-right) — jumps to device location
+//   • Zoom controls (bottom-right)
+//   • Reverse-geocoding — address label shown under pin
+//   • Pin preview card + Save Location / Cancel buttons
+//
+// Green marker colour matches the handyman pin on AssessmentScreen map.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _LocationPickerSheet extends StatefulWidget {
+  final double? initialLat;
+  final double? initialLng;
+  final Future<void> Function(double lat, double lng) onSave;
+
+  const _LocationPickerSheet({
+    this.initialLat,
+    this.initialLng,
+    required this.onSave,
+  });
+
+  @override
+  State<_LocationPickerSheet> createState() => _LocationPickerSheetState();
+}
+
+class _LocationPickerSheetState extends State<_LocationPickerSheet> {
+  GoogleMapController? _mapCtrl;
+  LatLng? _pinned;
+  bool _locating = false;
+  bool _geocoding = false;
+  bool _saving = false;
+  String _addressLabel = '';
+
+  static const LatLng _defaultCamera = LatLng(7.0707, 125.6087); // Davao City
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialLat != null && widget.initialLng != null) {
+      _pinned = LatLng(widget.initialLat!, widget.initialLng!);
+    }
+  }
+
+  LatLng get _camera => _pinned ?? _defaultCamera;
+
+  Future<void> _onMapTap(LatLng ll) async {
+    setState(() {
+      _pinned = ll;
+      _geocoding = true;
+      _addressLabel = '';
+    });
+    try {
+      final marks = await placemarkFromCoordinates(ll.latitude, ll.longitude)
+          .timeout(const Duration(seconds: 8));
+      if (marks.isNotEmpty && mounted) {
+        final p = marks.first;
+        final parts = [
+          p.street,
+          p.subLocality ?? p.subAdministrativeArea,
+          p.locality,
+          p.administrativeArea,
+        ].where((s) => s != null && s!.isNotEmpty).toList();
+        setState(() => _addressLabel = parts.join(', '));
+      }
+    } catch (_) {
+      // Silent — coordinates are still valid without address label
+    } finally {
+      if (mounted) setState(() => _geocoding = false);
+    }
+  }
+
+  Future<void> _useGps() async {
+    final serviceOn = await Geolocator.isLocationServiceEnabled();
+    if (!serviceOn) {
+      _snack('Location services are disabled.');
+      return;
+    }
+
+    var perm = await Geolocator.checkPermission();
+    if (perm == LocationPermission.denied) {
+      perm = await Geolocator.requestPermission();
+    }
+    if (perm == LocationPermission.deniedForever ||
+        perm == LocationPermission.denied) {
+      _snack('Location permission denied. Pin manually on the map.');
+      return;
+    }
+
+    setState(() => _locating = true);
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 10));
+      final ll = LatLng(pos.latitude, pos.longitude);
+      _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(ll, 17));
+      await _onMapTap(ll);
+    } catch (_) {
+      _snack('Could not get GPS location — try pinning manually.');
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
+
+  Future<void> _save() async {
+    if (_pinned == null) {
+      _snack('Please pin your location on the map first.');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await widget.onSave(_pinned!.latitude, _pinned!.longitude);
+      if (mounted) Navigator.of(context).pop();
+    } catch (_) {
+      if (mounted) setState(() => _saving = false);
+      rethrow;
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: AppColors.primary,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.88,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+      ),
+      child: Column(children: [
+        // Drag handle
+        const SizedBox(height: 12),
+        Container(
+          width: 40,
+          height: 4,
+          decoration: BoxDecoration(
+              color: const Color(0xFFDDDDDD),
+              borderRadius: BorderRadius.circular(2)),
+        ),
+        const SizedBox(height: 16),
+
+        // Header
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Row(children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12)),
+              child: const Icon(Icons.my_location_rounded,
+                  color: AppColors.primary, size: 20),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Set Your Location',
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textDark)),
+                  SizedBox(height: 2),
+                  Text(
+                    'Tap the map or use GPS to pin where you operate from',
+                    style: TextStyle(fontSize: 12, color: AppColors.textLight),
+                  ),
+                ],
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 16),
+
+        // Map
+        Expanded(
+          child: Stack(children: [
+            GoogleMap(
+              initialCameraPosition: CameraPosition(
+                  target: _camera, zoom: _pinned != null ? 15 : 13),
+              onMapCreated: (c) {
+                _mapCtrl = c;
+                if (_pinned != null) {
+                  Future.delayed(
+                    const Duration(milliseconds: 400),
+                    () => _mapCtrl?.animateCamera(
+                        CameraUpdate.newLatLngZoom(_pinned!, 15)),
+                  );
+                }
+              },
+              onTap: _onMapTap,
+              markers: _pinned != null
+                  ? {
+                      Marker(
+                        markerId: const MarkerId('pro_pin'),
+                        position: _pinned!,
+                        icon: BitmapDescriptor.defaultMarkerWithHue(
+                            BitmapDescriptor.hueGreen),
+                        infoWindow: InfoWindow(
+                          title: 'My Location',
+                          snippet:
+                              _addressLabel.isNotEmpty ? _addressLabel : null,
+                        ),
+                      ),
+                    }
+                  : {},
+              myLocationEnabled: false,
+              myLocationButtonEnabled: false,
+              zoomControlsEnabled: false,
+              mapToolbarEnabled: false,
+              compassEnabled: false,
+            ),
+
+            // GPS button
+            Positioned(
+              top: 12,
+              right: 12,
+              child: GestureDetector(
+                onTap: _locating ? null : _useGps,
+                child: Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.18),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2))
+                    ],
+                  ),
+                  child: _locating
+                      ? const Padding(
+                          padding: EdgeInsets.all(11),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation(AppColors.primary)))
+                      : const Icon(Icons.my_location_rounded,
+                          color: AppColors.primary, size: 22),
+                ),
+              ),
+            ),
+
+            // Zoom controls
+            Positioned(
+              bottom: 12,
+              right: 12,
+              child: Column(children: [
+                _zoomBtn(Icons.add_rounded,
+                    () => _mapCtrl?.animateCamera(CameraUpdate.zoomIn())),
+                const SizedBox(height: 4),
+                _zoomBtn(Icons.remove_rounded,
+                    () => _mapCtrl?.animateCamera(CameraUpdate.zoomOut())),
+              ]),
+            ),
+
+            // Geocoding overlay
+            if (_geocoding)
+              Positioned(
+                bottom: 12,
+                left: 12,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.65),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white)),
+                    SizedBox(width: 8),
+                    Text('Getting address…',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+              ),
+
+            // Tap-to-pin hint
+            if (_pinned == null && !_locating)
+              Center(
+                child: IgnorePointer(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.55),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.touch_app_rounded,
+                          color: Colors.white, size: 16),
+                      SizedBox(width: 6),
+                      Text('Tap map to pin your location',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                ),
+              ),
+          ]),
+        ),
+
+        // Bottom bar: pin preview + buttons
+        Container(
+          padding: EdgeInsets.fromLTRB(20, 16, 20, bottomPad + 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 12,
+                  offset: const Offset(0, -4))
+            ],
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // Pin preview card
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: _pinned != null
+                    ? const Color(0xFF34C759).withOpacity(0.06)
+                    : const Color(0xFFF5F5F5),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: _pinned != null
+                        ? const Color(0xFF34C759).withOpacity(0.3)
+                        : const Color(0xFFE0E0E0)),
+              ),
+              child: Row(children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: (_pinned != null
+                            ? const Color(0xFF34C759)
+                            : const Color(0xFFBBBBBB))
+                        .withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.place_rounded,
+                      color: _pinned != null
+                          ? const Color(0xFF34C759)
+                          : const Color(0xFFBBBBBB),
+                      size: 18),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _pinned != null
+                              ? 'Pinned Location'
+                              : 'No location pinned yet',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: _pinned != null
+                                  ? const Color(0xFF34C759)
+                                  : const Color(0xFFAAAAAA)),
+                        ),
+                        if (_addressLabel.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(_addressLabel,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: AppColors.textDark),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis),
+                        ] else if (_pinned != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            '${_pinned!.latitude.toStringAsFixed(5)}, '
+                            '${_pinned!.longitude.toStringAsFixed(5)}',
+                            style: const TextStyle(
+                                fontSize: 11, color: AppColors.textLight),
+                          ),
+                        ],
+                      ]),
+                ),
+                if (_pinned != null)
+                  GestureDetector(
+                    onTap: () => setState(() {
+                      _pinned = null;
+                      _addressLabel = '';
+                    }),
+                    child: const Icon(Icons.close_rounded,
+                        color: Color(0xFFBBBBBB), size: 18),
+                  ),
+              ]),
+            ),
+            const SizedBox(height: 14),
+
+            // Cancel / Save buttons
+            Row(children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFFF5F5F5),
+                        borderRadius: BorderRadius.circular(16)),
+                    child: const Center(
+                      child: Text('Cancel',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textMedium)),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: GestureDetector(
+                  onTap: _saving ? null : _save,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: _pinned != null
+                            ? [const Color(0xFF0F3D2E), const Color(0xFF1A5C43)]
+                            : [
+                                const Color(0xFFCCCCCC),
+                                const Color(0xFFBBBBBB)
+                              ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: _pinned != null
+                          ? [
+                              BoxShadow(
+                                  color: AppColors.primary.withOpacity(0.3),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4))
+                            ]
+                          : [],
+                    ),
+                    child: Center(
+                      child: _saving
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor:
+                                      AlwaysStoppedAnimation(Colors.white)))
+                          : const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                  Icon(Icons.save_rounded,
+                                      color: Colors.white, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Save Location',
+                                      style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.white)),
+                                ]),
+                    ),
+                  ),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _zoomBtn(IconData icon, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 4)
+            ],
+          ),
+          child: Icon(icon, size: 20, color: AppColors.textDark),
+        ),
+      );
 }

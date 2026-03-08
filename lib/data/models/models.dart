@@ -47,12 +47,7 @@ class UserModel extends Equatable {
   /// Parse a possibly-partial user object (e.g. joined selects that only include
   /// `name`/`phone`/`avatar_url`). Falls back to sensible defaults to avoid
   /// casting errors when fields are missing.
-  ///
-  /// NOTE: `id` is NOT defaulted to '' — if it is missing the caller should
-  /// handle the null case rather than silently getting an empty UUID that will
-  /// later crash Postgres with "invalid input syntax for type uuid: """.
   factory UserModel.fromJsonSafe(Map<String, dynamic> json) {
-    // Pull id — keep null if absent so callers can detect the problem early.
     final rawId = json['id']?.toString();
     final id = (rawId != null && rawId.isNotEmpty) ? rawId : '';
 
@@ -126,6 +121,11 @@ class ProfessionalModel extends Equatable {
   final int yearsExperience;
   final bool available;
 
+  /// Handyman's registered GPS location.
+  /// Stored in the `professionals` table as `latitude` / `longitude`.
+  final double? latitude;
+  final double? longitude;
+
   const ProfessionalModel({
     required this.id,
     required this.userId,
@@ -142,6 +142,8 @@ class ProfessionalModel extends Equatable {
     this.bio,
     required this.yearsExperience,
     required this.available,
+    this.latitude,
+    this.longitude,
   });
 
   factory ProfessionalModel.fromJson(Map<String, dynamic> json) {
@@ -162,6 +164,8 @@ class ProfessionalModel extends Equatable {
       bio: json['bio'] as String?,
       yearsExperience: json['years_experience'] as int? ?? 0,
       available: json['available'] as bool? ?? true,
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
     );
   }
 
@@ -181,6 +185,8 @@ class ProfessionalModel extends Equatable {
         bio: bio,
         yearsExperience: yearsExperience,
         available: available,
+        latitude: latitude,
+        longitude: longitude,
       );
 
   Map<String, dynamic> toJson() => {
@@ -194,6 +200,8 @@ class ProfessionalModel extends Equatable {
         'bio': bio,
         'years_experience': yearsExperience,
         'available': available,
+        'latitude': latitude,
+        'longitude': longitude,
       };
 
   @override
@@ -220,6 +228,14 @@ class BookingModel extends Equatable {
   final ProfessionalModel? professional;
   final UserModel? customer;
 
+  /// Customer's pinned GPS location from RequestServiceScreen step 3.
+  final double? latitude;
+  final double? longitude;
+
+  /// Price set by the handyman during the assessment phase.
+  /// Null until the professional sets it; falls back to priceEstimate on the UI.
+  final double? assessmentPrice;
+
   const BookingModel({
     required this.id,
     required this.customerId,
@@ -234,6 +250,9 @@ class BookingModel extends Equatable {
     required this.createdAt,
     this.professional,
     this.customer,
+    this.latitude,
+    this.longitude,
+    this.assessmentPrice,
   });
 
   factory BookingModel.fromJson(Map<String, dynamic> json) {
@@ -285,6 +304,9 @@ class BookingModel extends Equatable {
         professional:
             proJson != null ? ProfessionalModel.fromJson(proJson) : null,
         customer: custJson != null ? UserModel.fromJsonSafe(custJson) : null,
+        latitude: (json['latitude'] as num?)?.toDouble(),
+        longitude: (json['longitude'] as num?)?.toDouble(),
+        assessmentPrice: (json['assessment_price'] as num?)?.toDouble(),
       );
     } catch (e, st) {
       debugPrint('[BookingModel.fromJson] error parsing json: $e');
@@ -338,6 +360,9 @@ class BookingModel extends Equatable {
         createdAt: createdAt,
         professional: professional?.toEntity(),
         customer: customer?.toEntity(),
+        latitude: latitude,
+        longitude: longitude,
+        assessmentPrice: assessmentPrice,
       );
 
   /// Copy with a new status (used when updating locally before API confirms).
@@ -355,6 +380,9 @@ class BookingModel extends Equatable {
         createdAt: createdAt,
         professional: professional,
         customer: customer,
+        latitude: latitude,
+        longitude: longitude,
+        assessmentPrice: assessmentPrice,
       );
 
   Map<String, dynamic> toJson() => {
@@ -367,6 +395,9 @@ class BookingModel extends Equatable {
         'scheduled_date': scheduledDate.toIso8601String(),
         'address': address,
         'notes': notes,
+        'latitude': latitude,
+        'longitude': longitude,
+        'assessment_price': assessmentPrice,
       };
 
   @override
