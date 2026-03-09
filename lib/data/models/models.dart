@@ -121,6 +121,9 @@ class ProfessionalModel extends Equatable {
   final int yearsExperience;
   final bool available;
 
+  /// Phone number sourced from the joined users row.
+  final String? phone;
+
   /// Handyman's registered GPS location.
   /// Stored in the `professionals` table as `latitude` / `longitude`.
   final double? latitude;
@@ -142,6 +145,7 @@ class ProfessionalModel extends Equatable {
     this.bio,
     required this.yearsExperience,
     required this.available,
+    this.phone,
     this.latitude,
     this.longitude,
   });
@@ -153,6 +157,8 @@ class ProfessionalModel extends Equatable {
       userId: json['user_id'] as String,
       name: user?['name'] as String? ?? '',
       avatarUrl: user?['avatar_url'] as String?,
+      // Phone lives in the joined users row, not in professionals directly.
+      phone: user?['phone'] as String?,
       skills: List<String>.from(json['skills'] as List? ?? []),
       verified: json['verified'] as bool? ?? false,
       rating: (json['rating'] as num?)?.toDouble() ?? 0.0,
@@ -187,6 +193,7 @@ class ProfessionalModel extends Equatable {
         bio: bio,
         yearsExperience: yearsExperience,
         available: available,
+        phone: phone,
         latitude: lat,
         longitude: lng,
       );
@@ -207,6 +214,7 @@ class ProfessionalModel extends Equatable {
         bio: bio,
         yearsExperience: yearsExperience,
         available: available,
+        phone: phone,
         latitude: latitude,
         longitude: longitude,
       );

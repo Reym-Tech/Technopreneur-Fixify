@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../domain/entities/entities.dart';
 import '../../widgets/shared_widgets.dart';
@@ -30,11 +31,21 @@ class ProfessionalProfileScreen extends StatefulWidget {
 class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  late ProfessionalEntity _pro;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _pro = widget.professional;
+  }
+
+  @override
+  void didUpdateWidget(ProfessionalProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.professional != oldWidget.professional) {
+      setState(() => _pro = widget.professional);
+    }
   }
 
   @override
@@ -43,9 +54,29 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
     super.dispose();
   }
 
+  /// Launches the device's native phone dialer pre-filled with [phone].
+  Future<void> _callPhone(String phone) async {
+    final cleaned = phone.replaceAll(RegExp(r'[\s\-()]'), '');
+    final uri = Uri(scheme: 'tel', path: cleaned);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open dialer for $phone'),
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final pro = widget.professional;
+    final pro = _pro;
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       body: Stack(
@@ -283,7 +314,7 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
             ],
           ),
 
-          // Floating Book Button
+          // Floating action buttons — Call (if phone available) + Book
           Positioned(
             bottom: 0,
             left: 0,
@@ -300,20 +331,55 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
                   ],
                 ),
               ),
-              child: ElevatedButton.icon(
-                onPressed: widget.onBookNow,
-                icon: const Icon(Icons.calendar_today_rounded, size: 18),
-                label: const Text('Book This Professional'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
+              child: Row(
+                children: [
+                  // ── Phone button — only shown when number is available ──
+                  if (pro.phone != null && pro.phone!.trim().isNotEmpty) ...[
+                    GestureDetector(
+                      onTap: () => _callPhone(pro.phone!),
+                      child: Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF34C759),
+                          borderRadius: BorderRadius.circular(18),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF34C759).withOpacity(0.35),
+                              blurRadius: 14,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.phone_rounded,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+
+                  // ── Book button — takes remaining width ────────────────
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: widget.onBookNow,
+                      icon: const Icon(Icons.calendar_today_rounded, size: 18),
+                      label: const Text('Book This Professional'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        elevation: 0,
+                        shadowColor: Colors.transparent,
+                      ),
+                    ),
                   ),
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                ),
+                ],
               ),
             ).animate().fadeIn(delay: 600.ms).slideY(begin: 1, end: 0),
           ),
@@ -323,6 +389,8 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
   }
 
   Widget _buildHeader(ProfessionalEntity pro) {
+    final hasPhone = pro.phone != null && pro.phone!.trim().isNotEmpty;
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -336,7 +404,7 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
         bottom: false,
         child: Column(
           children: [
-            // Back button
+            // Back button row
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
               child: Row(
@@ -373,7 +441,7 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
             ),
             const SizedBox(height: 20),
 
-            // Avatar + name
+            // Avatar
             ClipRRect(
               borderRadius: BorderRadius.circular(30),
               child: Container(
@@ -395,6 +463,8 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
               ),
             ),
             const SizedBox(height: 14),
+
+            // Name + verified badge
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -413,6 +483,8 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
               ],
             ),
             const SizedBox(height: 6),
+
+            // City
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -434,7 +506,49 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
               ],
             ),
             const SizedBox(height: 6),
+
             RatingStars(rating: pro.rating, size: 18),
+
+            // ── Phone pill — shown below rating when number is available ──
+            if (hasPhone) ...[
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () => _callPhone(pro.phone!),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF34C759).withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: const Color(0xFF34C759).withOpacity(0.4),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.phone_rounded,
+                        color: Color(0xFF34C759),
+                        size: 15,
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        pro.phone!,
+                        style: const TextStyle(
+                          color: Color(0xFF34C759),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+
             const SizedBox(height: 24),
           ],
         ),

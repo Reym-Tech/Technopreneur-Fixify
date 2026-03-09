@@ -84,7 +84,7 @@ class SupabaseDataSource {
           'id, user_id, skills, verified, rating, review_count, '
           'price_range, price_min, price_max, city, bio, '
           'years_experience, available, latitude, longitude, '
-          'users(id, name, avatar_url)',
+          'users(id, name, avatar_url, phone)',
         )
         .eq('available', true);
 
@@ -115,7 +115,7 @@ class SupabaseDataSource {
   Future<ProfessionalModel?> getProfessionalByUserId(String userId) async {
     final data = await _client
         .from(AppConfig.professionalsTable)
-        .select('*, users(id, name, avatar_url)')
+        .select('*, users(id, name, avatar_url, phone)')
         .eq('user_id', userId)
         .maybeSingle();
     if (data == null) return null;
@@ -123,7 +123,6 @@ class SupabaseDataSource {
   }
 
   /// Fetches just the latest latitude/longitude for a professional.
-  /// Used for lightweight periodic location polling on the map screens.
   Future<({double? latitude, double? longitude})> getProfessionalLocation(
       String professionalId) async {
     try {
@@ -168,11 +167,77 @@ class SupabaseDataSource {
           'years_experience': yearsExperience,
           'available': true,
         })
-        .select('*, users(id, name, avatar_url)')
+        .select('*, users(id, name, avatar_url, phone)')
         .single();
     return ProfessionalModel.fromJson(data);
   }
 
+  /// Fetches reviews for [professionalId]. Used by the customer-side
+  /// ProfessionalProfileScreen so it doesn't always show "No reviews yet".
+  Future<List<ReviewModel>> getProfessionalReviewsById(
+      String professionalId) async {
+    final data = await _client
+        .from('reviews')
+        .select('*, users!customer_id(name, avatar_url)')
+        .eq('professional_id', professionalId)
+        .order('created_at', ascending: false);
+    return (data as List)
+        .map((e) => ReviewModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  // ── PROFESSIONALS REALTIME ────────────────────────────────
+  //
+  // Fires [onUpdate] with the updated professional's id whenever the
+  // DB trigger (trg_update_professional_rating) writes a new rating or
+  // review_count to the professionals table.
+  //
+  // The caller should respond by re-fetching the full professionals list.
+  //
+  // IMPORTANT: The professionals table must be included in the Supabase
+  // realtime publication. Run this once in the Supabase SQL editor if it
+  // isn't already:
+  //   ALTER PUBLICATION supabase_realtime ADD TABLE professionals;
+  RealtimeChannel subscribeToProfessionalsUpdates({
+    required void Function(String professionalId) onUpdate,
+  }) {
+    return _client
+        .channel('professionals_updates')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: AppConfig.professionalsTable,
+          callback: (payload) {
+            final id = payload.newRecord['id']?.toString();
+            if (id != null && id.isNotEmpty) {
+              debugPrint('[Realtime] professionals row updated: $id');
+              onUpdate(id);
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  /// Subscribes to new review inserts. More reliable than watching
+  /// professionals UPDATE events because INSERT payloads are always
+  /// complete regardless of REPLICA IDENTITY settings.
+  ///
+  /// Returns the channel so the caller can unsubscribe via
+  /// [unsubscribeChannel] when done.
+  RealtimeChannel subscribeToReviewsInserts({
+    required void Function(Map<String, dynamic> payload) onInsert,
+  }) {
+    final channel = _client
+        .channel('reviews_inserts_${DateTime.now().millisecondsSinceEpoch}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'reviews',
+          callback: (payload) => onInsert(payload.newRecord),
+        )
+        .subscribe();
+    return channel;
+  }
   // ── BOOKINGS ──────────────────────────────────────────────
 
   Future<BookingModel> createBooking({
@@ -215,11 +280,6 @@ class SupabaseDataSource {
     }
   }
 
-  // ── FIX: getCustomerBookings ──────────────────────────────
-  // Joins professionals WITH their lat/lng + nested users for avatarUrl,
-  // so AssessmentScreen can render both the customer pin (booking.latitude /
-  // booking.longitude) and the handyman pin (booking.professional.latitude /
-  // booking.professional.longitude).
   Future<List<BookingModel>> getCustomerBookings(String customerId) async {
     final response = await _client
         .from(AppConfig.bookingsTable)
@@ -235,12 +295,6 @@ class SupabaseDataSource {
         .toList();
   }
 
-  // ── FIX: getProfessionalBookings ──────────────────────────
-  // Now fetches BOTH:
-  //   • users!customer_id  — customer name/phone/avatar
-  //   • professionals      — the pro's own lat/lng so ProBookingDetailScreen
-  //                          can draw the blue "Your Location" pin
-  // The professionals row is looked up by professional_id on the booking.
   Future<List<BookingModel>> getProfessionalBookings(
       String professionalId) async {
     final response = await _client
@@ -258,10 +312,6 @@ class SupabaseDataSource {
 
     return (response as List).map((j) {
       final map = Map<String, dynamic>.from(j as Map<String, dynamic>);
-      // Supabase returns customer user data under 'users' key — but when we
-      // also join professionals->users it can conflict. Rename the top-level
-      // customer join to a stable key before parsing.
-      // The top-level 'users' key here is from users!customer_id.
       return BookingModel.fromJson(map);
     }).toList();
   }
@@ -306,7 +356,6 @@ class SupabaseDataSource {
           ),
           callback: (payload) async {
             try {
-              // Re-fetch with full joins so lat/lng + professional flow through
               final data = await _client
                   .from(AppConfig.bookingsTable)
                   .select(
@@ -345,7 +394,6 @@ class SupabaseDataSource {
           ),
           callback: (payload) async {
             try {
-              // Re-fetch with customer join + professional join
               final data = await _client
                   .from(AppConfig.bookingsTable)
                   .select(
@@ -413,8 +461,6 @@ class SupabaseDataSource {
         .select('*, users!customer_id(name, avatar_url)')
         .single();
 
-    // ── The DB trigger handles updating rating + review_count automatically.
-    // No manual Dart update needed.
     debugPrint('[Review] Inserted review for professional $professionalId — '
         'DB trigger will update rating and review_count.');
 
@@ -448,12 +494,6 @@ class SupabaseDataSource {
 
   // ── PROFESSIONAL AVAILABILITY ─────────────────────────────
 
-  /// Persists the handyman's online/offline status to the DB.
-  /// Called from main.dart's onToggleAvailability.
-  /// When offline (available=false):
-  ///   • getProfessionals() already excludes them (hardcoded .eq('available', true))
-  ///   • subscribeToProfessionalBookings will no longer deliver new bookings
-  ///     because customers can't select an unavailable pro in the first place.
   Future<void> updateProfessionalAvailability({
     required String professionalId,
     required bool available,

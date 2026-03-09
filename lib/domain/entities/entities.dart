@@ -55,6 +55,10 @@ class ProfessionalEntity extends Equatable {
   final int yearsExperience;
   final bool available;
 
+  /// Phone number sourced from the professional's users row.
+  /// Used to launch the device dialer directly from the card.
+  final String? phone;
+
   /// Handyman's registered GPS location — used to draw the route on the
   /// AssessmentScreen map. Null when not yet set on the professional profile.
   final double? latitude;
@@ -76,6 +80,7 @@ class ProfessionalEntity extends Equatable {
     this.bio,
     required this.yearsExperience,
     required this.available,
+    this.phone,
     this.latitude,
     this.longitude,
   });

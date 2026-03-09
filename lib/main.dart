@@ -257,7 +257,11 @@ class _MainAppState extends State<MainApp> {
   int _navIndex = 0;
   String _screen = 'home';
   ProfessionalModel? _selectedPro;
+  List<ReviewModel> _proReviews = [];
   int _unreadNotifCount = 0;
+  // Holds the freshly-fetched professional after a profile tap.
+  // Used instead of _selectedPro so rating/review_count are always live.
+  ProfessionalModel? _selectedProFresh;
 
   final Set<String> _reviewedBookingIds = {};
   BookingModel? _selectedBooking;
@@ -267,6 +271,12 @@ class _MainAppState extends State<MainApp> {
 
   bool _loading = true;
 
+  // ── Realtime channel for professionals rating/review updates ──
+  // Subscribed only for customer accounts. Fires when the DB trigger
+  // (trg_update_professional_rating) updates a professionals row after
+  // a new review is inserted.
+  RealtimeChannel? _professionalsChannel;
+
   @override
   void initState() {
     super.initState();
@@ -274,6 +284,15 @@ class _MainAppState extends State<MainApp> {
     _appDs = ApplicationDataSource(Supabase.instance.client);
     _notifDs = NotificationDataSource(Supabase.instance.client);
     _init();
+  }
+
+  @override
+  void dispose() {
+    // Clean up the professionals realtime channel to avoid memory leaks.
+    if (_professionalsChannel != null) {
+      _ds.unsubscribeChannel(_professionalsChannel!);
+    }
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -332,6 +351,7 @@ class _MainAppState extends State<MainApp> {
         } else if (_user!.role == 'admin') {
           _applications = await _appDs.getAllApplications();
         } else {
+          // ── Customer ──────────────────────────────────────────────────
           _bookings = await _ds.getCustomerBookings(_user!.id);
           for (final b in _bookings) {
             if (b.status == BookingStatus.completed) {
@@ -353,6 +373,26 @@ class _MainAppState extends State<MainApp> {
           } catch (e) {
             debugPrint('Could not load notif count: $e');
           }
+
+          // ── Subscribe to professionals table updates ───────────────────
+          // When the DB trigger fires after a review insert and updates
+          // rating + review_count, re-fetch the full professionals list
+          // so the dashboard shows live ratings without needing a manual
+          // pull-to-refresh.
+          // When a new review is inserted the DB trigger updates the
+// professionals row. We re-fetch the full list so ratings
+// refresh in real time without needing REPLICA IDENTITY FULL.
+          _professionalsChannel = _ds.subscribeToReviewsInserts(
+            onInsert: (_) async {
+              try {
+                final updated = await _ds.getProfessionals();
+                if (mounted) setState(() => _professionals = updated);
+              } catch (e) {
+                debugPrint(
+                    '[Realtime] professionals refresh (via review) error: $e');
+              }
+            },
+          );
         }
       }
     } catch (e) {
@@ -1074,16 +1114,20 @@ class _MainAppState extends State<MainApp> {
       case 'professional_profile':
         if (_selectedPro == null) return _home();
         return customer.ProfessionalProfileScreen(
-          professional: _selectedPro!.toEntity(),
-          reviews: const [],
-          onBack: () => setState(() => _screen = 'home'),
+          // Use fresh DB data if available, fall back to cached while loading
+          professional: (_selectedProFresh ?? _selectedPro!).toEntity(),
+          reviews: _proReviews.map((r) => r.toEntity()).toList(),
+          onBack: () => setState(() {
+            _screen = 'home';
+            _proReviews = [];
+            _selectedProFresh = null;
+          }),
           onBookNow: () => setState(() => _screen = 'request_service'),
         );
-
       case 'booking':
         if (_selectedPro == null) return _home();
         return customer.BookingScreen(
-          professional: _selectedPro!.toEntity(),
+          professional: (_selectedProFresh ?? _selectedPro!).toEntity(),
           onBack: () => setState(() => _screen = 'professional_profile'),
           onConfirmBooking: _createBooking,
         );
@@ -1257,11 +1301,30 @@ class _MainAppState extends State<MainApp> {
             debugPrint('Filter error: $e');
           }
         },
+        // AFTER:
         onProfessionalTap: (entity) {
           final model = _professionals.firstWhere((p) => p.id == entity.id);
           setState(() {
-            _selectedPro = model;
+            _selectedPro = model; // show immediately with cached data
+            _selectedProFresh = null; // clear stale fresh copy
+            _proReviews = []; // clear while loading
             _screen = 'professional_profile';
+          });
+          // Re-fetch both the professional's latest data AND their reviews
+          // in parallel so rating/review_count are always live.
+          // REPLACE WITH:
+          _ds.getProfessionalById(entity.id).then((freshPro) {
+            if (!mounted) return;
+            if (freshPro != null) setState(() => _selectedProFresh = freshPro);
+          }).catchError((e) {
+            debugPrint('Could not load fresh professional: $e');
+          });
+
+          _ds.getProfessionalReviewsById(entity.id).then((reviews) {
+            if (!mounted) return;
+            setState(() => _proReviews = reviews);
+          }).catchError((e) {
+            debugPrint('Could not load pro reviews: $e');
           });
         },
         onProfileTap: () {

@@ -3,6 +3,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_theme.dart';
 import '../../domain/entities/entities.dart';
 
@@ -280,15 +281,39 @@ class ProfessionalCard extends StatelessWidget {
     required this.onTap,
   });
 
+  /// Launches the device's native phone dialer pre-filled with [phone].
+  Future<void> _callPhone(BuildContext context, String phone) async {
+    // Strip spaces/dashes so the URI is clean, e.g. "tel:+639171234567"
+    final cleaned = phone.replaceAll(RegExp(r'[\s\-()]'), '');
+    final uri = Uri(scheme: 'tel', path: cleaned);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open dialer for $phone'),
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasPhone =
+        professional.phone != null && professional.phone!.trim().isNotEmpty;
+
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       onTap: onTap,
       child: Row(
         children: [
-          // Avatar
+          // ── Avatar ──────────────────────────────────────────────────────
           Stack(
             children: [
               Container(
@@ -333,7 +358,8 @@ class ProfessionalCard extends StatelessWidget {
             ],
           ),
           const SizedBox(width: 14),
-          // Info
+
+          // ── Info ─────────────────────────────────────────────────────────
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -395,7 +421,7 @@ class ProfessionalCard extends StatelessWidget {
                     if (professional.priceMin != null &&
                         professional.priceMax != null)
                       Text(
-                        '\$${professional.priceMin!.toInt()}-\$${professional.priceMax!.toInt()}',
+                        '₱${professional.priceMin!.toInt()}-₱${professional.priceMax!.toInt()}',
                         style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
@@ -420,6 +446,44 @@ class ProfessionalCard extends StatelessWidget {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+
+                // ── Phone row — only shown when a number is available ─────
+                if (hasPhone)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: GestureDetector(
+                      // Stop propagation so the card tap (view profile) is
+                      // not triggered when the user taps the phone button.
+                      onTap: () => _callPhone(context, professional.phone!),
+                      behavior: HitTestBehavior.opaque,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF34C759).withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.phone_rounded,
+                              size: 13,
+                              color: Color(0xFF34C759),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            professional.phone!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF34C759),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
               ],
