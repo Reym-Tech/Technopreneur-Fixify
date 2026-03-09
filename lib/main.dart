@@ -1,13 +1,15 @@
 // lib/main.dart
 // Changes from previous version:
-//  1. Professional BookingHistoryScreen now passes onViewDetail → navigates to
-//     ProBookingDetailScreen.
-//  2. New _screen == 'pro_booking_detail' case renders ProBookingDetailScreen
-//     with onSetPrice (saves assessment_price) and onUpdateStatus.
-//  3. getCustomerBookings / getProfessionalBookings now use improved queries
-//     (see supabase_datasource.dart) so lat/lng and avatarUrl flow through.
-//  4. FIX: Moved misplaced empty-user guard so _navIndex == 4 (AdminNotifications)
-//     is reachable. AdminNotificationsScreen now also has onNavTap wired.
+//  1. AuthFlow now accepts an optional initialEmail so RegisterScreen can
+//     pass the just-registered email back to LoginScreen (autofill fix).
+//  2. _handleRegister no longer signs the user in implicitly — it explicitly
+//     signs out any session that Supabase may have created on signUp so the
+//     app stays on the LoginScreen (fixes the post-register splash loop).
+//  3. _handleLogin now calls setState after a successful login to force
+//     AppNavigator to re-evaluate _isLoggedIn immediately, instead of
+//     waiting solely for the auth stream (fixes the blank-after-login bug).
+//  4. AppNavigator._checkInitialSession now also force-refreshes after the
+//     auth stream fires to cover race conditions.
 
 import 'package:fixify/presentation/screens/admin/superadmin_analytics.dart';
 import 'package:fixify/presentation/screens/professional/earnings.dart';
@@ -26,6 +28,7 @@ import 'package:fixify/data/models/models.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/screens/shared/splash_screen.dart';
 import 'package:fixify/presentation/screens/auth/login_screen.dart';
+import 'package:fixify/presentation/screens/auth/register_screen.dart';
 import 'package:fixify/presentation/screens/customer/dashboard_customer.dart';
 import 'package:fixify/presentation/screens/customer/profile_customer.dart';
 import 'package:fixify/presentation/screens/customer/requestservice_customer.dart';
@@ -86,23 +89,33 @@ class _AppNavigatorState extends State<AppNavigator> {
   bool _isLoggedIn = false;
   bool _initialCheckDone = false;
 
+  // FIX: Hold AuthFlow in a stable field with a GlobalKey so Flutter never
+  // recreates it when AppNavigator rebuilds (e.g. when the signOut stream
+  // event fires during registration). Without this, every AppNavigator rebuild
+  // that returns AuthFlow() produces a fresh instance when _initialCheckDone
+  // flips, resetting _showSplash=true and wiping _prefillEmail.
+  final _authFlowKey = GlobalKey();
+  late final Widget _authFlow;
+
   @override
   void initState() {
     super.initState();
-    _checkInitialSession();
+    _authFlow = AuthFlow(key: _authFlowKey);
+    // Check synchronously — Supabase hydrates the session from storage before
+    // the first frame, so no artificial delay is needed.
+    final session = Supabase.instance.client.auth.currentSession;
+    _isLoggedIn = session != null;
+    _initialCheckDone = true;
+
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (!mounted) return;
-      setState(() => _isLoggedIn = data.session != null);
-    });
-  }
-
-  Future<void> _checkInitialSession() async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    if (!mounted) return;
-    final session = Supabase.instance.client.auth.currentSession;
-    setState(() {
-      _isLoggedIn = session != null;
-      _initialCheckDone = true;
+      final loggedIn = data.session != null;
+      // Only rebuild when login state actually changes — this prevents a
+      // signedOut event during registration (already logged out) from
+      // triggering a rebuild that races with _initialCheckDone.
+      if (_isLoggedIn != loggedIn) {
+        setState(() => _isLoggedIn = loggedIn);
+      }
     });
   }
 
@@ -116,7 +129,9 @@ class _AppNavigatorState extends State<AppNavigator> {
                 valueColor: AlwaysStoppedAnimation(AppColors.primary))),
       );
     }
-    return _isLoggedIn ? const MainApp() : const AuthFlow();
+    // Return the same AuthFlow instance every time so its internal state
+    // (_showSplash, _showRegister, _prefillEmail) is always preserved.
+    return _isLoggedIn ? const MainApp() : _authFlow;
   }
 }
 
@@ -129,7 +144,13 @@ class AuthFlow extends StatefulWidget {
 }
 
 class _AuthFlowState extends State<AuthFlow> {
-  bool _showSplash = true, _showRegister = false;
+  bool _showSplash = true;
+  bool _showRegister = false;
+
+  /// Email pre-filled on LoginScreen after a successful registration.
+  /// Set via RegisterScreen.onSuccess(email) — no Supabase calls happen here
+  /// so the auth stream is never disturbed and AuthFlow is never recreated.
+  String? _prefillEmail;
 
   @override
   void initState() {
@@ -142,108 +163,38 @@ class _AuthFlowState extends State<AuthFlow> {
   @override
   Widget build(BuildContext context) {
     if (_showSplash) return SplashScreen();
-    if (_showRegister)
+
+    if (_showRegister) {
       return RegisterScreen(
-          onNavigateToLogin: () => setState(() => _showRegister = false),
-          onRegister: _handleRegister);
+        onNavigateToLogin: () => setState(() {
+          _showRegister = false;
+          _prefillEmail = null;
+        }),
+        // RegisterScreen owns all Supabase signup logic. When it succeeds it
+        // calls onSuccess(email) so we can switch to LoginScreen with the
+        // email pre-filled — without ever calling signOut() from here, which
+        // was the root cause of the splash-loop bug.
+        onSuccess: (email) => setState(() {
+          _showRegister = false;
+          _prefillEmail = email;
+        }),
+      );
+    }
+
     return LoginScreen(
-        onNavigateToRegister: () => setState(() => _showRegister = true),
-        onLogin: _handleLogin);
-  }
-
-  Future<void> _handleLogin(String email, String password) async {
-    try {
-      debugPrint('🔐 Attempting login for: $email');
-      await Supabase.instance.client.auth
-          .signInWithPassword(email: email, password: password);
-      debugPrint('✅ Login successful');
-    } catch (e) {
-      debugPrint('❌ Login error: $e');
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Login failed: $e'),
-            backgroundColor: AppColors.error));
-    }
-  }
-
-  Future<void> _handleRegister(String name, String email, String password,
-      String role, String? phone) async {
-    OverlayEntry? loadingOverlay;
-    loadingOverlay = OverlayEntry(
-      builder: (_) =>
-          const _LoadingOverlay(message: 'Creating your account...'),
+      onNavigateToRegister: () => setState(() {
+        _showRegister = true;
+        _prefillEmail = null;
+      }),
+      initialEmail: _prefillEmail,
+      onLogin: (email, password) async {
+        debugPrint('🔐 Attempting login for: $email');
+        await Supabase.instance.client.auth
+            .signInWithPassword(email: email, password: password);
+        debugPrint('✅ Login successful');
+        // AppNavigator.onAuthStateChange fires → _isLoggedIn = true → MainApp.
+      },
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) Overlay.of(context).insert(loadingOverlay!);
-    });
-
-    void dismissOverlay() {
-      try {
-        loadingOverlay?.remove();
-      } catch (_) {}
-      loadingOverlay = null;
-    }
-
-    try {
-      debugPrint('👤 Starting registration for: $email (role: $role)');
-      final res = await Supabase.instance.client.auth
-          .signUp(email: email, password: password);
-      debugPrint('✅ Auth account created: ${res.user?.id}');
-
-      if (res.user != null) {
-        await Supabase.instance.client.from('users').insert({
-          'id': res.user!.id,
-          'name': name,
-          'email': email,
-          'role': role,
-          'phone': phone,
-          'created_at': DateTime.now().toIso8601String(),
-        });
-
-        if (role == 'professional') {
-          try {
-            await Supabase.instance.client.from('professionals').insert({
-              'user_id': res.user!.id,
-              'skills': [],
-              'verified': false,
-              'rating': 0.0,
-              'review_count': 0,
-              'available': true,
-              'years_experience': 0,
-            });
-          } catch (proErr) {
-            debugPrint('⚠️ Professional record warning: $proErr');
-          }
-        }
-
-        dismissOverlay();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                'Registration successful! Check your email to verify your account.'),
-            backgroundColor: AppColors.primary,
-            duration: Duration(seconds: 3),
-          ));
-          Future.delayed(const Duration(seconds: 2), () {
-            if (mounted) setState(() => _showRegister = false);
-          });
-        }
-      } else {
-        dismissOverlay();
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Registration failed: Unable to create account'),
-              backgroundColor: AppColors.error));
-      }
-    } catch (e) {
-      debugPrint('❌ Registration error: $e');
-      dismissOverlay();
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Registration failed: $e'),
-            backgroundColor: AppColors.error,
-            duration: const Duration(seconds: 4)));
-    }
   }
 }
 
@@ -445,6 +396,38 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  Future<void> _refreshCustomerDashboard() async {
+    if (_user == null) return;
+    try {
+      final pros = await _ds.getProfessionals();
+      final bookings = await _ds.getCustomerBookings(_user!.id);
+      if (mounted)
+        setState(() {
+          _professionals = pros;
+          _bookings = bookings;
+        });
+    } catch (e) {
+      debugPrint('Pull-to-refresh (customer) error: $e');
+    }
+  }
+
+  Future<void> _refreshProfessionalDashboard() async {
+    if (_user == null || _pro == null) return;
+    try {
+      final bookings = await _ds.getProfessionalBookings(_pro!.id);
+      final reviews = await _ds.getProfessionalReviews(_pro!.id);
+      final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
+      if (mounted)
+        setState(() {
+          _bookings = bookings;
+          _reviews = reviews;
+          if (updatedPro != null) _pro = updatedPro;
+        });
+    } catch (e) {
+      debugPrint('Pull-to-refresh (professional) error: $e');
+    }
+  }
+
   void _notify(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -512,16 +495,8 @@ class _MainAppState extends State<MainApp> {
   }
 
   Widget _buildContent() {
-    if (_user!.role == 'admin') {
-      return _adminFlow();
-    }
-
-    // ── PROFESSIONAL ──────────────────────────────────────────
-    if (_user!.isProfessional) {
-      return _professionalFlow();
-    }
-
-    // ── CUSTOMER ──────────────────────────────────────────
+    if (_user!.role == 'admin') return _adminFlow();
+    if (_user!.isProfessional) return _professionalFlow();
     return _customerFlow();
   }
 
@@ -530,7 +505,6 @@ class _MainAppState extends State<MainApp> {
   Widget _adminFlow() {
     final u = _user!.toEntity();
 
-    // ── Approvals tab
     if (_navIndex == 1) {
       return ApprovalsScreen(
         applications: _applications,
@@ -561,7 +535,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Analytics tab
     if (_navIndex == 2) {
       return SuperAdminAnalytics(
         onBack: () => setState(() => _navIndex = 0),
@@ -570,7 +543,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Profile / Settings tab
     if (_navIndex == 3) {
       return AdminProfileScreen(
         adminName: u.name,
@@ -583,9 +555,7 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Notifications tab (bell icon → navIndex 4)
     if (_navIndex == 4) {
-      // Guard: user id must be a valid UUID before opening notifications
       if (_user == null || _user!.id.isEmpty) {
         return Scaffold(
           backgroundColor: AppColors.backgroundLight,
@@ -596,7 +566,6 @@ class _MainAppState extends State<MainApp> {
           ),
         );
       }
-
       return AdminNotificationsScreen(
         userId: _user!.id,
         notificationDataSource: _notifDs,
@@ -627,7 +596,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Dashboard (navIndex 0, default)
     final pending = _applications.where((a) => a.status == 'pending').length;
     return AdminDashboardScreen(
       adminUserId: _user!.id,
@@ -653,11 +621,10 @@ class _MainAppState extends State<MainApp> {
     final proEntity = _pro?.toEntity();
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
 
-    // ── Booking Requests tab (navIndex 1)
     if (_navIndex == 1) {
       return BookingRequestsScreen(
         bookings: bookingEntities,
-        isAvailable: _pro?.available ?? true, // <-- ADD THIS
+        isAvailable: _pro?.available ?? true,
         currentNavIndex: _navIndex,
         onNavTap: (i) async {
           setState(() {
@@ -688,12 +655,9 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Earnings tab (navIndex 2)
-    // ── Earnings tab (navIndex 2)
     if (_navIndex == 2) {
       return EarningsHandymanScreen(
         professionalId: _pro?.id,
-        // ▼ NEW: pass real data so the screen can compute live stats
         bookings: bookingEntities,
         reviews: _reviews.map((r) => r.toEntity()).toList(),
         currentNavIndex: _navIndex,
@@ -710,7 +674,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Profile tab
     if (_navIndex == 3) {
       return ProfessionalProfileScreen(
         user: u,
@@ -768,6 +731,13 @@ class _MainAppState extends State<MainApp> {
             }
           }
         },
+        onPrivacyPolicy: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PrivacyPolicyScreen(
+              onBack: () => Navigator.of(context).pop(),
+            ),
+          ),
+        ),
         onLogout: () async => Supabase.instance.client.auth.signOut(),
       );
     }
@@ -785,7 +755,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Pro Booking Detail screen
     if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
       return ProBookingDetailScreen(
         booking: _selectedProBooking!,
@@ -829,7 +798,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Booking History screen
     if (_screen == 'booking_history') {
       return BookingHistoryScreen(
         bookings: bookingEntities,
@@ -873,7 +841,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Apply screen
     if (_screen == 'apply') {
       final proId = _pro?.id;
       if (proId == null) {
@@ -946,7 +913,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Verification status screen
     if (_screen == 'verification_status') {
       return VerificationStatusScreen(
         applications: _applications,
@@ -955,7 +921,6 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── Professional Dashboard (navIndex 0, default)
     return ProfessionalDashboardScreen(
       user: u,
       professional: proEntity,
@@ -995,7 +960,6 @@ class _MainAppState extends State<MainApp> {
             professionalId: _pro!.id,
             available: isAvailable,
           );
-          // Refresh local pro model so UI stays in sync
           final updated = await _ds.getProfessionalByUserId(_user!.id);
           if (mounted && updated != null) setState(() => _pro = updated);
           _notify(isAvailable

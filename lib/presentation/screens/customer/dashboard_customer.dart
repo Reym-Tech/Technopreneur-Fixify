@@ -1,4 +1,10 @@
 // lib/presentation/screens/customer/dashboard_customer.dart
+//
+// Changes from previous version:
+//   1. Added `onRefresh` callback prop (VoidCallback? → async-wrapped internally).
+//   2. Wrapped CustomScrollView in a RefreshIndicator so pull-to-refresh works
+//      with sliver-based layouts.
+//   3. _fetchUnreadCount is also called on every pull-to-refresh.
 
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
@@ -29,6 +35,10 @@ class CustomerDashboardScreen extends StatefulWidget {
   final int currentNavIndex;
   final VoidCallback? onNotificationsViewed;
 
+  /// Called when the user pulls to refresh. Should re-fetch professionals,
+  /// bookings, etc. in the parent (_MainAppState) and call setState there.
+  final Future<void> Function()? onRefresh;
+
   const CustomerDashboardScreen({
     super.key,
     this.user,
@@ -45,6 +55,7 @@ class CustomerDashboardScreen extends StatefulWidget {
     this.onNotificationTap,
     this.onProfileTap,
     this.onNotificationsViewed,
+    this.onRefresh,
   });
 
   @override
@@ -362,14 +373,16 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     } catch (_) {}
   }
 
+  /// Triggered by the RefreshIndicator. Calls the parent refresh then also
+  /// re-fetches the unread notification count.
+  Future<void> _handleRefresh() async {
+    await widget.onRefresh?.call();
+    await _fetchUnreadCount();
+  }
+
   // ── Top Professionals helpers ─────────────────────────────────────────
 
-  /// All verified professionals sorted by (rating * reviewCount) descending.
-  /// Tiebreak: higher raw rating wins.
   List<ProfessionalEntity> get _verifiedSorted {
-    // Only show pros that are BOTH verified AND currently online (available).
-    // getProfessionals() already filters available=true from Supabase, but
-    // this guard ensures the local list stays consistent if state is stale.
     final list =
         widget.professionals.where((p) => p.verified && p.available).toList();
     list.sort((a, b) {
@@ -381,10 +394,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     return list;
   }
 
-  /// Only the top 3 for the dashboard preview.
   List<ProfessionalEntity> get _topThree => _verifiedSorted.take(3).toList();
-
-  // ─────────────────────────────────────────────────────────────────────────
 
   Set<String> get _availableCategories {
     final cats = <String>{};
@@ -436,7 +446,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     }
   }
 
-  /// Opens the full paginated professionals list.
   void _openAllProfessionals() {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -502,69 +511,73 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
-      body: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(child: _buildHeader()),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-              child: _buildRequestCTA(),
-            ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
-          ),
-          SliverToBoxAdapter(
-            child: _buildServiceOffers().animate().fadeIn(delay: 220.ms),
-          ),
-          if (widget.recentBookings.isNotEmpty) ...[
+      // ── Pull-to-refresh wraps the entire CustomScrollView ──────────────
+      body: RefreshIndicator(
+        onRefresh: _handleRefresh,
+        color: AppColors.primary,
+        backgroundColor: Colors.white,
+        displacement: 60,
+        child: CustomScrollView(
+          // physics must allow overscroll for RefreshIndicator to trigger
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeader()),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                child: SectionHeader(
-                  title: 'Recent Bookings',
-                  actionLabel: 'See All',
-                  onAction: widget.onViewBookings,
-                ),
-              ).animate().fadeIn(delay: 280.ms),
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                child: _buildRequestCTA(),
+              ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
             ),
             SliverToBoxAdapter(
-              child: _buildRecentBookings().animate().fadeIn(delay: 320.ms),
+              child: _buildServiceOffers().animate().fadeIn(delay: 220.ms),
             ),
-          ],
-
-          // ── Top Professionals header ─────────────────────────────────
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-              child: SectionHeader(
-                title: 'Top Professionals',
-                // Show "See All" only when there are verified pros
-                actionLabel: verifiedCount > 0 ? 'See All' : null,
-                onAction: verifiedCount > 0 ? _openAllProfessionals : null,
+            if (widget.recentBookings.isNotEmpty) ...[
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                  child: SectionHeader(
+                    title: 'Recent Bookings',
+                    actionLabel: 'See All',
+                    onAction: widget.onViewBookings,
+                  ),
+                ).animate().fadeIn(delay: 280.ms),
               ),
-            ).animate().fadeIn(delay: 360.ms),
-          ),
-
-          // ── Top 3 verified pros (or empty state) ────────────────────
-          topThree.isEmpty
-              ? SliverToBoxAdapter(child: _buildEmptyPros())
-              : SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, i) {
-                        final pro = topThree[i];
-                        return ProfessionalCard(
-                          professional: pro,
-                          onTap: () => widget.onProfessionalTap?.call(pro),
-                        )
-                            .animate()
-                            .fadeIn(delay: (400 + i * 70).ms)
-                            .slideX(begin: 0.04, end: 0);
-                      },
-                      childCount: topThree.length,
+              SliverToBoxAdapter(
+                child: _buildRecentBookings().animate().fadeIn(delay: 320.ms),
+              ),
+            ],
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                child: SectionHeader(
+                  title: 'Top Professionals',
+                  actionLabel: verifiedCount > 0 ? 'See All' : null,
+                  onAction: verifiedCount > 0 ? _openAllProfessionals : null,
+                ),
+              ).animate().fadeIn(delay: 360.ms),
+            ),
+            topThree.isEmpty
+                ? SliverToBoxAdapter(child: _buildEmptyPros())
+                : SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, i) {
+                          final pro = topThree[i];
+                          return ProfessionalCard(
+                            professional: pro,
+                            onTap: () => widget.onProfessionalTap?.call(pro),
+                          )
+                              .animate()
+                              .fadeIn(delay: (400 + i * 70).ms)
+                              .slideX(begin: 0.04, end: 0);
+                        },
+                        childCount: topThree.length,
+                      ),
                     ),
                   ),
-                ),
-        ],
+          ],
+        ),
       ),
       bottomNavigationBar: _buildBottomNav(),
     );
@@ -580,7 +593,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         : hour < 17
             ? 'Good Afternoon'
             : 'Good Evening';
-    // Show verified-only count in the header badge
     final proCount = _verifiedSorted.length;
 
     return Container(
@@ -605,7 +617,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Logo
                       Row(
                         children: [
                           Container(
@@ -644,7 +655,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                           ),
                         ],
                       ),
-                      // Action buttons
                       Row(
                         children: [
                           IconButton(

@@ -1,24 +1,10 @@
 // lib/presentation/screens/professional/dashboard_professional.dart
 //
-// ProfessionalDashboardScreen — MVP dashboard for Handyman (Professional) role.
-//
-// Shows:
-//   • Header with name, verified badge, availability toggle, dynamic bell dot
-//   • Stats row: earnings, total jobs, completion rate
-//   • Quick-action menu cards (Booking Requests, Booking History, Earnings Summary)
-//   • Ratings Overview card (avg rating, star breakdown bars, total jobs, completion %)
-//
-// Key props:
-//   user              → UserEntity?
-//   professional      → ProfessionalEntity?
-//   bookings          → List<BookingEntity>
-//   onUpdateStatus    → Function(BookingEntity, BookingStatus)?
-//   onViewRequests    → VoidCallback?
-//   onViewHistory     → VoidCallback?
-//   onViewEarnings    → VoidCallback?
-//   onToggleAvailability → Function(bool)?
-//   onNavTap          → Function(int)?
-//   currentNavIndex   → int
+// Changes from previous version:
+//   1. Added `onRefresh` callback prop (Future<void> Function()?).
+//   2. Wrapped CustomScrollView in a RefreshIndicator so pull-to-refresh works
+//      with sliver-based layouts.
+//   3. _fetchUnreadCount is also called on every pull-to-refresh cycle.
 
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
@@ -46,6 +32,10 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   final Function(int)? onNavTap;
   final int currentNavIndex;
 
+  /// Called when the user pulls to refresh. Should re-fetch bookings, reviews,
+  /// and professional record in the parent (_MainAppState) and call setState.
+  final Future<void> Function()? onRefresh;
+
   const ProfessionalDashboardScreen({
     super.key,
     this.user,
@@ -63,6 +53,7 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.onToggleAvailability,
     this.onNavTap,
     this.currentNavIndex = 0,
+    this.onRefresh,
   });
 
   @override
@@ -95,6 +86,13 @@ class _ProfessionalDashboardScreenState
     } catch (e) {
       debugPrint('[ProDashboard] Could not fetch unread count: $e');
     }
+  }
+
+  /// Triggered by the RefreshIndicator. Calls parent refresh then re-fetches
+  /// the unread notification count so the bell badge stays in sync.
+  Future<void> _handleRefresh() async {
+    await widget.onRefresh?.call();
+    await _fetchUnreadCount();
   }
 
   // ── Derived stats ─────────────────────────────────────────
@@ -135,42 +133,52 @@ class _ProfessionalDashboardScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
-      body: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(child: _buildHeader()),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-              child: _buildStatsRow(),
-            ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
-          ),
-          if (!(widget.professional?.verified ?? false))
+      // ── Pull-to-refresh wraps the entire CustomScrollView ──────────────
+      body: RefreshIndicator(
+        onRefresh: _handleRefresh,
+        color: AppColors.primary,
+        backgroundColor: Colors.white,
+        displacement: 60,
+        child: CustomScrollView(
+          // AlwaysScrollableScrollPhysics ensures RefreshIndicator fires even
+          // when content is shorter than the viewport.
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeader()),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                child: _buildVerificationBanner(),
-              ).animate().fadeIn(delay: 180.ms),
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                child: _buildStatsRow(),
+              ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
             ),
-          if (_pendingCount > 0)
+            if (!(widget.professional?.verified ?? false))
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                  child: _buildVerificationBanner(),
+                ).animate().fadeIn(delay: 180.ms),
+              ),
+            if (_pendingCount > 0)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                  child: _buildPendingBanner(),
+                ).animate().fadeIn(delay: 200.ms),
+              ),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                child: _buildPendingBanner(),
-              ).animate().fadeIn(delay: 200.ms),
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                child: _buildMenuCards(),
+              ).animate().fadeIn(delay: 250.ms),
             ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-              child: _buildMenuCards(),
-            ).animate().fadeIn(delay: 250.ms),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-              child: _buildRatingsCard(),
-            ).animate().fadeIn(delay: 320.ms),
-          ),
-        ],
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+                child: _buildRatingsCard(),
+              ).animate().fadeIn(delay: 320.ms),
+            ),
+          ],
+        ),
       ),
       bottomNavigationBar: _buildBottomNav(),
     );
@@ -188,7 +196,6 @@ class _ProfessionalDashboardScreenState
         .join();
     final verified = widget.professional?.verified ?? false;
 
-    // Avatar: network URL takes priority, falls back to initials
     final avatarUrl = widget.user?.avatarUrl;
     final ImageProvider? avatarImage =
         (avatarUrl != null && avatarUrl.isNotEmpty)
@@ -284,7 +291,6 @@ class _ProfessionalDashboardScreenState
                               ),
                             ),
                           );
-                          // Re-fetch count after returning from notifications
                           _fetchUnreadCount();
                         },
                         icon: Stack(

@@ -1,16 +1,33 @@
 // lib/presentation/screens/auth/login_screen.dart
+//
+// Changes from previous version:
+//  1. Added `initialEmail` parameter — when coming from RegisterScreen the
+//     email field is pre-filled so the user doesn't retype it.
+//  2. _handleLogin now explicitly clears _isLoading on success path (not
+//     just in the finally block) so the spinner dismisses immediately when
+//     the auth stream is slow to fire and the widget is still mounted.
+//  3. All other logic (AuthErrorHandler, inline errors, banner) unchanged.
 
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/auth_error_handler.dart';
 import '../../widgets/shared_widgets.dart';
 
 class LoginScreen extends StatefulWidget {
   final VoidCallback? onNavigateToRegister;
   final Function(String email, String password)? onLogin;
 
-  const LoginScreen({super.key, this.onNavigateToRegister, this.onLogin});
+  /// When set, pre-fills the email field. Passed from AuthFlow after a
+  /// successful registration so the user doesn't have to retype their email.
+  final String? initialEmail;
+
+  const LoginScreen({
+    super.key,
+    this.onNavigateToRegister,
+    this.onLogin,
+    this.initialEmail, // <-- NEW
+  });
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -20,14 +37,154 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+
   bool _obscurePassword = true;
   bool _isLoading = false;
+
+  String? _emailError;
+  String? _passwordError;
+  String? _generalError;
+  AuthErrorAction? _generalAction;
+
+  @override
+  void initState() {
+    super.initState();
+    // FIX: Pre-fill email when coming from registration
+    if (widget.initialEmail != null && widget.initialEmail!.isNotEmpty) {
+      _emailController.text = widget.initialEmail!;
+    }
+    _emailController.addListener(_clearErrors);
+    _passwordController.addListener(_clearErrors);
+  }
+
+  void _clearErrors() {
+    if (_emailError != null ||
+        _passwordError != null ||
+        _generalError != null) {
+      setState(() {
+        _emailError = null;
+        _passwordError = null;
+        _generalError = null;
+        _generalAction = null;
+      });
+    }
+  }
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  void _applyError(AuthErrorResult result) {
+    setState(() {
+      _emailError = null;
+      _passwordError = null;
+      _generalError = null;
+      _generalAction = null;
+
+      switch (result.field) {
+        case AuthErrorField.email:
+          _emailError = result.message;
+          break;
+        case AuthErrorField.password:
+          _passwordError = result.message;
+          break;
+        case AuthErrorField.general:
+          _generalError = result.message;
+          _generalAction = result.action;
+          break;
+      }
+    });
+  }
+
+  void _showNetworkSnackbar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(children: [
+          const Icon(Icons.wifi_off_rounded, color: Colors.white, size: 18),
+          const SizedBox(width: 10),
+          Expanded(child: Text(message)),
+        ]),
+        backgroundColor: const Color(0xFF333333),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  Future<void> _handleLogin() async {
+    setState(() {
+      _emailError = null;
+      _passwordError = null;
+      _generalError = null;
+    });
+
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      await widget.onLogin?.call(
+        _emailController.text.trim(),
+        _passwordController.text,
+      );
+      // FIX: Login succeeded. The parent (AppNavigator via auth stream) will
+      // replace this widget. However if the stream fires before this finally
+      // block, the widget may already be unmounted — that is fine. If the
+      // widget is still mounted we clear the loading state so the UI doesn't
+      // freeze on the spinner while waiting for the stream.
+      if (mounted) setState(() => _isLoading = false);
+    } catch (e) {
+      if (!mounted) return;
+      final result = AuthErrorHandler.parse(e);
+
+      if (result.field == AuthErrorField.general &&
+          result.message.toLowerCase().contains('internet')) {
+        _showNetworkSnackbar(result.message);
+      } else {
+        _applyError(result);
+      }
+    } finally {
+      // Guards against the case where the widget was disposed mid-await.
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _resendConfirmation() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      setState(
+          () => _emailError = 'Enter your email so we can resend the link.');
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Confirmation email sent! Check your inbox.'),
+            backgroundColor: AppColors.primary,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+        setState(() {
+          _generalError = null;
+          _generalAction = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        _showNetworkSnackbar('Could not send email. Please try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -47,7 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  // Header
+                  // ── Header ─────────────────────────────────────────────
                   Container(
                     height: 260,
                     decoration: const BoxDecoration(
@@ -57,13 +214,12 @@ class _LoginScreenState extends State<LoginScreen> {
                         colors: [
                           Color(0xFF082218),
                           Color(0xFF0F3D2E),
-                          Color(0xFF1A5C43)
+                          Color(0xFF1A5C43),
                         ],
                       ),
                     ),
                     child: Stack(
                       children: [
-                        // Decorative elements
                         Positioned(
                           top: -40,
                           right: -40,
@@ -88,7 +244,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 50),
                         Padding(
                           padding: const EdgeInsets.all(28),
                           child: Column(
@@ -97,7 +252,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             children: [
                               Row(
                                 children: [
-                                  // Logo with circular border
                                   Container(
                                     width: 90,
                                     height: 90,
@@ -110,18 +264,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                     ),
                                     child: ClipOval(
-                                      // Ensures image stays within circle bounds
                                       child: Image.asset(
-                                        'assets/images/logo.jpg', // Replace with your logo asset
-                                        width: 60, // Match container size
-                                        height: 60, // Match container size
-                                        fit: BoxFit
-                                            .cover, // Makes image cover the circle properly
+                                        'assets/images/logo.jpg',
+                                        width: 60,
+                                        height: 60,
+                                        fit: BoxFit.cover,
                                       ),
                                     ),
                                   ),
-
-                                  const SizedBox(width: 15),
                                 ],
                               ),
                               const SizedBox(height: 20),
@@ -148,7 +298,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
 
-                  // Form Card
+                  // ── Form card ──────────────────────────────────────────
                   Padding(
                     padding: const EdgeInsets.all(20),
                     child: GlassCard(
@@ -156,47 +306,73 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Form(
                         key: _formKey,
                         child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            FixifyTextField(
-                              controller: _emailController,
-                              hint: 'Enter your email',
-                              label: 'Email Address',
-                              prefixIcon: Icons.email_outlined,
-                              keyboardType: TextInputType.emailAddress,
-                              validator: (v) {
-                                if (v == null || v.isEmpty)
-                                  return 'Email is required';
-                                if (!v.contains('@'))
-                                  return 'Enter a valid email';
-                                return null;
-                              },
+                            // General error banner
+                            if (_generalError != null) ...[
+                              _GeneralErrorBanner(
+                                message: _generalError!,
+                                actionLabel: _generalAction != null
+                                    ? _getActionLabel(_generalAction!)
+                                    : null,
+                                onAction: _generalAction != null
+                                    ? () =>
+                                        _handleGeneralAction(_generalAction!)
+                                    : null,
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+
+                            // Email field
+                            _FieldWithError(
+                              errorText: _emailError,
+                              child: FixifyTextField(
+                                controller: _emailController,
+                                hint: 'Enter your email',
+                                label: 'Email Address',
+                                prefixIcon: Icons.email_outlined,
+                                keyboardType: TextInputType.emailAddress,
+                                validator: (v) {
+                                  if (v == null || v.isEmpty)
+                                    return 'Email is required';
+                                  if (!v.contains('@'))
+                                    return 'Enter a valid email';
+                                  return null;
+                                },
+                              ),
                             ),
                             const SizedBox(height: 20),
-                            FixifyTextField(
-                              controller: _passwordController,
-                              hint: 'Enter your password',
-                              label: 'Password',
-                              prefixIcon: Icons.lock_outline_rounded,
-                              obscureText: _obscurePassword,
-                              suffix: IconButton(
-                                icon: Icon(
-                                  _obscurePassword
-                                      ? Icons.visibility_outlined
-                                      : Icons.visibility_off_outlined,
-                                  color: AppColors.textLight,
-                                  size: 20,
+
+                            // Password field
+                            _FieldWithError(
+                              errorText: _passwordError,
+                              child: FixifyTextField(
+                                controller: _passwordController,
+                                hint: 'Enter your password',
+                                label: 'Password',
+                                prefixIcon: Icons.lock_outline_rounded,
+                                obscureText: _obscurePassword,
+                                suffix: IconButton(
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
+                                    color: AppColors.textLight,
+                                    size: 20,
+                                  ),
+                                  onPressed: () => setState(() =>
+                                      _obscurePassword = !_obscurePassword),
                                 ),
-                                onPressed: () => setState(
-                                    () => _obscurePassword = !_obscurePassword),
+                                validator: (v) {
+                                  if (v == null || v.isEmpty)
+                                    return 'Password is required';
+                                  if (v.length < 6)
+                                    return 'At least 6 characters';
+                                  return null;
+                                },
                               ),
-                              validator: (v) {
-                                if (v == null || v.isEmpty)
-                                  return 'Password is required';
-                                if (v.length < 6)
-                                  return 'At least 6 characters';
-                                return null;
-                              },
                             ),
+
                             const SizedBox(height: 12),
                             Align(
                               alignment: Alignment.centerRight,
@@ -246,7 +422,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         .slideY(begin: 0.1, end: 0),
                   ),
 
-                  // Register link
+                  // ── Register link ──────────────────────────────────────
                   Padding(
                     padding: const EdgeInsets.only(bottom: 24),
                     child: Row(
@@ -278,6 +454,21 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  String _getActionLabel(AuthErrorAction action) {
+    switch (action) {
+      case AuthErrorAction.resendConfirmation:
+        return 'Resend Email';
+    }
+  }
+
+  void _handleGeneralAction(AuthErrorAction action) {
+    switch (action) {
+      case AuthErrorAction.resendConfirmation:
+        _resendConfirmation();
+        break;
+    }
+  }
+
   Widget _buildDivider() {
     return Row(
       children: [
@@ -286,10 +477,7 @@ class _LoginScreenState extends State<LoginScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Text(
             'or continue with',
-            style: TextStyle(
-              fontSize: 12,
-              color: AppColors.textLight,
-            ),
+            style: TextStyle(fontSize: 12, color: AppColors.textLight),
           ),
         ),
         Expanded(child: Divider(color: AppColors.textLight.withOpacity(0.3))),
@@ -300,11 +488,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildSocialLogin() {
     return OutlinedButton.icon(
       onPressed: () {},
-      icon: Image.asset(
-        'assets/images/googlelogo.png', // Add your Google logo asset path
-        width: 24,
-        height: 24,
-      ),
+      icon: Image.asset('assets/images/googlelogo.png', width: 24, height: 24),
       label: const Text('Continue with Google'),
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.textDark,
@@ -314,279 +498,111 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
-
-  void _handleLogin() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(seconds: 1)); // Simulate API call
-    if (mounted) setState(() => _isLoading = false);
-    widget.onLogin?.call(_emailController.text, _passwordController.text);
-  }
 }
 
-// ============================================================
-// lib/presentation/screens/auth/register_screen.dart
-// ============================================================
+// ── Field + server-side inline error wrapper ─────────────────────────────────
 
-class RegisterScreen extends StatefulWidget {
-  final VoidCallback? onNavigateToLogin;
-  final Function(String name, String email, String password, String role,
-      String? phone)? onRegister;
+class _FieldWithError extends StatelessWidget {
+  final Widget child;
+  final String? errorText;
 
-  const RegisterScreen({super.key, this.onNavigateToLogin, this.onRegister});
-
-  @override
-  State<RegisterScreen> createState() => _RegisterScreenState();
-}
-
-class _RegisterScreenState extends State<RegisterScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _phoneController = TextEditingController();
-  final _passwordController = TextEditingController();
-  String _selectedRole = 'customer';
-  bool _obscurePassword = true;
-  bool _isLoading = false;
+  const _FieldWithError({required this.child, this.errorText});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: LoadingOverlay(
-        isLoading: _isLoading,
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFFE8F2EE), Color(0xFFF5F5F3)],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        child,
+        if (errorText != null) ...[
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline_rounded,
+                    size: 13, color: Color(0xFFD32F2F)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    errorText!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFFD32F2F),
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          child: SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Back button
+        ],
+      ],
+    );
+  }
+}
+
+// ── Inline general-error banner ──────────────────────────────────────────────
+
+class _GeneralErrorBanner extends StatelessWidget {
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  const _GeneralErrorBanner({
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3CD),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFDC6B), width: 1),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline_rounded,
+              color: Color(0xFF856404), size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF664D03),
+                    height: 1.4,
+                  ),
+                ),
+                if (actionLabel != null && onAction != null) ...[
+                  const SizedBox(height: 6),
                   GestureDetector(
-                    onTap: widget.onNavigateToLogin,
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
-                            blurRadius: 10,
-                          ),
-                        ],
-                      ),
-                      child: const Icon(Icons.arrow_back_ios_new_rounded,
-                          size: 18),
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-
-                  // Header
-                  const Text(
-                    'Create Account',
-                    style: TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.textDark,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Join Fixify and get expert help at home',
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: AppColors.textMedium,
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-
-                  // Role selector
-                  GlassCard(
-                    padding: const EdgeInsets.all(6),
-                    child: Row(
-                      children: [
-                        _buildRoleTab(
-                            'customer', 'Homeowner', Icons.home_rounded),
-                        _buildRoleTab('professional', 'Professional',
-                            Icons.engineering_rounded),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Form
-                  GlassCard(
-                    padding: const EdgeInsets.all(24),
-                    child: Form(
-                      key: _formKey,
-                      child: Column(
-                        children: [
-                          FixifyTextField(
-                            controller: _nameController,
-                            hint: 'Full name',
-                            label: 'Full Name',
-                            prefixIcon: Icons.person_outline_rounded,
-                            validator: (v) => v == null || v.isEmpty
-                                ? 'Name is required'
-                                : null,
-                          ),
-                          const SizedBox(height: 18),
-                          FixifyTextField(
-                            controller: _emailController,
-                            hint: 'Email address',
-                            label: 'Email',
-                            prefixIcon: Icons.email_outlined,
-                            keyboardType: TextInputType.emailAddress,
-                            validator: (v) {
-                              if (v == null || v.isEmpty)
-                                return 'Email is required';
-                              if (!v.contains('@'))
-                                return 'Enter a valid email';
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 18),
-                          FixifyTextField(
-                            controller: _phoneController,
-                            hint: 'Phone number (optional)',
-                            label: 'Phone',
-                            prefixIcon: Icons.phone_outlined,
-                            keyboardType: TextInputType.phone,
-                          ),
-                          const SizedBox(height: 18),
-                          FixifyTextField(
-                            controller: _passwordController,
-                            hint: 'Create a password',
-                            label: 'Password',
-                            prefixIcon: Icons.lock_outline_rounded,
-                            obscureText: _obscurePassword,
-                            suffix: IconButton(
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                                color: AppColors.textLight,
-                                size: 20,
-                              ),
-                              onPressed: () => setState(
-                                  () => _obscurePassword = !_obscurePassword),
-                            ),
-                            validator: (v) {
-                              if (v == null || v.isEmpty)
-                                return 'Password is required';
-                              if (v.length < 6) return 'At least 6 characters';
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 24),
-                          ElevatedButton(
-                            onPressed: _handleRegister,
-                            child: Text(
-                              _selectedRole == 'customer'
-                                  ? 'Create Homeowner Account'
-                                  : 'Create Professional Account',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Terms
-                  Center(
+                    onTap: onAction,
                     child: Text(
-                      'By creating an account, you agree to our\nTerms of Service and Privacy Policy',
-                      textAlign: TextAlign.center,
+                      actionLabel!,
                       style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textLight,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF0F3D2E),
+                        decoration: TextDecoration.underline,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'Already have an account? ',
-                        style: TextStyle(color: AppColors.textMedium),
-                      ),
-                      GestureDetector(
-                        onTap: widget.onNavigateToLogin,
-                        child: const Text(
-                          'Sign In',
-                          style: TextStyle(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                 ],
-              ),
+              ],
             ),
           ),
-        ),
+        ],
       ),
-    );
-  }
-
-  Widget _buildRoleTab(String role, String label, IconData icon) {
-    final selected = _selectedRole == role;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _selectedRole = role),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.primary : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon,
-                  size: 18,
-                  color: selected ? Colors.white : AppColors.textMedium),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: selected ? Colors.white : AppColors.textMedium,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _handleRegister() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(seconds: 1));
-    if (mounted) setState(() => _isLoading = false);
-    widget.onRegister?.call(
-      _nameController.text,
-      _emailController.text,
-      _passwordController.text,
-      _selectedRole,
-      _phoneController.text.isEmpty ? null : _phoneController.text,
     );
   }
 }

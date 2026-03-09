@@ -2,17 +2,21 @@
 //
 // EarningsHandymanScreen — Real data version.
 //
-// Data flow:
-//   • bookings / reviews are passed from main.dart (already loaded).
-//   • All summary stats (total earnings, this month, last month, today,
-//     completion rate, avg rating) are DERIVED from those lists — no extra
-//     DB call needed.
-//   • Transactions tab is built from completed/pending BookingEntity rows.
-//   • Monthly bar chart is aggregated from booking.scheduledDate + priceEstimate.
-//   • Service breakdown is grouped by booking.serviceType.
-//
-// Tabs: Overview | Transactions
-// (Withdraw tab removed — not yet implemented)
+// FIXES from previous version:
+//  1. _effectivePrice() helper — always uses assessmentPrice (the price the
+//     pro actually agreed on) when available, falling back to priceEstimate.
+//     Previously all stats used raw priceEstimate which is often null or the
+//     customer's initial estimate, not the final agreed amount.
+//  2. All earnings aggregations (_totalEarnings, _thisMonthEarnings, etc.)
+//     now go through _effectivePrice so the numbers match reality.
+//  3. Monthly bar chart and service breakdown also use _effectivePrice.
+//  4. Transaction tiles show the effective price instead of the raw estimate.
+//  5. Empty-state cards now explain WHY there's no data (helps debugging in
+//     dev: e.g. "No completed bookings yet" vs just "No data").
+//  6. Pending amount now counts bookings in accepted/inProgress/pending states
+//     (all jobs that haven't been paid out yet) not just 'pending'.
+//  7. _transactionBookings now also includes 'accepted' and 'inProgress' so
+//     the pro can see active jobs alongside completed ones.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -69,17 +73,33 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     super.dispose();
   }
 
+  // ── KEY FIX: Effective price helper ─────────────────────
+  //
+  // The pro sets an assessment_price after accepting a booking.
+  // This is the real agreed amount — prefer it over the initial estimate.
+  // Falls back to priceEstimate if assessmentPrice is null or zero.
+  double _effectivePrice(BookingEntity b) {
+    final ap = b.assessmentPrice;
+    if (ap != null && ap > 0) return ap;
+    return b.priceEstimate ?? 0.0;
+  }
+
   // ── Derived Stats ────────────────────────────────────────
 
   List<BookingEntity> get _completed => widget.bookings
       .where((b) => b.status == BookingStatus.completed)
       .toList();
 
-  List<BookingEntity> get _pending =>
-      widget.bookings.where((b) => b.status == BookingStatus.pending).toList();
+  /// All bookings that haven't been paid out yet (active pipeline)
+  List<BookingEntity> get _unpaid => widget.bookings
+      .where((b) =>
+          b.status == BookingStatus.pending ||
+          b.status == BookingStatus.accepted ||
+          b.status == BookingStatus.inProgress)
+      .toList();
 
   double get _totalEarnings =>
-      _completed.fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+      _completed.fold(0.0, (s, b) => s + _effectivePrice(b));
 
   double get _thisMonthEarnings {
     final now = DateTime.now();
@@ -87,7 +107,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         .where((b) =>
             b.scheduledDate.year == now.year &&
             b.scheduledDate.month == now.month)
-        .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+        .fold(0.0, (s, b) => s + _effectivePrice(b));
   }
 
   double get _lastMonthEarnings {
@@ -97,7 +117,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         .where((b) =>
             b.scheduledDate.year == lastMonth.year &&
             b.scheduledDate.month == lastMonth.month)
-        .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+        .fold(0.0, (s, b) => s + _effectivePrice(b));
   }
 
   double get _todayEarnings {
@@ -107,11 +127,11 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
             b.scheduledDate.year == now.year &&
             b.scheduledDate.month == now.month &&
             b.scheduledDate.day == now.day)
-        .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+        .fold(0.0, (s, b) => s + _effectivePrice(b));
   }
 
   double get _pendingAmount =>
-      _pending.fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+      _unpaid.fold(0.0, (s, b) => s + _effectivePrice(b));
 
   double get _completionRate {
     final relevant = widget.bookings
@@ -139,20 +159,21 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       final key =
           '${b.scheduledDate.year}-${b.scheduledDate.month.toString().padLeft(2, '0')}';
       final label = _monthLabel(b.scheduledDate.month);
+      final price = _effectivePrice(b);
       final existing = map[key];
       if (existing == null) {
         map[key] = _MonthlyData(
             label: label,
             month: b.scheduledDate.month,
             year: b.scheduledDate.year,
-            amount: b.priceEstimate ?? 0,
+            amount: price,
             jobs: 1);
       } else {
         map[key] = _MonthlyData(
             label: label,
             month: existing.month,
             year: existing.year,
-            amount: existing.amount + (b.priceEstimate ?? 0),
+            amount: existing.amount + price,
             jobs: existing.jobs + 1);
       }
     }
@@ -197,19 +218,17 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     int colorIndex = 0;
     for (final b in _completed) {
       final type = b.serviceType;
+      final price = _effectivePrice(b);
       final existing = map[type];
       final color = existing?.color ?? colors[colorIndex++ % colors.length];
       if (existing == null) {
         map[type] = _ServiceData(
-            serviceType: type,
-            count: 1,
-            amount: b.priceEstimate ?? 0,
-            color: color);
+            serviceType: type, count: 1, amount: price, color: color);
       } else {
         map[type] = _ServiceData(
             serviceType: type,
             count: existing.count + 1,
-            amount: existing.amount + (b.priceEstimate ?? 0),
+            amount: existing.amount + price,
             color: color);
       }
     }
@@ -225,6 +244,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         .where((b) =>
             b.status == BookingStatus.completed ||
             b.status == BookingStatus.pending ||
+            b.status == BookingStatus.accepted ||
             b.status == BookingStatus.inProgress)
         .toList()
       ..sort((a, b) => b.scheduledDate.compareTo(a.scheduledDate));
@@ -253,8 +273,6 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
 
   String _fmt(double amount) => '₱${amount.toStringAsFixed(2)}';
 
-  String _fmtDate(DateTime d) => '${d.month}/${d.day}/${d.year}';
-
   String _fmtDateTime(DateTime d) {
     final h = d.hour > 12 ? d.hour - 12 : (d.hour == 0 ? 12 : d.hour);
     final m = d.minute.toString().padLeft(2, '0');
@@ -277,8 +295,10 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         return Colors.orange;
       case BookingStatus.cancelled:
         return Colors.red;
-      default:
+      case BookingStatus.accepted:
         return Colors.blue;
+      case BookingStatus.inProgress:
+        return const Color(0xFF5856D6);
     }
   }
 
@@ -420,13 +440,14 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
           const SizedBox(height: 20),
           _buildStatsRow(),
           const SizedBox(height: 20),
-          _buildAvailableBalanceCard(),
+          _buildSummaryBalanceCard(),
           const SizedBox(height: 20),
           _buildMonthlyChart(),
           const SizedBox(height: 20),
           _buildServiceBreakdownCard(),
           const SizedBox(height: 20),
           _buildRecentTransactionsCard(),
+          const SizedBox(height: 80),
         ],
       ),
     );
@@ -466,6 +487,12 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   color: Colors.white,
                   fontSize: 36,
                   fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(
+            'From ${_completed.length} completed job${_completed.length == 1 ? '' : 's'}',
+            style:
+                TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+          ),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -520,7 +547,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
               Icons.calendar_month, const Color(0xFF2A7F6E))),
       const SizedBox(width: 12),
       Expanded(
-          child: _statCard('Pending', _fmt(_pendingAmount),
+          child: _statCard('Unpaid', _fmt(_pendingAmount),
               Icons.pending_actions, Colors.orange)),
     ]);
   }
@@ -558,7 +585,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     );
   }
 
-  Widget _buildAvailableBalanceCard() {
+  // Shows a summary of total earned + unpaid pipeline
+  Widget _buildSummaryBalanceCard() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -572,18 +600,37 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         ],
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Total Earnings',
-                style: TextStyle(fontSize: 14, color: Colors.grey[600])),
-            const SizedBox(height: 4),
-            Text(_fmt(_totalEarnings),
-                style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E5F4B))),
-          ]),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Total Earnings',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[600])),
+              const SizedBox(height: 4),
+              Text(_fmt(_totalEarnings),
+                  style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E5F4B))),
+              const SizedBox(height: 6),
+              if (_unpaid.isNotEmpty)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${_unpaid.length} active job${_unpaid.length == 1 ? '' : 's'} • ${_fmt(_pendingAmount)} unpaid',
+                    style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.orange,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+            ]),
+          ),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -603,8 +650,13 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     final months = _monthlyEarnings;
 
     if (months.isEmpty) {
-      return _emptyCard('No monthly data yet',
-          'Completed jobs will appear here.', Icons.bar_chart_rounded);
+      return _emptyCard(
+        'No earnings yet',
+        _completed.isEmpty
+            ? 'Complete your first job to see monthly earnings here.'
+            : 'No data available for this period.',
+        Icons.bar_chart_rounded,
+      );
     }
 
     final recent =
@@ -646,16 +698,19 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      Container(
-                        height: barH,
-                        width: 20,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF2A7F6E), Color(0xFF1E5F4B)],
-                            begin: Alignment.bottomCenter,
-                            end: Alignment.topCenter,
+                      Tooltip(
+                        message: _fmt(m.amount),
+                        child: Container(
+                          height: barH,
+                          width: 20,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF2A7F6E), Color(0xFF1E5F4B)],
+                              begin: Alignment.bottomCenter,
+                              end: Alignment.topCenter,
+                            ),
+                            borderRadius: BorderRadius.circular(6),
                           ),
-                          borderRadius: BorderRadius.circular(6),
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -705,9 +760,10 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     final breakdown = _serviceBreakdown;
     if (breakdown.isEmpty) {
       return _emptyCard(
-          'No service data yet',
-          'Earnings by service type will show here.',
-          Icons.pie_chart_outline_rounded);
+        'No service data yet',
+        'Earnings by service type will appear once you complete jobs.',
+        Icons.pie_chart_outline_rounded,
+      );
     }
 
     final totalAmt = breakdown.fold<double>(0, (s, b) => s + b.amount);
@@ -752,7 +808,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                               fontSize: 13, fontWeight: FontWeight.w500))),
                   Expanded(
                       flex: 1,
-                      child: Text('${s.count} jobs',
+                      child: Text('${s.count} job${s.count == 1 ? '' : 's'}',
                           style: TextStyle(
                               fontSize: 12, color: Colors.grey[600]))),
                   Expanded(
@@ -787,9 +843,10 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     final txns = _transactionBookings.take(3).toList();
     if (txns.isEmpty) {
       return _emptyCard(
-          'No transactions yet',
-          'Your completed bookings will appear here.',
-          Icons.receipt_long_rounded);
+        'No transactions yet',
+        'Your bookings will appear here once you start accepting jobs.',
+        Icons.receipt_long_rounded,
+      );
     }
 
     return Container(
@@ -818,13 +875,14 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                 child: const Text('View All')),
           ]),
           const SizedBox(height: 8),
-          ...txns.map(_buildTxnTile),
+          ...txns.map((b) => _buildTxnTile(b)),
         ],
       ),
     );
   }
 
   Widget _buildTxnTile(BookingEntity b) {
+    final price = _effectivePrice(b);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: BoxDecoration(
@@ -855,7 +913,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
           ]),
         ),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(_fmt(b.priceEstimate ?? 0),
+          Text(_fmt(price),
               style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -888,7 +946,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('${txns.length} Transactions',
+            Text('${txns.length} Transaction${txns.length == 1 ? '' : 's'}',
                 style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
@@ -903,8 +961,12 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       ),
       Expanded(
         child: txns.isEmpty
-            ? _emptyCenterWidget('No transactions found',
-                'Your jobs will appear here once booked.')
+            ? _emptyCenterWidget(
+                'No transactions found',
+                widget.bookings.isEmpty
+                    ? 'You have no bookings yet.'
+                    : 'No jobs match the current filter.',
+              )
             : ListView.builder(
                 padding: const EdgeInsets.all(16),
                 itemCount: txns.length,
@@ -917,6 +979,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                         () => _expandedId = _expandedId == b.id ? null : b.id),
                     statusColor: _statusColor(b.status),
                     statusLabel: _statusLabel(b.status),
+                    effectivePrice: _effectivePrice(b),
                     fmt: _fmt,
                     fmtDateTime: _fmtDateTime,
                     timeAgo: _timeAgo,
@@ -981,7 +1044,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
             children: [
               BookingStatus.completed,
               BookingStatus.pending,
-              BookingStatus.inProgress
+              BookingStatus.accepted,
+              BookingStatus.inProgress,
             ].map((s) {
               return FilterChip(
                 label: Text(_statusLabel(s)),
@@ -1107,7 +1171,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('${m.jobs} jobs completed',
+                                  Text(
+                                      '${m.jobs} job${m.jobs == 1 ? '' : 's'} completed',
                                       style: const TextStyle(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w500)),
@@ -1282,12 +1347,13 @@ class _MonthlyData {
   final int year;
   final double amount;
   final int jobs;
-  const _MonthlyData(
-      {required this.label,
-      required this.month,
-      required this.year,
-      required this.amount,
-      required this.jobs});
+  const _MonthlyData({
+    required this.label,
+    required this.month,
+    required this.year,
+    required this.amount,
+    required this.jobs,
+  });
 }
 
 class _ServiceData {
@@ -1295,11 +1361,12 @@ class _ServiceData {
   final int count;
   final double amount;
   final Color color;
-  const _ServiceData(
-      {required this.serviceType,
-      required this.count,
-      required this.amount,
-      required this.color});
+  const _ServiceData({
+    required this.serviceType,
+    required this.count,
+    required this.amount,
+    required this.color,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1312,6 +1379,8 @@ class _ExpandableTxnCard extends StatelessWidget {
   final VoidCallback onTap;
   final Color statusColor;
   final String statusLabel;
+  // Pre-computed effective price (assessmentPrice ?? priceEstimate)
+  final double effectivePrice;
   final String Function(double) fmt;
   final String Function(DateTime) fmtDateTime;
   final String Function(DateTime) timeAgo;
@@ -1322,6 +1391,7 @@ class _ExpandableTxnCard extends StatelessWidget {
     required this.onTap,
     required this.statusColor,
     required this.statusLabel,
+    required this.effectivePrice,
     required this.fmt,
     required this.fmtDateTime,
     required this.timeAgo,
@@ -1389,7 +1459,7 @@ class _ExpandableTxnCard extends StatelessWidget {
                   ),
                 ),
                 Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Text(fmt(booking.priceEstimate ?? 0),
+                  Text(fmt(effectivePrice),
                       style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -1420,6 +1490,14 @@ class _ExpandableTxnCard extends StatelessWidget {
                       fmtDateTime(booking.scheduledDate)),
                   _detailRow(Icons.location_on_outlined, 'Address',
                       booking.address ?? 'N/A'),
+                  if (booking.assessmentPrice != null &&
+                      booking.assessmentPrice! > 0 &&
+                      booking.priceEstimate != null &&
+                      booking.assessmentPrice != booking.priceEstimate)
+                    _detailRow(
+                        Icons.price_change_outlined,
+                        'Price (assessment)',
+                        '${fmt(booking.assessmentPrice!)} (estimate was ${fmt(booking.priceEstimate!)})'),
                   _detailRow(
                       Icons.receipt_long_outlined, 'Booking ID', booking.id),
                 ]),
