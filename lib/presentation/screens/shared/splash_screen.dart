@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -213,15 +214,15 @@ class _SplashScreenState extends State<SplashScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _buildServiceIcon('assets/images/plumber.png', 'Plumbing',
+                      _buildServiceIcon('assets/icons/plumber-.svg', 'Plumbing',
                           iconSize: 70, containerSize: 100),
                       const SizedBox(width: 20),
                       _buildServiceIcon(
-                          'assets/images/electrician.png', 'Electric',
+                          'assets/icons/electrician-.svg', 'Electric',
                           iconSize: 70, containerSize: 100),
                       const SizedBox(width: 20),
                       _buildServiceIcon(
-                          'assets/images/appliances.png', 'Appliances',
+                          'assets/icons/technician-.svg', 'Appliances',
                           iconSize: 70, containerSize: 100),
                     ],
                   ).animate().fadeIn(delay: 1200.ms, duration: 600.ms),
@@ -281,42 +282,30 @@ class _SplashScreenState extends State<SplashScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Container for the image with corner radius
+              // Use SvgPicture.asset for SVG files
               ClipRRect(
-                borderRadius:
-                    BorderRadius.circular(12), // Corner radius for image
-                child: Image.asset(
+                borderRadius: BorderRadius.circular(12),
+                child: SvgPicture.asset(
                   imagePath,
                   width: iconSize,
                   height: iconSize,
                   fit: BoxFit.cover,
-                  // Remove the color tint to see original image colors
-                  // color: Colors.white.withOpacity(0.9), // <-- REMOVE THIS LINE
-                  errorBuilder: (context, error, stackTrace) {
-                    print(
-                        'Error loading image: $imagePath - $error'); // Debug print
-                    return Container(
-                      width: iconSize,
-                      height: iconSize,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.broken_image_rounded,
-                        color: Colors.white.withOpacity(0.9),
-                        size: iconSize * 0.6,
-                      ),
-                    );
-                  },
+                  // If you need to apply a color filter, use the colorFilter parameter:
+                  // colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                  placeholderBuilder: (context) => Container(
+                    width: iconSize,
+                    height: iconSize,
+                    color: Colors.white.withOpacity(0.2),
+                    child: const Icon(Icons.image, color: Colors.white54),
+                  ),
                 ),
               ),
-              const SizedBox(height: 8), // Increased spacing
+              const SizedBox(height: 8),
               Text(
                 label,
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.9), // Brighter text
-                  fontSize: 11, // Slightly larger font
+                  color: Colors.white.withOpacity(0.9),
+                  fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
               ),
