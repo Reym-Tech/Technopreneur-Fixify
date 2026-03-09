@@ -446,6 +446,23 @@ class SupabaseDataSource {
     }).eq('id', professionalId);
   }
 
+  // ── PROFESSIONAL AVAILABILITY ─────────────────────────────
+
+  /// Persists the handyman's online/offline status to the DB.
+  /// Called from main.dart's onToggleAvailability.
+  /// When offline (available=false):
+  ///   • getProfessionals() already excludes them (hardcoded .eq('available', true))
+  ///   • subscribeToProfessionalBookings will no longer deliver new bookings
+  ///     because customers can't select an unavailable pro in the first place.
+  Future<void> updateProfessionalAvailability({
+    required String professionalId,
+    required bool available,
+  }) async {
+    await _client
+        .from(AppConfig.professionalsTable)
+        .update({'available': available}).eq('id', professionalId);
+  }
+
   // ── USER PROFILE ──────────────────────────────────────────
 
   Future<UserModel> updateUserProfile({

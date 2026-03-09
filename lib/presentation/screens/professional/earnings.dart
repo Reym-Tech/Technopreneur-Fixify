@@ -1,4 +1,18 @@
 // lib/presentation/screens/professional/earnings_handyman.dart
+//
+// EarningsHandymanScreen — Real data version.
+//
+// Data flow:
+//   • bookings / reviews are passed from main.dart (already loaded).
+//   • All summary stats (total earnings, this month, last month, today,
+//     completion rate, avg rating) are DERIVED from those lists — no extra
+//     DB call needed.
+//   • Transactions tab is built from completed/pending BookingEntity rows.
+//   • Monthly bar chart is aggregated from booking.scheduledDate + priceEstimate.
+//   • Service breakdown is grouped by booking.serviceType.
+//
+// Tabs: Overview | Transactions
+// (Withdraw tab removed — not yet implemented)
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -6,159 +20,25 @@ import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 
 // ─────────────────────────────────────────────────────────────
-// Data Models for Database Integration
-// ─────────────────────────────────────────────────────────────
-
-class EarningsSummary {
-  final double totalEarnings;
-  final double thisMonth;
-  final double lastMonth;
-  final double today;
-  final double pending;
-  final double withdrawn;
-  final double available;
-  final double averageRating;
-  final int totalJobs;
-  final double completionRate;
-  final int platformFee; // percentage
-
-  const EarningsSummary({
-    required this.totalEarnings,
-    required this.thisMonth,
-    required this.lastMonth,
-    required this.today,
-    required this.pending,
-    required this.withdrawn,
-    required this.available,
-    required this.averageRating,
-    required this.totalJobs,
-    required this.completionRate,
-    required this.platformFee,
-  });
-}
-
-class MonthlyEarning {
-  final String month;
-  final double amount;
-  final int jobs;
-  final DateTime date; // For sorting
-
-  const MonthlyEarning({
-    required this.month,
-    required this.amount,
-    required this.jobs,
-    required this.date,
-  });
-}
-
-class Transaction {
-  final String id;
-  final String customerName;
-  final String serviceType;
-  final DateTime date;
-  final double amount;
-  final TransactionStatus status;
-  final PaymentMethod paymentMethod;
-  final String? bookingId;
-  final String? professionalId;
-  final String? customerId;
-
-  const Transaction({
-    required this.id,
-    required this.customerName,
-    required this.serviceType,
-    required this.date,
-    required this.amount,
-    required this.status,
-    required this.paymentMethod,
-    this.bookingId,
-    this.professionalId,
-    this.customerId,
-  });
-}
-
-enum TransactionStatus {
-  completed,
-  pending,
-  failed,
-  refunded,
-}
-
-enum PaymentMethod {
-  cash,
-  gcash,
-  creditCard,
-  paymaya,
-  bankTransfer,
-}
-
-class Withdrawal {
-  final String id;
-  final DateTime date;
-  final double amount;
-  final WithdrawalMethod method;
-  final String accountDetails;
-  final WithdrawalStatus status;
-  final String? reference;
-
-  const Withdrawal({
-    required this.id,
-    required this.date,
-    required this.amount,
-    required this.method,
-    required this.accountDetails,
-    required this.status,
-    this.reference,
-  });
-}
-
-enum WithdrawalMethod {
-  bankTransfer,
-  gcash,
-  paymaya,
-}
-
-enum WithdrawalStatus {
-  processing,
-  completed,
-  failed,
-}
-
-class ServiceBreakdown {
-  final String serviceType;
-  final int count;
-  final double amount;
-  final Color color;
-
-  const ServiceBreakdown({
-    required this.serviceType,
-    required this.count,
-    required this.amount,
-    required this.color,
-  });
-}
-
-// ─────────────────────────────────────────────────────────────
-// Screen with Database-Ready Structure
+// Screen
 // ─────────────────────────────────────────────────────────────
 
 class EarningsHandymanScreen extends StatefulWidget {
   final String? professionalId;
+  final List<BookingEntity> bookings;
+  final List<ReviewEntity> reviews;
   final VoidCallback? onBack;
   final Function(DateTimeRange)? onDateRangeSelected;
-  final Future<void> Function(double amount, WithdrawalMethod method)?
-      onWithdraw;
-  final Future<void> Function(Map<String, dynamic> method)? onAddPaymentMethod;
   final Function(int)? onNavTap;
   final int currentNavIndex;
 
   const EarningsHandymanScreen({
     super.key,
     this.professionalId,
+    this.bookings = const [],
+    this.reviews = const [],
     this.onBack,
     this.onDateRangeSelected,
-    this.onWithdraw,
-    this.onAddPaymentMethod,
     this.onNavTap,
     this.currentNavIndex = 2,
   });
@@ -171,28 +51,16 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // Loading states
-  bool _isLoading = true;
-  bool _isRefreshing = false;
-
-  // Data from database
-  EarningsSummary? _earningsSummary;
-  List<MonthlyEarning> _monthlyEarnings = [];
-  List<Transaction> _transactions = [];
-  List<Withdrawal> _withdrawals = [];
-  List<ServiceBreakdown> _serviceBreakdown = [];
-
-  // Filters
+  // Filter state
   DateTimeRange? _selectedDateRange;
-  TransactionStatus? _selectedTransactionStatus;
+  BookingStatus? _selectedStatusFilter;
   String? _searchQuery;
-  String? _expandedId; // For expandable transactions
+  String? _expandedId;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _loadData();
+    _tabController = TabController(length: 2, vsync: this);
   }
 
   @override
@@ -201,215 +69,197 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     super.dispose();
   }
 
-  // ── Data Loading Methods (to be implemented with actual database) ──
+  // ── Derived Stats ────────────────────────────────────────
 
-  Future<void> _loadData() async {
-    setState(() => _isLoading = true);
-    try {
-      // TODO: Replace with actual database calls
-      await Future.delayed(
-          const Duration(milliseconds: 800)); // Simulate loading
+  List<BookingEntity> get _completed => widget.bookings
+      .where((b) => b.status == BookingStatus.completed)
+      .toList();
 
-      // Load data from database
-      await _loadEarningsSummary();
-      await _loadMonthlyEarnings();
-      await _loadTransactions();
-      await _loadWithdrawals();
-      await _loadServiceBreakdown();
-    } catch (e) {
-      _showErrorSnackBar('Failed to load earnings data: $e');
-    } finally {
-      setState(() => _isLoading = false);
+  List<BookingEntity> get _pending =>
+      widget.bookings.where((b) => b.status == BookingStatus.pending).toList();
+
+  double get _totalEarnings =>
+      _completed.fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+
+  double get _thisMonthEarnings {
+    final now = DateTime.now();
+    return _completed
+        .where((b) =>
+            b.scheduledDate.year == now.year &&
+            b.scheduledDate.month == now.month)
+        .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+  }
+
+  double get _lastMonthEarnings {
+    final now = DateTime.now();
+    final lastMonth = DateTime(now.year, now.month - 1);
+    return _completed
+        .where((b) =>
+            b.scheduledDate.year == lastMonth.year &&
+            b.scheduledDate.month == lastMonth.month)
+        .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+  }
+
+  double get _todayEarnings {
+    final now = DateTime.now();
+    return _completed
+        .where((b) =>
+            b.scheduledDate.year == now.year &&
+            b.scheduledDate.month == now.month &&
+            b.scheduledDate.day == now.day)
+        .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+  }
+
+  double get _pendingAmount =>
+      _pending.fold(0.0, (s, b) => s + (b.priceEstimate ?? 0));
+
+  double get _completionRate {
+    final relevant = widget.bookings
+        .where((b) =>
+            b.status == BookingStatus.completed ||
+            b.status == BookingStatus.cancelled)
+        .length;
+    if (relevant == 0) return 0;
+    return (_completed.length / relevant) * 100;
+  }
+
+  double get _avgRating {
+    if (widget.reviews.isNotEmpty) {
+      return widget.reviews.fold<int>(0, (s, r) => s + r.rating) /
+          widget.reviews.length;
     }
+    return 0.0;
   }
 
-  Future<void> _refreshData() async {
-    setState(() => _isRefreshing = true);
-    await _loadData();
-    setState(() => _isRefreshing = false);
+  // ── Monthly aggregation ──────────────────────────────────
+
+  List<_MonthlyData> get _monthlyEarnings {
+    final map = <String, _MonthlyData>{};
+    for (final b in _completed) {
+      final key =
+          '${b.scheduledDate.year}-${b.scheduledDate.month.toString().padLeft(2, '0')}';
+      final label = _monthLabel(b.scheduledDate.month);
+      final existing = map[key];
+      if (existing == null) {
+        map[key] = _MonthlyData(
+            label: label,
+            month: b.scheduledDate.month,
+            year: b.scheduledDate.year,
+            amount: b.priceEstimate ?? 0,
+            jobs: 1);
+      } else {
+        map[key] = _MonthlyData(
+            label: label,
+            month: existing.month,
+            year: existing.year,
+            amount: existing.amount + (b.priceEstimate ?? 0),
+            jobs: existing.jobs + 1);
+      }
+    }
+    final sorted = map.values.toList()
+      ..sort((a, b) {
+        if (a.year != b.year) return a.year.compareTo(b.year);
+        return a.month.compareTo(b.month);
+      });
+    return sorted;
   }
 
-  Future<void> _loadEarningsSummary() async {
-    // TODO: Implement database call
-    _earningsSummary = EarningsSummary(
-      totalEarnings: 45850.00,
-      thisMonth: 12500.00,
-      lastMonth: 11200.00,
-      today: 2250.00,
-      pending: 3450.00,
-      withdrawn: 38500.00,
-      available: 7350.00,
-      averageRating: 4.8,
-      totalJobs: 156,
-      completionRate: 98,
-      platformFee: 5,
-    );
-  }
-
-  Future<void> _loadMonthlyEarnings() async {
-    // TODO: Implement database call
-    _monthlyEarnings = [
-      MonthlyEarning(
-          month: 'Jan', amount: 8200.00, jobs: 28, date: DateTime(2026, 1)),
-      MonthlyEarning(
-          month: 'Feb', amount: 9500.00, jobs: 32, date: DateTime(2026, 2)),
-      MonthlyEarning(
-          month: 'Mar', amount: 11200.00, jobs: 35, date: DateTime(2026, 3)),
-      MonthlyEarning(
-          month: 'Apr', amount: 12500.00, jobs: 40, date: DateTime(2026, 4)),
-      MonthlyEarning(
-          month: 'May', amount: 11800.00, jobs: 38, date: DateTime(2026, 5)),
-      MonthlyEarning(
-          month: 'Jun', amount: 14200.00, jobs: 45, date: DateTime(2026, 6)),
-      MonthlyEarning(
-          month: 'Jul', amount: 13500.00, jobs: 42, date: DateTime(2026, 7)),
-      MonthlyEarning(
-          month: 'Aug', amount: 12800.00, jobs: 41, date: DateTime(2026, 8)),
-      MonthlyEarning(
-          month: 'Sep', amount: 11900.00, jobs: 37, date: DateTime(2026, 9)),
-      MonthlyEarning(
-          month: 'Oct', amount: 13200.00, jobs: 43, date: DateTime(2026, 10)),
-      MonthlyEarning(
-          month: 'Nov', amount: 14500.00, jobs: 46, date: DateTime(2026, 11)),
-      MonthlyEarning(
-          month: 'Dec', amount: 15800.00, jobs: 50, date: DateTime(2026, 12)),
+  String _monthLabel(int month) {
+    const labels = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
     ];
+    return labels[month - 1];
   }
 
-  Future<void> _loadTransactions() async {
-    // TODO: Implement database call
-    _transactions = [
-      Transaction(
-        id: 'TRX-001',
-        customerName: 'Maria Santos',
-        serviceType: 'Electrical',
-        date: DateTime(2026, 3, 1, 14, 30),
-        amount: 850.00,
-        status: TransactionStatus.completed,
-        paymentMethod: PaymentMethod.cash,
-      ),
-      Transaction(
-        id: 'TRX-002',
-        customerName: 'Juan Dela Cruz',
-        serviceType: 'Plumbing',
-        date: DateTime(2026, 2, 28, 10, 15),
-        amount: 1200.00,
-        status: TransactionStatus.completed,
-        paymentMethod: PaymentMethod.gcash,
-      ),
-      Transaction(
-        id: 'TRX-003',
-        customerName: 'Pedro Reyes',
-        serviceType: 'Carpentry',
-        date: DateTime(2026, 2, 27, 16, 0),
-        amount: 950.00,
-        status: TransactionStatus.pending,
-        paymentMethod: PaymentMethod.cash,
-      ),
-      Transaction(
-        id: 'TRX-004',
-        customerName: 'Ana Garcia',
-        serviceType: 'Aircon Repair',
-        date: DateTime(2026, 2, 26, 9, 30),
-        amount: 1500.00,
-        status: TransactionStatus.completed,
-        paymentMethod: PaymentMethod.creditCard,
-      ),
-      Transaction(
-        id: 'TRX-005',
-        customerName: 'Jose Mercado',
-        serviceType: 'Electrical',
-        date: DateTime(2026, 2, 25, 13, 45),
-        amount: 750.00,
-        status: TransactionStatus.completed,
-        paymentMethod: PaymentMethod.cash,
-      ),
+  // ── Service breakdown ────────────────────────────────────
+
+  List<_ServiceData> get _serviceBreakdown {
+    final map = <String, _ServiceData>{};
+    final colors = [
+      Colors.amber,
+      Colors.blue,
+      Colors.brown,
+      Colors.teal,
+      Colors.purple,
+      Colors.pink,
     ];
+    int colorIndex = 0;
+    for (final b in _completed) {
+      final type = b.serviceType;
+      final existing = map[type];
+      final color = existing?.color ?? colors[colorIndex++ % colors.length];
+      if (existing == null) {
+        map[type] = _ServiceData(
+            serviceType: type,
+            count: 1,
+            amount: b.priceEstimate ?? 0,
+            color: color);
+      } else {
+        map[type] = _ServiceData(
+            serviceType: type,
+            count: existing.count + 1,
+            amount: existing.amount + (b.priceEstimate ?? 0),
+            color: color);
+      }
+    }
+    final list = map.values.toList()
+      ..sort((a, b) => b.amount.compareTo(a.amount));
+    return list;
   }
 
-  Future<void> _loadWithdrawals() async {
-    // TODO: Implement database call
-    _withdrawals = [
-      Withdrawal(
-        id: 'WTH-001',
-        date: DateTime(2026, 2, 20),
-        amount: 5000.00,
-        method: WithdrawalMethod.bankTransfer,
-        accountDetails: 'BDO - ****1234',
-        status: WithdrawalStatus.completed,
-      ),
-      Withdrawal(
-        id: 'WTH-002',
-        date: DateTime(2026, 2, 10),
-        amount: 7500.00,
-        method: WithdrawalMethod.gcash,
-        accountDetails: '****5678',
-        status: WithdrawalStatus.completed,
-      ),
-      Withdrawal(
-        id: 'WTH-003',
-        date: DateTime(2026, 1, 28),
-        amount: 3000.00,
-        method: WithdrawalMethod.bankTransfer,
-        accountDetails: 'BPI - ****9012',
-        status: WithdrawalStatus.completed,
-      ),
-      Withdrawal(
-        id: 'WTH-004',
-        date: DateTime(2026, 1, 15),
-        amount: 4500.00,
-        method: WithdrawalMethod.gcash,
-        accountDetails: '****5678',
-        status: WithdrawalStatus.processing,
-      ),
-    ];
+  // ── Transactions from bookings ───────────────────────────
+
+  List<BookingEntity> get _transactionBookings {
+    var list = widget.bookings
+        .where((b) =>
+            b.status == BookingStatus.completed ||
+            b.status == BookingStatus.pending ||
+            b.status == BookingStatus.inProgress)
+        .toList()
+      ..sort((a, b) => b.scheduledDate.compareTo(a.scheduledDate));
+
+    if (_selectedDateRange != null) {
+      list = list.where((b) {
+        return !b.scheduledDate.isBefore(_selectedDateRange!.start) &&
+            !b.scheduledDate.isAfter(_selectedDateRange!.end);
+      }).toList();
+    }
+    if (_selectedStatusFilter != null) {
+      list = list.where((b) => b.status == _selectedStatusFilter).toList();
+    }
+    if (_searchQuery != null && _searchQuery!.isNotEmpty) {
+      final q = _searchQuery!.toLowerCase();
+      list = list.where((b) {
+        return (b.customer?.name ?? '').toLowerCase().contains(q) ||
+            b.serviceType.toLowerCase().contains(q) ||
+            b.id.toLowerCase().contains(q);
+      }).toList();
+    }
+    return list;
   }
 
-  Future<void> _loadServiceBreakdown() async {
-    // TODO: Implement database call
-    _serviceBreakdown = [
-      ServiceBreakdown(
-        serviceType: 'Electrical',
-        count: 48,
-        amount: 38400.00,
-        color: Colors.amber,
-      ),
-      ServiceBreakdown(
-        serviceType: 'Plumbing',
-        count: 42,
-        amount: 33600.00,
-        color: Colors.blue,
-      ),
-      ServiceBreakdown(
-        serviceType: 'Carpentry',
-        count: 35,
-        amount: 29750.00,
-        color: Colors.brown,
-      ),
-      ServiceBreakdown(
-        serviceType: 'Aircon',
-        count: 31,
-        amount: 40300.00,
-        color: Colors.teal,
-      ),
-    ];
-  }
+  // ── Helpers ──────────────────────────────────────────────
 
-  // ── Helper Methods ──
+  String _fmt(double amount) => '₱${amount.toStringAsFixed(2)}';
 
-  String _formatCurrency(double amount) {
-    return '₱${amount.toStringAsFixed(2)}';
-  }
+  String _fmtDate(DateTime d) => '${d.month}/${d.day}/${d.year}';
 
-  String _formatDate(DateTime date) {
-    return '${date.month}/${date.day}/${date.year}';
-  }
-
-  String _formatDateTime(DateTime date) {
-    final hour = date.hour > 12 ? date.hour - 12 : date.hour;
-    final minute = date.minute.toString().padLeft(2, '0');
-    final ampm = date.hour >= 12 ? 'PM' : 'AM';
-    return '${date.month}/${date.day}/${date.year} ${hour}:$minute $ampm';
+  String _fmtDateTime(DateTime d) {
+    final h = d.hour > 12 ? d.hour - 12 : (d.hour == 0 ? 12 : d.hour);
+    final m = d.minute.toString().padLeft(2, '0');
+    final ap = d.hour >= 12 ? 'PM' : 'AM';
+    return '${d.month}/${d.day}/${d.year} $h:$m $ap';
   }
 
   String _timeAgo(DateTime dt) {
@@ -419,145 +269,42 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     return '${diff.inDays}d ago';
   }
 
-  Color _getTransactionStatusColor(TransactionStatus status) {
-    switch (status) {
-      case TransactionStatus.completed:
+  Color _statusColor(BookingStatus s) {
+    switch (s) {
+      case BookingStatus.completed:
         return Colors.green;
-      case TransactionStatus.pending:
+      case BookingStatus.pending:
         return Colors.orange;
-      case TransactionStatus.failed:
+      case BookingStatus.cancelled:
         return Colors.red;
-      case TransactionStatus.refunded:
-        return Colors.purple;
+      default:
+        return Colors.blue;
     }
   }
 
-  String _getTransactionStatusText(TransactionStatus status) {
-    switch (status) {
-      case TransactionStatus.completed:
+  String _statusLabel(BookingStatus s) {
+    switch (s) {
+      case BookingStatus.completed:
         return 'Completed';
-      case TransactionStatus.pending:
+      case BookingStatus.pending:
         return 'Pending';
-      case TransactionStatus.failed:
-        return 'Failed';
-      case TransactionStatus.refunded:
-        return 'Refunded';
+      case BookingStatus.cancelled:
+        return 'Cancelled';
+      case BookingStatus.accepted:
+        return 'Accepted';
+      case BookingStatus.inProgress:
+        return 'In Progress';
     }
   }
 
-  Color _getWithdrawalStatusColor(WithdrawalStatus status) {
-    switch (status) {
-      case WithdrawalStatus.completed:
-        return Colors.green;
-      case WithdrawalStatus.processing:
-        return Colors.orange;
-      case WithdrawalStatus.failed:
-        return Colors.red;
-    }
-  }
-
-  String _getWithdrawalStatusText(WithdrawalStatus status) {
-    switch (status) {
-      case WithdrawalStatus.completed:
-        return 'Completed';
-      case WithdrawalStatus.processing:
-        return 'Processing';
-      case WithdrawalStatus.failed:
-        return 'Failed';
-    }
-  }
-
-  String _getPaymentMethodIcon(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash:
-        return 'Cash';
-      case PaymentMethod.gcash:
-        return 'GCash';
-      case PaymentMethod.creditCard:
-        return 'Credit Card';
-      case PaymentMethod.paymaya:
-        return 'PayMaya';
-      case PaymentMethod.bankTransfer:
-        return 'Bank Transfer';
-    }
-  }
-
-  IconData _getPaymentMethodIconData(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash:
-        return Icons.money;
-      case PaymentMethod.gcash:
-      case PaymentMethod.paymaya:
-        return Icons.account_balance_wallet;
-      case PaymentMethod.creditCard:
-        return Icons.credit_card;
-      case PaymentMethod.bankTransfer:
-        return Icons.account_balance;
-    }
-  }
-
-  IconData _getWithdrawalMethodIcon(WithdrawalMethod method) {
-    switch (method) {
-      case WithdrawalMethod.bankTransfer:
-        return Icons.account_balance;
-      case WithdrawalMethod.gcash:
-      case WithdrawalMethod.paymaya:
-        return Icons.account_balance_wallet;
-    }
-  }
-
-  void _showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  void _showSuccessSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  // ── Filter Methods ──
-
-  List<Transaction> _getFilteredTransactions() {
-    return _transactions.where((t) {
-      if (_selectedDateRange != null) {
-        if (t.date.isBefore(_selectedDateRange!.start) ||
-            t.date.isAfter(_selectedDateRange!.end)) {
-          return false;
-        }
-      }
-      if (_selectedTransactionStatus != null &&
-          t.status != _selectedTransactionStatus) {
-        return false;
-      }
-      if (_searchQuery != null && _searchQuery!.isNotEmpty) {
-        final query = _searchQuery!.toLowerCase();
-        return t.customerName.toLowerCase().contains(query) ||
-            t.serviceType.toLowerCase().contains(query) ||
-            t.id.toLowerCase().contains(query);
-      }
-      return true;
-    }).toList();
-  }
-
-  // ── Build Methods ──
+  // ── Build ────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) widget.onNavTap?.call(0); // back → Dashboard
+        if (!didPop) widget.onNavTap?.call(0);
       },
       child: Scaffold(
         backgroundColor: AppColors.backgroundLight,
@@ -566,25 +313,13 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
             _buildHeader(),
             _buildTabBar(),
             Expanded(
-              child: _isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(AppColors.primary),
-                      ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _refreshData,
-                      color: AppColors.primary,
-                      child: TabBarView(
-                        controller: _tabController,
-                        children: [
-                          _buildOverviewTab(),
-                          _buildTransactionsTab(),
-                          _buildWithdrawTab(),
-                        ],
-                      ),
-                    ),
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildOverviewTab(),
+                  _buildTransactionsTab(),
+                ],
+              ),
             ),
           ],
         ),
@@ -592,6 +327,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       ),
     );
   }
+
+  // ── Header ───────────────────────────────────────────────
 
   Widget _buildHeader() {
     return Container(
@@ -618,11 +355,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                     color: Colors.white.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(
-                    Icons.arrow_back_ios_new_rounded,
-                    color: Colors.white,
-                    size: 18,
-                  ),
+                  child: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white, size: 18),
                 ),
               ),
               const SizedBox(width: 14),
@@ -630,22 +364,16 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Earnings',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
-                      ),
-                    ),
-                    Text(
-                      'Track your income and withdrawals',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.6),
-                        fontSize: 13,
-                      ),
-                    ),
+                    const Text('Earnings',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3)),
+                    Text('Track your income and transactions',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 13)),
                   ],
                 ),
               ),
@@ -675,44 +403,29 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         tabs: const [
           Tab(text: 'Overview'),
           Tab(text: 'Transactions'),
-          Tab(text: 'Withdraw'),
         ],
       ),
     );
   }
 
-  // Overview Tab
-  Widget _buildOverviewTab() {
-    if (_earningsSummary == null) {
-      return const Center(child: Text('No earnings data available'));
-    }
+  // ── Overview Tab ─────────────────────────────────────────
 
+  Widget _buildOverviewTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Total Earnings Card
           _buildTotalEarningsCard(),
           const SizedBox(height: 20),
-
-          // Stats Row
           _buildStatsRow(),
           const SizedBox(height: 20),
-
-          // Available Balance Card
           _buildAvailableBalanceCard(),
           const SizedBox(height: 20),
-
-          // Monthly Earnings Chart
-          _buildMonthlyEarningsCard(),
+          _buildMonthlyChart(),
           const SizedBox(height: 20),
-
-          // Service Breakdown
           _buildServiceBreakdownCard(),
           const SizedBox(height: 20),
-
-          // Recent Transactions
           _buildRecentTransactionsCard(),
         ],
       ),
@@ -720,6 +433,10 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
   }
 
   Widget _buildTotalEarningsCard() {
+    final growthPct = _lastMonthEarnings > 0
+        ? ((_thisMonthEarnings / _lastMonthEarnings - 1) * 100)
+        : (_thisMonthEarnings > 0 ? 100.0 : 0.0);
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
@@ -732,82 +449,59 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF2A7F6E).withOpacity(0.3),
-            spreadRadius: 2,
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
+              color: const Color(0xFF2A7F6E).withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4)),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Total Earnings',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              letterSpacing: 1,
-            ),
-          ),
+          const Text('Total Earnings',
+              style: TextStyle(
+                  color: Colors.white, fontSize: 14, letterSpacing: 1)),
           const SizedBox(height: 8),
-          Text(
-            _formatCurrency(_earningsSummary!.totalEarnings),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 36,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          Text(_fmt(_totalEarnings),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 36,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'This Month',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _formatCurrency(_earningsSummary!.thisMonth),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('This Month',
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
+                const SizedBox(height: 4),
+                Text(_fmt(_thisMonthEarnings),
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold)),
+              ]),
+              if (_lastMonthEarnings > 0 || _thisMonthEarnings > 0)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.trending_up,
-                      color: Colors.white,
-                      size: 16,
-                    ),
+                  child: Row(children: [
+                    Icon(
+                        growthPct >= 0
+                            ? Icons.trending_up
+                            : Icons.trending_down,
+                        color: Colors.white,
+                        size: 16),
                     const SizedBox(width: 4),
                     Text(
-                      '+${((_earningsSummary!.thisMonth / _earningsSummary!.lastMonth - 1) * 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                  ],
+                        '${growthPct >= 0 ? '+' : ''}${growthPct.toStringAsFixed(0)}%',
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 12)),
+                  ]),
                 ),
-              ),
             ],
           ),
         ],
@@ -816,44 +510,22 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
   }
 
   Widget _buildStatsRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildStatCard(
-            title: 'Today',
-            value: _formatCurrency(_earningsSummary!.today),
-            icon: Icons.today,
-            color: Colors.blue,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildStatCard(
-            title: 'This Month',
-            value: _formatCurrency(_earningsSummary!.thisMonth),
-            icon: Icons.calendar_month,
-            color: const Color(0xFF2A7F6E),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildStatCard(
-            title: 'Pending',
-            value: _formatCurrency(_earningsSummary!.pending),
-            icon: Icons.pending_actions,
-            color: Colors.orange,
-          ),
-        ),
-      ],
-    );
+    return Row(children: [
+      Expanded(
+          child: _statCard(
+              'Today', _fmt(_todayEarnings), Icons.today, Colors.blue)),
+      const SizedBox(width: 12),
+      Expanded(
+          child: _statCard('This Month', _fmt(_thisMonthEarnings),
+              Icons.calendar_month, const Color(0xFF2A7F6E))),
+      const SizedBox(width: 12),
+      Expanded(
+          child: _statCard('Pending', _fmt(_pendingAmount),
+              Icons.pending_actions, Colors.orange)),
+    ]);
   }
 
-  Widget _buildStatCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
+  Widget _statCard(String title, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -861,38 +533,28 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 5,
+              offset: const Offset(0, 2)),
         ],
       ),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: color, size: 18),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
+      child: Column(children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+              color: color.withOpacity(0.1), shape: BoxShape.circle),
+          child: Icon(icon, color: color, size: 18),
+        ),
+        const SizedBox(height: 8),
+        Text(value,
             style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1E5F4B),
-            ),
-          ),
-          Text(
-            title,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1E5F4B))),
+        Text(title,
             style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-          ),
-        ],
-      ),
+            textAlign: TextAlign.center),
+      ]),
     );
   }
 
@@ -904,101 +566,50 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 5,
+              offset: const Offset(0, 2)),
         ],
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Available Balance',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _formatCurrency(_earningsSummary!.available),
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E5F4B),
-                    ),
-                  ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2A7F6E).withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.account_balance_wallet,
-                  color: Color(0xFF2A7F6E),
-                  size: 30,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () {
-                    _tabController.animateTo(2);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2A7F6E),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Text('Withdraw Now'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _showWithdrawHistory,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF2A7F6E),
-                    side: const BorderSide(color: Color(0xFF2A7F6E)),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Text('History'),
-                ),
-              ),
-            ],
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Total Earnings',
+                style: TextStyle(fontSize: 14, color: Colors.grey[600])),
+            const SizedBox(height: 4),
+            Text(_fmt(_totalEarnings),
+                style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E5F4B))),
+          ]),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+                color: const Color(0xFF2A7F6E).withOpacity(0.1),
+                shape: BoxShape.circle),
+            child: const Icon(Icons.account_balance_wallet,
+                color: Color(0xFF2A7F6E), size: 30),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildMonthlyEarningsCard() {
-    final recentMonths = _monthlyEarnings.length > 6
-        ? _monthlyEarnings.sublist(_monthlyEarnings.length - 6)
-        : _monthlyEarnings;
+  // ── Monthly Bar Chart ────────────────────────────────────
 
-    final maxAmount =
-        recentMonths.map((e) => e.amount).reduce((a, b) => a > b ? a : b);
+  Widget _buildMonthlyChart() {
+    final months = _monthlyEarnings;
+
+    if (months.isEmpty) {
+      return _emptyCard('No monthly data yet',
+          'Completed jobs will appear here.', Icons.bar_chart_rounded);
+    }
+
+    final recent =
+        months.length > 6 ? months.sublist(months.length - 6) : months;
+    final maxAmt = recent.map((e) => e.amount).reduce((a, b) => a > b ? a : b);
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1007,47 +618,36 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 5,
+              offset: const Offset(0, 2)),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Monthly Earnings',
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Monthly Earnings',
                 style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E5F4B),
-                ),
-              ),
-              TextButton(
-                onPressed: _showDetailedChart,
-                child: const Text('View All'),
-              ),
-            ],
-          ),
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E5F4B))),
+            TextButton(
+                onPressed: _showDetailedChart, child: const Text('View All')),
+          ]),
           const SizedBox(height: 20),
           SizedBox(
             height: 150,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
-              children: recentMonths.map((month) {
-                final barHeight = (month.amount / maxAmount) * 120;
-
+              children: recent.map((m) {
+                final barH = maxAmt > 0 ? (m.amount / maxAmt) * 120 : 0.0;
                 return Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       Container(
-                        height: barHeight,
+                        height: barH,
                         width: 20,
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
@@ -1059,13 +659,9 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Text(
-                        month.month,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                        ),
-                      ),
+                      Text(m.label,
+                          style:
+                              TextStyle(fontSize: 11, color: Colors.grey[600])),
                     ],
                   ),
                 );
@@ -1076,22 +672,13 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildSummaryItem(
-                icon: Icons.work,
-                value: '${_earningsSummary!.totalJobs}',
-                label: 'Total Jobs',
-              ),
-              _buildSummaryItem(
-                icon: Icons.star,
-                value: _earningsSummary!.averageRating.toStringAsFixed(1),
-                label: 'Avg. Rating',
-              ),
-              _buildSummaryItem(
-                icon: Icons.check_circle,
-                value:
-                    '${_earningsSummary!.completionRate.toStringAsFixed(0)}%',
-                label: 'Completion',
-              ),
+              _summaryItem(Icons.work, '${_completed.length}', 'Total Jobs'),
+              _summaryItem(
+                  Icons.star,
+                  _avgRating > 0 ? _avgRating.toStringAsFixed(1) : '—',
+                  'Avg Rating'),
+              _summaryItem(Icons.check_circle,
+                  '${_completionRate.toStringAsFixed(0)}%', 'Completion'),
             ],
           ),
         ],
@@ -1099,135 +686,31 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     );
   }
 
-  Widget _buildSummaryItem({
-    required IconData icon,
-    required String value,
-    required String label,
-  }) {
-    return Column(
-      children: [
-        Icon(icon, size: 20, color: const Color(0xFF2A7F6E)),
-        const SizedBox(height: 4),
-        Text(
-          value,
+  Widget _summaryItem(IconData icon, String value, String label) {
+    return Column(children: [
+      Icon(icon, size: 20, color: const Color(0xFF2A7F6E)),
+      const SizedBox(height: 4),
+      Text(value,
           style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1E5F4B),
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildServiceBreakdownCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Earnings by Service',
-            style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1E5F4B),
-            ),
-          ),
-          const SizedBox(height: 16),
-          ..._serviceBreakdown.map((service) {
-            final total = _serviceBreakdown.fold<double>(
-              0,
-              (sum, item) => sum + item.amount,
-            );
-            final percentage = (service.amount / total) * 100;
-
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: service.color,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: Text(
-                          service.serviceType,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 1,
-                        child: Text(
-                          '${service.count} jobs',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 1,
-                        child: Text(
-                          _formatCurrency(service.amount),
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1E5F4B),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: percentage / 100,
-                      backgroundColor: Colors.grey[200],
-                      valueColor: AlwaysStoppedAnimation<Color>(service.color),
-                      minHeight: 6,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-        ],
-      ),
-    );
+              color: Color(0xFF1E5F4B))),
+      Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+    ]);
   }
 
-  Widget _buildRecentTransactionsCard() {
-    final recent =
-        _transactions.length > 3 ? _transactions.sublist(0, 3) : _transactions;
+  // ── Service Breakdown ────────────────────────────────────
+
+  Widget _buildServiceBreakdownCard() {
+    final breakdown = _serviceBreakdown;
+    if (breakdown.isEmpty) {
+      return _emptyCard(
+          'No service data yet',
+          'Earnings by service type will show here.',
+          Icons.pie_chart_outline_rounded);
+    }
+
+    final totalAmt = breakdown.fold<double>(0, (s, b) => s + b.amount);
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1236,589 +719,246 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 5,
+              offset: const Offset(0, 2)),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Recent Transactions',
-                style: TextStyle(
+          const Text('Earnings by Service',
+              style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E5F4B),
+                  color: Color(0xFF1E5F4B))),
+          const SizedBox(height: 16),
+          ...breakdown.map((s) {
+            final pct = totalAmt > 0 ? s.amount / totalAmt : 0.0;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Column(children: [
+                Row(children: [
+                  Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                          color: s.color, shape: BoxShape.circle)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      flex: 2,
+                      child: Text(s.serviceType,
+                          style: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w500))),
+                  Expanded(
+                      flex: 1,
+                      child: Text('${s.count} jobs',
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey[600]))),
+                  Expanded(
+                      flex: 1,
+                      child: Text(_fmt(s.amount),
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1E5F4B)))),
+                ]),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pct,
+                    backgroundColor: Colors.grey[200],
+                    valueColor: AlwaysStoppedAnimation<Color>(s.color),
+                    minHeight: 6,
+                  ),
                 ),
-              ),
-              TextButton(
-                onPressed: () {
-                  _tabController.animateTo(1);
-                },
-                child: const Text('View All'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ...recent
-              .map((transaction) => _buildTransactionTile(transaction))
-              .toList(),
+              ]),
+            );
+          }),
         ],
       ),
     );
   }
 
-  Widget _buildTransactionTile(Transaction transaction) {
+  // ── Recent Transactions ──────────────────────────────────
+
+  Widget _buildRecentTransactionsCard() {
+    final txns = _transactionBookings.take(3).toList();
+    if (txns.isEmpty) {
+      return _emptyCard(
+          'No transactions yet',
+          'Your completed bookings will appear here.',
+          Icons.receipt_long_rounded);
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 5,
+              offset: const Offset(0, 2)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Recent Transactions',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E5F4B))),
+            TextButton(
+                onPressed: () => _tabController.animateTo(1),
+                child: const Text('View All')),
+          ]),
+          const SizedBox(height: 8),
+          ...txns.map(_buildTxnTile),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTxnTile(BookingEntity b) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Colors.grey[100]!, width: 1),
-        ),
+        border: Border(bottom: BorderSide(color: Colors.grey[100]!, width: 1)),
       ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
               color: const Color(0xFF2A7F6E).withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              _getPaymentMethodIconData(transaction.paymentMethod),
-              color: const Color(0xFF2A7F6E),
-              size: 16,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  transaction.customerName,
-                  style: const TextStyle(
+              shape: BoxShape.circle),
+          child: const Icon(Icons.handyman_rounded,
+              color: Color(0xFF2A7F6E), size: 16),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(b.customer?.name ?? 'Customer',
+                style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: Color(0xFF1E5F4B),
-                  ),
-                ),
-                Text(
-                  '${transaction.serviceType} • ${_timeAgo(transaction.date)}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                ),
-              ],
+                    color: Color(0xFF1E5F4B))),
+            Text(
+              '${b.serviceType} • ${_timeAgo(b.scheduledDate)}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
             ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                _formatCurrency(transaction.amount),
-                style: const TextStyle(
+          ]),
+        ),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(_fmt(b.priceEstimate ?? 0),
+              style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E5F4B),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _getTransactionStatusColor(transaction.status)
-                      .withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _getTransactionStatusText(transaction.status),
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: _getTransactionStatusColor(transaction.status),
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Transactions Tab
-  Widget _buildTransactionsTab() {
-    final filteredTransactions = _getFilteredTransactions();
-
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          color: Colors.white,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'All Transactions',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey[700],
-                ),
-              ),
-              Row(
-                children: [
-                  _buildFilterChip(
-                    label: 'Filter',
-                    icon: Icons.filter_list,
-                    onTap: _showFilterDialog,
-                  ),
-                  const SizedBox(width: 8),
-                  _buildFilterChip(
-                    label: 'Search',
-                    icon: Icons.search,
-                    onTap: _showSearchDialog,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        if (_selectedDateRange != null || _selectedTransactionStatus != null)
+                  color: Color(0xFF1E5F4B))),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Colors.grey[50],
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  if (_selectedDateRange != null)
-                    _buildFilterChip(
-                      label:
-                          '${_formatDate(_selectedDateRange!.start)} - ${_formatDate(_selectedDateRange!.end)}',
-                      icon: Icons.calendar_today,
-                      onTap: () {
-                        setState(() {
-                          _selectedDateRange = null;
-                          _loadTransactions();
-                        });
-                      },
-                    ),
-                  if (_selectedTransactionStatus != null)
-                    _buildFilterChip(
-                      label: _getTransactionStatusText(
-                          _selectedTransactionStatus!),
-                      icon: Icons.filter_list,
-                      onTap: () {
-                        setState(() {
-                          _selectedTransactionStatus = null;
-                          _loadTransactions();
-                        });
-                      },
-                    ),
-                ],
-              ),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: _statusColor(b.status).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
             ),
+            child: Text(_statusLabel(b.status),
+                style: TextStyle(
+                    fontSize: 9,
+                    color: _statusColor(b.status),
+                    fontWeight: FontWeight.bold)),
           ),
-        Expanded(
-          child: filteredTransactions.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(40),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(28),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.07),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.receipt_long,
-                            size: 52,
-                            color: AppColors.primary.withOpacity(0.4),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        const Text(
-                          'No transactions found',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textDark,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Your completed jobs and earnings will appear here.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textLight,
-                            height: 1.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: filteredTransactions.length,
-                  itemBuilder: (context, index) {
-                    final transaction = filteredTransactions[index];
-                    final expanded = _expandedId == transaction.id;
-                    return _TransactionCard(
-                      transaction: transaction,
-                      expanded: expanded,
-                      onTap: () => setState(() {
-                        _expandedId = expanded ? null : transaction.id;
-                      }),
-                    )
-                        .animate()
-                        .fadeIn(delay: (index * 60).ms)
-                        .slideY(begin: 0.06, end: 0);
-                  },
-                ),
-        ),
-      ],
+        ]),
+      ]),
     );
   }
 
-  Widget _buildFilterChip({
-    required String label,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: Colors.grey[100],
-          borderRadius: BorderRadius.circular(20),
-        ),
+  // ── Transactions Tab ─────────────────────────────────────
+
+  Widget _buildTransactionsTab() {
+    final txns = _transactionBookings;
+    return Column(children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        color: Colors.white,
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Icon(icon, size: 14, color: Colors.grey[700]),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[700],
-              ),
-            ),
+            Text('${txns.length} Transactions',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey[700])),
+            Row(children: [
+              _filterChip('Filter', Icons.filter_list, _showFilterDialog),
+              const SizedBox(width: 8),
+              _filterChip('Search', Icons.search, _showSearchDialog),
+            ]),
           ],
         ),
       ),
-    );
+      Expanded(
+        child: txns.isEmpty
+            ? _emptyCenterWidget('No transactions found',
+                'Your jobs will appear here once booked.')
+            : ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: txns.length,
+                itemBuilder: (context, i) {
+                  final b = txns[i];
+                  return _ExpandableTxnCard(
+                    booking: b,
+                    expanded: _expandedId == b.id,
+                    onTap: () => setState(
+                        () => _expandedId = _expandedId == b.id ? null : b.id),
+                    statusColor: _statusColor(b.status),
+                    statusLabel: _statusLabel(b.status),
+                    fmt: _fmt,
+                    fmtDateTime: _fmtDateTime,
+                    timeAgo: _timeAgo,
+                  )
+                      .animate()
+                      .fadeIn(delay: (i * 50).ms)
+                      .slideY(begin: 0.06, end: 0);
+                },
+              ),
+      ),
+    ]);
   }
 
-  // Withdraw Tab
-  Widget _buildWithdrawTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildWithdrawBalanceCard(),
-          const SizedBox(height: 20),
-          const Text(
-            'Withdrawal Methods',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1E5F4B),
-            ),
-          ),
-          const SizedBox(height: 12),
-          _buildWithdrawMethodCard(
-            icon: Icons.account_balance,
-            title: 'Bank Transfer',
-            subtitle: 'BDO •••• 1234',
-            isDefault: true,
-          ),
-          const SizedBox(height: 8),
-          _buildWithdrawMethodCard(
-            icon: Icons.account_balance_wallet,
-            title: 'GCash',
-            subtitle: '•••• 5678',
-            isDefault: false,
-          ),
-          const SizedBox(height: 8),
-          _buildWithdrawMethodCard(
-            icon: Icons.credit_card,
-            title: 'PayMaya',
-            subtitle: 'Not linked',
-            isDefault: false,
-            isLinked: false,
-          ),
-          const SizedBox(height: 16),
-          OutlinedButton.icon(
-            onPressed: _showAddMethodDialog,
-            icon: const Icon(Icons.add, color: Color(0xFF2A7F6E)),
-            label: const Text('Add Withdrawal Method'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFF2A7F6E),
-              side: const BorderSide(color: Color(0xFF2A7F6E)),
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              minimumSize: const Size(double.infinity, 0),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Recent Withdrawals',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E5F4B),
-                ),
-              ),
-              TextButton(
-                onPressed: _showWithdrawHistory,
-                child: const Text('View All'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ..._withdrawals.map((withdrawal) {
-            return _WithdrawalTile(withdrawal: withdrawal);
-          }).toList(),
-        ],
+  Widget _filterChip(String label, IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+            color: Colors.grey[100], borderRadius: BorderRadius.circular(20)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: Colors.grey[700]),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+        ]),
       ),
     );
   }
 
-  Widget _buildWithdrawBalanceCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF2A7F6E), Color(0xFF1E5F4B)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Available for Withdrawal',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _formatCurrency(_earningsSummary!.available),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 36,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _showWithdrawDialog,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: const Color(0xFF1E5F4B),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Text('Withdraw Now'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWithdrawMethodCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool isDefault,
-    bool isLinked = true,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDefault ? const Color(0xFF2A7F6E) : Colors.grey[200]!,
-          width: isDefault ? 2 : 1,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2A7F6E).withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: const Color(0xFF2A7F6E), size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    if (isDefault) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2A7F6E).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Text(
-                          'Default',
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: Color(0xFF2A7F6E),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isLinked ? Colors.grey[600] : Colors.red[300],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (isLinked)
-            IconButton(
-              onPressed: () {},
-              icon: Icon(Icons.more_vert, color: Colors.grey[400], size: 20),
-            ),
-        ],
-      ),
-    );
-  }
-
-  // ── Dialog Methods ──
+  // ── Dialogs ──────────────────────────────────────────────
 
   void _showDateRangePicker() {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => _DateRangeSheet(
+        onSelect: (range) {
+          setState(() => _selectedDateRange = range);
+          widget.onDateRangeSelected?.call(range);
+        },
       ),
-      builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Select Date Range',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E5F4B),
-                ),
-              ),
-              const SizedBox(height: 20),
-              ListTile(
-                leading: const Icon(Icons.today, color: Color(0xFF2A7F6E)),
-                title: const Text('Today'),
-                onTap: () {
-                  final now = DateTime.now();
-                  setState(() {
-                    _selectedDateRange = DateTimeRange(
-                      start: DateTime(now.year, now.month, now.day),
-                      end: DateTime(now.year, now.month, now.day, 23, 59, 59),
-                    );
-                    _loadTransactions();
-                  });
-                  widget.onDateRangeSelected?.call(_selectedDateRange!);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.date_range, color: Color(0xFF2A7F6E)),
-                title: const Text('This Week'),
-                onTap: () {
-                  final now = DateTime.now();
-                  final start = now.subtract(Duration(days: now.weekday - 1));
-                  setState(() {
-                    _selectedDateRange = DateTimeRange(
-                      start: DateTime(start.year, start.month, start.day),
-                      end: DateTime(now.year, now.month, now.day, 23, 59, 59),
-                    );
-                    _loadTransactions();
-                  });
-                  widget.onDateRangeSelected?.call(_selectedDateRange!);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading:
-                    const Icon(Icons.calendar_month, color: Color(0xFF2A7F6E)),
-                title: const Text('This Month'),
-                onTap: () {
-                  final now = DateTime.now();
-                  setState(() {
-                    _selectedDateRange = DateTimeRange(
-                      start: DateTime(now.year, now.month, 1),
-                      end: DateTime(now.year, now.month + 1, 0, 23, 59, 59),
-                    );
-                    _loadTransactions();
-                  });
-                  widget.onDateRangeSelected?.call(_selectedDateRange!);
-                  Navigator.pop(context);
-                },
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -1826,110 +966,70 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Filter Transactions',
-                style: TextStyle(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Filter by Status',
+              style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E5F4B),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Status',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                children: TransactionStatus.values.map((status) {
-                  final isSelected = _selectedTransactionStatus == status;
-                  return FilterChip(
-                    label: Text(_getTransactionStatusText(status)),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      setState(() {
-                        _selectedTransactionStatus = selected ? status : null;
-                        _loadTransactions();
-                      });
-                      Navigator.pop(context);
-                    },
-                    backgroundColor: Colors.grey[100],
-                    selectedColor:
-                        _getTransactionStatusColor(status).withOpacity(0.2),
-                    checkmarkColor: _getTransactionStatusColor(status),
-                    labelStyle: TextStyle(
-                      color: isSelected
-                          ? _getTransactionStatusColor(status)
-                          : Colors.grey[700],
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
+                  color: Color(0xFF1E5F4B))),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            children: [
+              BookingStatus.completed,
+              BookingStatus.pending,
+              BookingStatus.inProgress
+            ].map((s) {
+              return FilterChip(
+                label: Text(_statusLabel(s)),
+                selected: _selectedStatusFilter == s,
+                onSelected: (sel) {
+                  setState(() => _selectedStatusFilter = sel ? s : null);
+                  Navigator.pop(context);
+                },
+                selectedColor: _statusColor(s).withOpacity(0.2),
+              );
+            }).toList(),
           ),
-        );
-      },
+        ]),
+      ),
     );
   }
 
   void _showSearchDialog() {
-    final searchController = TextEditingController();
-
+    final ctrl = TextEditingController(text: _searchQuery);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Search Transactions'),
         content: TextField(
-          controller: searchController,
+          controller: ctrl,
+          autofocus: true,
           decoration: InputDecoration(
-            hintText: 'Search by customer, service, or ID...',
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+            hintText: 'Customer name, service, booking ID...',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             prefixIcon: const Icon(Icons.search),
           ),
-          onChanged: (value) {
-            setState(() {
-              _searchQuery = value;
-              _loadTransactions();
-            });
-          },
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              setState(() {
-                _searchQuery = null;
-                _loadTransactions();
-              });
-              Navigator.pop(context);
-            },
-            child: const Text('Clear'),
-          ),
+              onPressed: () {
+                setState(() => _searchQuery = null);
+                Navigator.pop(context);
+              },
+              child: const Text('Clear')),
           ElevatedButton(
             onPressed: () {
-              setState(() {
-                _searchQuery = searchController.text;
-                _loadTransactions();
-              });
+              setState(
+                  () => _searchQuery = ctrl.text.isEmpty ? null : ctrl.text);
               Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2A7F6E),
-              foregroundColor: Colors.white,
-            ),
+                backgroundColor: const Color(0xFF2A7F6E),
+                foregroundColor: Colors.white),
             child: const Text('Search'),
           ),
         ],
@@ -1937,400 +1037,48 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     );
   }
 
-  void _showWithdrawDialog() {
-    final amountController = TextEditingController();
-    WithdrawalMethod? selectedMethod;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Withdraw Earnings'),
-        content: StatefulBuilder(
-          builder: (context, setState) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Available Balance: ${_formatCurrency(_earningsSummary!.available)}',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E5F4B),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: amountController,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: 'Amount',
-                    prefixText: '₱ ',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<WithdrawalMethod>(
-                  value: selectedMethod,
-                  hint: const Text('Select Withdrawal Method'),
-                  items: WithdrawalMethod.values.map((method) {
-                    return DropdownMenuItem(
-                      value: method,
-                      child: Text(method.name),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedMethod = value;
-                    });
-                  },
-                  decoration: InputDecoration(
-                    labelText: 'Withdrawal Method',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final amount = double.tryParse(amountController.text);
-              if (amount == null || amount <= 0) {
-                _showErrorSnackBar('Please enter a valid amount');
-                return;
-              }
-              if (amount > _earningsSummary!.available) {
-                _showErrorSnackBar('Insufficient balance');
-                return;
-              }
-              if (selectedMethod == null) {
-                _showErrorSnackBar('Please select a withdrawal method');
-                return;
-              }
-
-              Navigator.pop(context);
-
-              if (widget.onWithdraw != null) {
-                await widget.onWithdraw!(amount, selectedMethod!);
-              } else {
-                _showSuccessSnackBar('Withdrawal request submitted!');
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2A7F6E),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Withdraw'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddMethodDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Withdrawal Method'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading:
-                  const Icon(Icons.account_balance, color: Color(0xFF2A7F6E)),
-              title: const Text('Bank Transfer'),
-              onTap: () {
-                Navigator.pop(context);
-                _showAddBankAccountDialog();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.account_balance_wallet,
-                  color: Color(0xFF2A7F6E)),
-              title: const Text('GCash'),
-              onTap: () {
-                Navigator.pop(context);
-                _showAddGCashDialog();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.credit_card, color: Color(0xFF2A7F6E)),
-              title: const Text('PayMaya'),
-              onTap: () {
-                Navigator.pop(context);
-                _showAddPayMayaDialog();
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddBankAccountDialog() {
-    final bankController = TextEditingController();
-    final accountController = TextEditingController();
-    final nameController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Bank Account'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField(
-              value: 'BDO',
-              items: ['BDO', 'BPI', 'Metrobank', 'PNB', 'Security Bank']
-                  .map((bank) =>
-                      DropdownMenuItem(value: bank, child: Text(bank)))
-                  .toList(),
-              onChanged: (value) {},
-              decoration: InputDecoration(
-                labelText: 'Bank',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: accountController,
-              decoration: InputDecoration(
-                labelText: 'Account Number',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: nameController,
-              decoration: InputDecoration(
-                labelText: 'Account Name',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              if (widget.onAddPaymentMethod != null) {
-                widget.onAddPaymentMethod!({
-                  'method': 'bank_transfer',
-                  'bank': bankController.text,
-                  'account': accountController.text,
-                  'name': nameController.text,
-                });
-              }
-              _showSuccessSnackBar('Bank account added successfully!');
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2A7F6E),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddGCashDialog() {
-    final numberController = TextEditingController();
-    final nameController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add GCash'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: numberController,
-              keyboardType: TextInputType.phone,
-              decoration: InputDecoration(
-                labelText: 'GCash Number',
-                hintText: '09xxxxxxxxx',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: nameController,
-              decoration: InputDecoration(
-                labelText: 'Account Name',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              if (widget.onAddPaymentMethod != null) {
-                widget.onAddPaymentMethod!({
-                  'method': 'gcash',
-                  'number': numberController.text,
-                  'name': nameController.text,
-                });
-              }
-              _showSuccessSnackBar('GCash account added successfully!');
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2A7F6E),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddPayMayaDialog() {
-    final numberController = TextEditingController();
-    final nameController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add PayMaya'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: numberController,
-              keyboardType: TextInputType.phone,
-              decoration: InputDecoration(
-                labelText: 'PayMaya Number',
-                hintText: '09xxxxxxxxx',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: nameController,
-              decoration: InputDecoration(
-                labelText: 'Account Name',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              if (widget.onAddPaymentMethod != null) {
-                widget.onAddPaymentMethod!({
-                  'method': 'paymaya',
-                  'number': numberController.text,
-                  'name': nameController.text,
-                });
-              }
-              _showSuccessSnackBar('PayMaya account added successfully!');
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2A7F6E),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showDetailedChart() {
+    final months = _monthlyEarnings;
+    final maxAmt = months.isEmpty
+        ? 1.0
+        : months.map((e) => e.amount).reduce((a, b) => a > b ? a : b);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          minChildSize: 0.5,
-          maxChildSize: 0.9,
-          expand: false,
-          builder: (context, scrollController) {
-            return Container(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Monthly Earnings Details',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E5F4B),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Expanded(
-                    child: ListView.builder(
-                      controller: scrollController,
-                      itemCount: _monthlyEarnings.length,
-                      itemBuilder: (context, index) {
-                        final month = _monthlyEarnings[index];
-                        final maxAmount = _monthlyEarnings
-                            .map((e) => e.amount)
-                            .reduce((a, b) => a > b ? a : b);
-
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.5,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollCtrl) => Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(children: [
+            Center(
+              child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2))),
+            ),
+            const SizedBox(height: 16),
+            const Text('Monthly Earnings Details',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E5F4B))),
+            const SizedBox(height: 20),
+            Expanded(
+              child: months.isEmpty
+                  ? const Center(child: Text('No data yet.'))
+                  : ListView.builder(
+                      controller: scrollCtrl,
+                      itemCount: months.length,
+                      itemBuilder: (context, i) {
+                        final m = months[i];
                         return Container(
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           decoration: BoxDecoration(
@@ -2338,139 +1086,132 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                               bottom: BorderSide(color: Colors.grey[100]!),
                             ),
                           ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color:
-                                      const Color(0xFF2A7F6E).withOpacity(0.1),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    month.month,
+                          child: Row(children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2A7F6E).withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Center(
+                                child: Text(m.label,
                                     style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF2A7F6E),
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF2A7F6E),
+                                        fontSize: 11)),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('${m.jobs} jobs completed',
+                                      style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500)),
+                                  const SizedBox(height: 4),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: maxAmt > 0 ? m.amount / maxAmt : 0,
+                                      backgroundColor: Colors.grey[200],
+                                      valueColor: const AlwaysStoppedAnimation(
+                                          Color(0xFF2A7F6E)),
+                                      minHeight: 6,
                                     ),
                                   ),
-                                ),
+                                ],
                               ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '${month.jobs} jobs completed',
-                                      style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: LinearProgressIndicator(
-                                        value: month.amount / maxAmount,
-                                        backgroundColor: Colors.grey[200],
-                                        valueColor:
-                                            const AlwaysStoppedAnimation<Color>(
-                                          Color(0xFF2A7F6E),
-                                        ),
-                                        minHeight: 6,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Text(
-                                _formatCurrency(month.amount),
+                            ),
+                            const SizedBox(width: 16),
+                            Text(_fmt(m.amount),
                                 style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF1E5F4B),
-                                ),
-                              ),
-                            ],
-                          ),
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF1E5F4B))),
+                          ]),
                         );
                       },
                     ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+            ),
+          ]),
+        ),
+      ),
     );
   }
 
-  void _showWithdrawHistory() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+  // ── Shared helpers ───────────────────────────────────────
+
+  Widget _emptyCard(String title, String subtitle, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.grey.withOpacity(0.08),
+              blurRadius: 5,
+              offset: const Offset(0, 2)),
+        ],
       ),
-      builder: (context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          minChildSize: 0.5,
-          maxChildSize: 0.9,
-          expand: false,
-          builder: (context, scrollController) {
-            return Container(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Withdrawal History',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E5F4B),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Expanded(
-                    child: ListView.builder(
-                      controller: scrollController,
-                      itemCount: _withdrawals.length,
-                      itemBuilder: (context, index) {
-                        return _WithdrawalTile(withdrawal: _withdrawals[index]);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      child: Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 40, color: AppColors.textLight.withOpacity(0.4)),
+          const SizedBox(height: 10),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textLight)),
+          const SizedBox(height: 4),
+          Text(subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: AppColors.textLight)),
+        ]),
+      ),
     );
   }
+
+  Widget _emptyCenterWidget(String title, String subtitle) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.07),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.receipt_long,
+                size: 52, color: AppColors.primary.withOpacity(0.4)),
+          ),
+          const SizedBox(height: 20),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark)),
+          const SizedBox(height: 8),
+          Text(subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 13, color: AppColors.textLight, height: 1.5)),
+        ]),
+      ),
+    );
+  }
+
+  // ── Bottom nav ───────────────────────────────────────────
 
   Widget _buildBottomNav() {
     const items = [
       {'icon': Icons.dashboard_rounded, 'label': 'Dashboard'},
       {'icon': Icons.calendar_month_rounded, 'label': 'Requests'},
-      {'icon': Icons.monetization_on_rounded, 'label': 'Earnings'},
+      {'icon': Icons.payments_rounded, 'label': 'Earnings'},
       {'icon': Icons.person_rounded, 'label': 'Profile'},
     ];
     return Container(
@@ -2531,17 +1272,59 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
   }
 }
 
-// ── Transaction Card (expandable) ──────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Private data classes
+// ─────────────────────────────────────────────────────────────
 
-class _TransactionCard extends StatelessWidget {
-  final Transaction transaction;
+class _MonthlyData {
+  final String label;
+  final int month;
+  final int year;
+  final double amount;
+  final int jobs;
+  const _MonthlyData(
+      {required this.label,
+      required this.month,
+      required this.year,
+      required this.amount,
+      required this.jobs});
+}
+
+class _ServiceData {
+  final String serviceType;
+  final int count;
+  final double amount;
+  final Color color;
+  const _ServiceData(
+      {required this.serviceType,
+      required this.count,
+      required this.amount,
+      required this.color});
+}
+
+// ─────────────────────────────────────────────────────────────
+// Expandable transaction card
+// ─────────────────────────────────────────────────────────────
+
+class _ExpandableTxnCard extends StatelessWidget {
+  final BookingEntity booking;
   final bool expanded;
-  final VoidCallback? onTap;
+  final VoidCallback onTap;
+  final Color statusColor;
+  final String statusLabel;
+  final String Function(double) fmt;
+  final String Function(DateTime) fmtDateTime;
+  final String Function(DateTime) timeAgo;
 
-  const _TransactionCard({
-    required this.transaction,
+  const _ExpandableTxnCard({
+    required this.booking,
     required this.expanded,
-    this.onTap,
+    required this.onTap,
+    required this.statusColor,
+    required this.statusLabel,
+    required this.fmt,
+    required this.fmtDateTime,
+    required this.timeAgo,
   });
 
   @override
@@ -2549,7 +1332,7 @@ class _TransactionCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: 250.ms,
+        duration: const Duration(milliseconds: 250),
         margin: const EdgeInsets.only(bottom: 14),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -2567,117 +1350,80 @@ class _TransactionCard extends StatelessWidget {
                   : Colors.black.withOpacity(0.06),
               blurRadius: expanded ? 16 : 12,
               offset: const Offset(0, 4),
-            )
+            ),
           ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Summary row
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2A7F6E).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(13),
-                    ),
-                    child: Icon(
-                      _getPaymentMethodIconData(transaction.paymentMethod),
-                      color: const Color(0xFF2A7F6E),
-                      size: 22,
-                    ),
+              child: Row(children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A7F6E).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(13),
                   ),
-                  const SizedBox(width: 13),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          transaction.customerName,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textDark,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${transaction.serviceType} • ${_timeAgo(transaction.date)}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textLight,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                  child: const Icon(Icons.handyman_rounded,
+                      color: Color(0xFF2A7F6E), size: 22),
+                ),
+                const SizedBox(width: 13),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        _formatCurrency(transaction.amount),
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E5F4B),
-                        ),
-                      ),
+                      Text(booking.customer?.name ?? 'Customer',
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textDark)),
                       const SizedBox(height: 2),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: _getTransactionStatusColor(transaction.status)
-                              .withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          _getTransactionStatusText(transaction.status),
-                          style: TextStyle(
-                            fontSize: 9,
-                            color:
-                                _getTransactionStatusColor(transaction.status),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                      Text(
+                        '${booking.serviceType} • ${timeAgo(booking.scheduledDate)}',
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.textLight),
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Text(fmt(booking.priceEstimate ?? 0),
+                      style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1E5F4B))),
+                  const SizedBox(height: 2),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(statusLabel,
+                        style: TextStyle(
+                            fontSize: 9,
+                            color: statusColor,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                ]),
+              ]),
             ),
-
-            // Expanded details
             if (expanded) ...[
               const Divider(height: 1, color: Color(0xFFF0F0F0)),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _detailRow(
-                      Icons.calendar_today_outlined,
-                      'Date & Time',
-                      _formatDateTime(transaction.date),
-                    ),
-                    _detailRow(
-                      Icons.payments_outlined,
-                      'Payment Method',
-                      _getPaymentMethodIcon(transaction.paymentMethod),
-                    ),
-                    _detailRow(
-                      Icons.receipt_long_outlined,
-                      'Transaction ID',
-                      transaction.id,
-                    ),
-                  ],
-                ),
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                child: Column(children: [
+                  _detailRow(Icons.calendar_today_outlined, 'Date & Time',
+                      fmtDateTime(booking.scheduledDate)),
+                  _detailRow(Icons.location_on_outlined, 'Address',
+                      booking.address ?? 'N/A'),
+                  _detailRow(
+                      Icons.receipt_long_outlined, 'Booking ID', booking.id),
+                ]),
               ),
-              const SizedBox(height: 12),
             ],
           ],
         ),
@@ -2687,227 +1433,86 @@ class _TransactionCard extends StatelessWidget {
 
   Widget _detailRow(IconData icon, String label, String value) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, size: 15, color: AppColors.textLight),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, size: 15, color: AppColors.textLight),
+          const SizedBox(width: 8),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label,
+                style: const TextStyle(
                     fontSize: 10,
                     color: AppColors.textLight,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 1),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 260),
-                  child: Text(
-                    value,
-                    style: const TextStyle(
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 1),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 260),
+              child: Text(value,
+                  style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
-                      color: AppColors.textDark,
-                    ),
-                  ),
-                ),
-              ],
+                      color: AppColors.textDark)),
             ),
-          ],
-        ),
+          ]),
+        ]),
       );
-
-  String _timeAgo(DateTime dt) {
-    final diff = DateTime.now().difference(dt).abs();
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
-  }
-
-  String _formatCurrency(double amount) {
-    return '₱${amount.toStringAsFixed(2)}';
-  }
-
-  String _formatDateTime(DateTime date) {
-    final hour = date.hour > 12 ? date.hour - 12 : date.hour;
-    final minute = date.minute.toString().padLeft(2, '0');
-    final ampm = date.hour >= 12 ? 'PM' : 'AM';
-    return '${date.month}/${date.day}/${date.year} ${hour}:$minute $ampm';
-  }
-
-  IconData _getPaymentMethodIconData(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash:
-        return Icons.money;
-      case PaymentMethod.gcash:
-      case PaymentMethod.paymaya:
-        return Icons.account_balance_wallet;
-      case PaymentMethod.creditCard:
-        return Icons.credit_card;
-      case PaymentMethod.bankTransfer:
-        return Icons.account_balance;
-    }
-  }
-
-  Color _getTransactionStatusColor(TransactionStatus status) {
-    switch (status) {
-      case TransactionStatus.completed:
-        return Colors.green;
-      case TransactionStatus.pending:
-        return Colors.orange;
-      case TransactionStatus.failed:
-        return Colors.red;
-      case TransactionStatus.refunded:
-        return Colors.purple;
-    }
-  }
-
-  String _getTransactionStatusText(TransactionStatus status) {
-    switch (status) {
-      case TransactionStatus.completed:
-        return 'Completed';
-      case TransactionStatus.pending:
-        return 'Pending';
-      case TransactionStatus.failed:
-        return 'Failed';
-      case TransactionStatus.refunded:
-        return 'Refunded';
-    }
-  }
-
-  String _getPaymentMethodIcon(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash:
-        return 'Cash';
-      case PaymentMethod.gcash:
-        return 'GCash';
-      case PaymentMethod.creditCard:
-        return 'Credit Card';
-      case PaymentMethod.paymaya:
-        return 'PayMaya';
-      case PaymentMethod.bankTransfer:
-        return 'Bank Transfer';
-    }
-  }
 }
 
-// ── Withdrawal Tile ──────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Date range picker sheet
+// ─────────────────────────────────────────────────────────────
 
-class _WithdrawalTile extends StatelessWidget {
-  final Withdrawal withdrawal;
-
-  const _WithdrawalTile({required this.withdrawal});
+class _DateRangeSheet extends StatelessWidget {
+  final void Function(DateTimeRange) onSelect;
+  const _DateRangeSheet({required this.onSelect});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color:
-                  _getWithdrawalStatusColor(withdrawal.status).withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              _getWithdrawalMethodIcon(withdrawal.method),
-              color: _getWithdrawalStatusColor(withdrawal.status),
-              size: 16,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _formatCurrency(withdrawal.amount),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E5F4B),
-                  ),
-                ),
-                Text(
-                  '${withdrawal.method.name} • ${withdrawal.accountDetails}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                _formatDate(withdrawal.date),
-                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _getWithdrawalStatusColor(withdrawal.status)
-                      .withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _getWithdrawalStatusText(withdrawal.status),
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: _getWithdrawalStatusColor(withdrawal.status),
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+    final now = DateTime.now();
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('Select Date Range',
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1E5F4B))),
+        const SizedBox(height: 16),
+        _tile(
+            context,
+            Icons.today,
+            'Today',
+            DateTimeRange(
+              start: DateTime(now.year, now.month, now.day),
+              end: DateTime(now.year, now.month, now.day, 23, 59, 59),
+            )),
+        _tile(
+            context,
+            Icons.date_range,
+            'This Week',
+            DateTimeRange(
+              start: now.subtract(Duration(days: now.weekday - 1)),
+              end: DateTime(now.year, now.month, now.day, 23, 59, 59),
+            )),
+        _tile(
+            context,
+            Icons.calendar_month,
+            'This Month',
+            DateTimeRange(
+              start: DateTime(now.year, now.month, 1),
+              end: DateTime(now.year, now.month + 1, 0, 23, 59, 59),
+            )),
+      ]),
     );
   }
 
-  Color _getWithdrawalStatusColor(WithdrawalStatus status) {
-    switch (status) {
-      case WithdrawalStatus.completed:
-        return Colors.green;
-      case WithdrawalStatus.processing:
-        return Colors.orange;
-      case WithdrawalStatus.failed:
-        return Colors.red;
-    }
-  }
-
-  String _getWithdrawalStatusText(WithdrawalStatus status) {
-    switch (status) {
-      case WithdrawalStatus.completed:
-        return 'Completed';
-      case WithdrawalStatus.processing:
-        return 'Processing';
-      case WithdrawalStatus.failed:
-        return 'Failed';
-    }
-  }
-
-  IconData _getWithdrawalMethodIcon(WithdrawalMethod method) {
-    switch (method) {
-      case WithdrawalMethod.bankTransfer:
-        return Icons.account_balance;
-      case WithdrawalMethod.gcash:
-      case WithdrawalMethod.paymaya:
-        return Icons.account_balance_wallet;
-    }
-  }
-
-  String _formatCurrency(double amount) {
-    return '₱${amount.toStringAsFixed(2)}';
-  }
-
-  String _formatDate(DateTime date) {
-    return '${date.month}/${date.day}/${date.year}';
+  Widget _tile(
+      BuildContext context, IconData icon, String label, DateTimeRange range) {
+    return ListTile(
+      leading: Icon(icon, color: const Color(0xFF2A7F6E)),
+      title: Text(label),
+      onTap: () {
+        onSelect(range);
+        Navigator.pop(context);
+      },
+    );
   }
 }

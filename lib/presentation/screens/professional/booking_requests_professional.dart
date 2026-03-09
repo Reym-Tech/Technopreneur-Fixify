@@ -4,13 +4,16 @@
 //
 // Shows PENDING bookings only with Accept / Decline actions.
 // Tap card → expands to show full details.
+// When the pro is offline an overlay banner blocks new accepts and explains why.
 //
 // Props:
-//   bookings      → List<BookingEntity>   — all pro bookings (filtered internally to pending)
-//   onAccept      → Function(BookingEntity)
-//   onDecline     → Function(BookingEntity)
-//   onNavTap      → Function(int)
+//   bookings        → List<BookingEntity>   — all pro bookings (filtered internally to pending)
+//   isAvailable     → bool                  — mirrors the toggle state from main.dart
+//   onAccept        → Function(BookingEntity)
+//   onDecline       → Function(BookingEntity)
+//   onNavTap        → Function(int)
 //   currentNavIndex → int
+//   onRefresh       → Future<void> Function()?
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -19,6 +22,7 @@ import 'package:fixify/domain/entities/entities.dart';
 
 class BookingRequestsScreen extends StatefulWidget {
   final List<BookingEntity> bookings;
+  final bool isAvailable;
   final Function(BookingEntity)? onAccept;
   final Function(BookingEntity)? onDecline;
   final Function(int)? onNavTap;
@@ -28,6 +32,7 @@ class BookingRequestsScreen extends StatefulWidget {
   const BookingRequestsScreen({
     super.key,
     this.bookings = const [],
+    this.isAvailable = true,
     this.onAccept,
     this.onDecline,
     this.onNavTap,
@@ -48,19 +53,76 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) widget.onNavTap?.call(0); // back → Dashboard
-        },
-        child: Scaffold(
-          backgroundColor: AppColors.backgroundLight,
-          body: Column(children: [
-            _buildHeader(),
-            Expanded(child: _pending.isEmpty ? _empty() : _buildList()),
-          ]),
-          bottomNavigationBar: _buildBottomNav(),
-        ));
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) widget.onNavTap?.call(0);
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.backgroundLight,
+        body: Column(children: [
+          _buildHeader(),
+          // ── Offline banner ─────────────────────────────────────────
+          if (!widget.isAvailable) _buildOfflineBanner(),
+          Expanded(child: _pending.isEmpty ? _empty() : _buildList()),
+        ]),
+        bottomNavigationBar: _buildBottomNav(),
+      ),
+    );
   }
+
+  // ── OFFLINE BANNER ────────────────────────────────────────
+
+  Widget _buildOfflineBanner() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF3B30).withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFF3B30).withOpacity(0.3)),
+      ),
+      child: Row(children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFF3B30).withOpacity(0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Icon(Icons.wifi_off_rounded,
+              color: Color(0xFFFF3B30), size: 22),
+        ),
+        const SizedBox(width: 14),
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'You\'re currently Offline',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFFF3B30),
+                ),
+              ),
+              SizedBox(height: 3),
+              Text(
+                'Customers cannot find or book you. '
+                'Toggle Online from your Dashboard to receive new requests.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMedium,
+                  height: 1.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ]),
+    ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.1, end: 0);
+  }
+
+  // ── HEADER ────────────────────────────────────────────────
 
   Widget _buildHeader() => Container(
         decoration: const BoxDecoration(
@@ -72,41 +134,85 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
           borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
         ),
         child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-              child: Row(children: [
-                GestureDetector(
-                  onTap: () => widget.onNavTap?.call(0),
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white, size: 18),
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Row(children: [
+              GestureDetector(
+                onTap: () => widget.onNavTap?.call(0),
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  child: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white, size: 18),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      const Text('Booking Requests',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.3)),
-                      Text(
-                          '${_pending.length} pending request${_pending.length == 1 ? '' : 's'}',
-                          style: TextStyle(
-                              color: Colors.white.withOpacity(0.6),
-                              fontSize: 13)),
-                    ])),
-                if (_pending.isNotEmpty)
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Booking Requests',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3)),
+                    Text(
+                      '${_pending.length} pending request${_pending.length == 1 ? '' : 's'}',
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.6), fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+              // Status pill next to count badge
+              Row(children: [
+                // Online / Offline pill
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: widget.isAvailable
+                        ? const Color(0xFF34C759).withOpacity(0.18)
+                        : const Color(0xFFFF3B30).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: widget.isAvailable
+                          ? const Color(0xFF34C759).withOpacity(0.4)
+                          : const Color(0xFFFF3B30).withOpacity(0.4),
+                    ),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: widget.isAvailable
+                            ? const Color(0xFF34C759)
+                            : const Color(0xFFFF3B30),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      widget.isAvailable ? 'Online' : 'Offline',
+                      style: TextStyle(
+                        color: widget.isAvailable
+                            ? const Color(0xFF34C759)
+                            : const Color(0xFFFF9090),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ]),
+                ),
+                if (_pending.isNotEmpty) ...[
+                  const SizedBox(width: 8),
                   Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -122,8 +228,11 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
                             fontSize: 13,
                             fontWeight: FontWeight.w700)),
                   ),
+                ],
               ]),
-            )),
+            ]),
+          ),
+        ),
       );
 
   Widget _buildList() => RefreshIndicator(
@@ -138,8 +247,11 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
             return _RequestCard(
               booking: b,
               expanded: expanded,
+              // Disable accept/decline when offline — pro must go online first
+              isAvailable: widget.isAvailable,
               onTap: () => setState(() => _expandedId = expanded ? null : b.id),
-              onAccept: () => widget.onAccept?.call(b),
+              onAccept:
+                  widget.isAvailable ? () => widget.onAccept?.call(b) : null,
               onDecline: () => widget.onDecline?.call(b),
             ).animate().fadeIn(delay: (i * 60).ms).slideY(begin: 0.06, end: 0);
           },
@@ -166,10 +278,12 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
                     fontWeight: FontWeight.w700,
                     color: AppColors.textDark)),
             const SizedBox(height: 8),
-            const Text(
-              'New booking requests from customers will appear here.',
+            Text(
+              widget.isAvailable
+                  ? 'New booking requests from customers will appear here.'
+                  : 'You\'re offline. Go online from your Dashboard to start receiving requests.',
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                   fontSize: 13, color: AppColors.textLight, height: 1.5),
             ),
           ]),
@@ -194,45 +308,45 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
         ],
       ),
       child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: List.generate(items.length, (i) {
-                final active = i == widget.currentNavIndex;
-                return GestureDetector(
-                  onTap: () => widget.onNavTap?.call(i),
-                  child: AnimatedContainer(
-                    duration: 200.ms,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: active
-                          ? AppColors.primary.withOpacity(0.1)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(items[i]['icon'] as IconData,
-                          color:
-                              active ? AppColors.primary : AppColors.textLight,
-                          size: 24),
-                      const SizedBox(height: 4),
-                      Text(items[i]['label'] as String,
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontWeight:
-                                  active ? FontWeight.w700 : FontWeight.w400,
-                              color: active
-                                  ? AppColors.primary
-                                  : AppColors.textLight)),
-                    ]),
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: List.generate(items.length, (i) {
+              final active = i == widget.currentNavIndex;
+              return GestureDetector(
+                onTap: () => widget.onNavTap?.call(i),
+                child: AnimatedContainer(
+                  duration: 200.ms,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? AppColors.primary.withOpacity(0.1)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                );
-              }),
-            ),
-          )),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(items[i]['icon'] as IconData,
+                        color: active ? AppColors.primary : AppColors.textLight,
+                        size: 24),
+                    const SizedBox(height: 4),
+                    Text(items[i]['label'] as String,
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight:
+                                active ? FontWeight.w700 : FontWeight.w400,
+                            color: active
+                                ? AppColors.primary
+                                : AppColors.textLight)),
+                  ]),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -242,6 +356,7 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
 class _RequestCard extends StatelessWidget {
   final BookingEntity booking;
   final bool expanded;
+  final bool isAvailable;
   final VoidCallback? onTap;
   final VoidCallback? onAccept;
   final VoidCallback? onDecline;
@@ -249,6 +364,7 @@ class _RequestCard extends StatelessWidget {
   const _RequestCard({
     required this.booking,
     required this.expanded,
+    required this.isAvailable,
     this.onTap,
     this.onAccept,
     this.onDecline,
@@ -297,9 +413,9 @@ class _RequestCard extends StatelessWidget {
               ),
               const SizedBox(width: 13),
               Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(booking.serviceType,
                         style: const TextStyle(
                             fontSize: 15,
@@ -311,13 +427,16 @@ class _RequestCard extends StatelessWidget {
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.textLight),
                     ),
-                  ])),
+                  ],
+                ),
+              ),
               Icon(
-                  expanded
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
-                  color: AppColors.textLight,
-                  size: 20),
+                expanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+                color: AppColors.textLight,
+                size: 20,
+              ),
             ]),
           ),
 
@@ -327,54 +446,93 @@ class _RequestCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (booking.address != null && booking.address!.isNotEmpty)
-                      _detailRow(Icons.location_on_outlined, 'Location',
-                          booking.address!),
-                    if (booking.notes != null && booking.notes!.isNotEmpty)
-                      _detailRow(Icons.notes_rounded, 'Notes', booking.notes!),
-                    _detailRow(Icons.calendar_today_outlined, 'Scheduled',
-                        '${booking.scheduledDate.day}/${booking.scheduledDate.month}/${booking.scheduledDate.year}'),
-                    if (booking.priceEstimate != null)
-                      _detailRow(Icons.payments_outlined, 'Estimated Rate',
-                          '₱${booking.priceEstimate!.toStringAsFixed(0)}/hr'),
-                  ]),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (booking.address != null && booking.address!.isNotEmpty)
+                    _detailRow(Icons.location_on_outlined, 'Location',
+                        booking.address!),
+                  if (booking.notes != null && booking.notes!.isNotEmpty)
+                    _detailRow(Icons.notes_rounded, 'Notes', booking.notes!),
+                  _detailRow(Icons.calendar_today_outlined, 'Scheduled',
+                      '${booking.scheduledDate.day}/${booking.scheduledDate.month}/${booking.scheduledDate.year}'),
+                  if (booking.priceEstimate != null)
+                    _detailRow(Icons.payments_outlined, 'Estimated Rate',
+                        '₱${booking.priceEstimate!.toStringAsFixed(0)}/hr'),
+                ],
+              ),
             ),
           ],
 
-          // Action buttons (always visible)
+          // Action buttons
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            child: Row(children: [
-              Expanded(
+            child: Column(children: [
+              // Offline warning on the card itself
+              if (!isAvailable)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Container(
+                    width: double.infinity,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF3B30).withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: const Color(0xFFFF3B30).withOpacity(0.2)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(Icons.wifi_off_rounded,
+                            size: 13, color: Color(0xFFFF3B30)),
+                        SizedBox(width: 6),
+                        Text(
+                          'Go Online to accept requests',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFFFF3B30)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              Row(children: [
+                Expanded(
                   child: OutlinedButton(
-                onPressed: onDecline,
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFFFF3B30)),
-                  foregroundColor: const Color(0xFFFF3B30),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                    onPressed: onDecline,
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFFFF3B30)),
+                      foregroundColor: const Color(0xFFFF3B30),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text('Decline',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
                 ),
-                child: const Text('Decline',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-              )),
-              const SizedBox(width: 12),
-              Expanded(
+                const SizedBox(width: 12),
+                Expanded(
                   child: ElevatedButton(
-                onPressed: onAccept,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  elevation: 0,
+                    // null disables the button when offline
+                    onPressed: onAccept,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isAvailable
+                          ? AppColors.primary
+                          : Colors.grey.shade400,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      elevation: 0,
+                    ),
+                    child: const Text('Accept',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
                 ),
-                child: const Text('Accept',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-              )),
+              ]),
             ]),
           ),
         ]),

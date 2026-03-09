@@ -188,6 +188,13 @@ class _ProfessionalDashboardScreenState
         .join();
     final verified = widget.professional?.verified ?? false;
 
+    // Avatar: network URL takes priority, falls back to initials
+    final avatarUrl = widget.user?.avatarUrl;
+    final ImageProvider? avatarImage =
+        (avatarUrl != null && avatarUrl.isNotEmpty)
+            ? NetworkImage(avatarUrl)
+            : null;
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -327,16 +334,35 @@ class _ProfessionalDashboardScreenState
                           border: Border.all(
                               color: Colors.white.withOpacity(0.3), width: 2),
                         ),
-                        child: Center(
-                          child: Text(
-                            initials.isNotEmpty ? initials : 'P',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
+                        child: avatarImage != null
+                            ? ClipOval(
+                                child: Image(
+                                  image: avatarImage,
+                                  width: 64,
+                                  height: 64,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Center(
+                                    child: Text(
+                                      initials.isNotEmpty ? initials : 'P',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : Center(
+                                child: Text(
+                                  initials.isNotEmpty ? initials : 'P',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
                       ),
                       const SizedBox(width: 16),
                       Expanded(
@@ -708,7 +734,7 @@ class _ProfessionalDashboardScreenState
         ),
         const SizedBox(height: 12),
         _menuCard(
-          icon: Icons.monetization_on_rounded,
+          icon: Icons.payments_rounded,
           title: 'Earnings Summary',
           subtitle: 'View your earnings and job history',
           onTap: widget.onViewEarnings,

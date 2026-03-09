@@ -6,7 +6,8 @@
 //   • Edit Profile    — name, phone, city; saved via onSaveProfile
 //   • Change Password — current / new / confirm; saved via onChangePassword
 //   • Avatar upload   — gallery or camera; saved via onUploadAvatar
-//   • Service Location — map pin (Google Maps + GPS); saved via onSaveLocation  ← NEW
+//   • Service Location — permission modal → map pin (Google Maps + GPS)
+//                        Auto-reverse-geocodes → updates city/address field
 //   • Privacy Policy  — tap handler
 //   • Logout          — confirmation dialog
 //
@@ -15,7 +16,7 @@
 //   professional      → ProfessionalEntity?
 //   onBack            → VoidCallback?
 //   onSaveProfile     → Future<void> Function(String name, String? phone, String? city)?
-//   onSaveLocation    → Future<void> Function(double lat, double lng)?            ← NEW
+//   onSaveLocation    → Future<void> Function(double lat, double lng)?
 //   onChangePassword  → Future<void> Function(String currentPw, String newPw)?
 //   onUploadAvatar    → Future<String?> Function(List<int> bytes, String fileName)?
 //   onServicesOffered → VoidCallback?
@@ -24,6 +25,8 @@
 //   onLogout          → VoidCallback?
 
 import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart'; // Factory, EagerGestureRecognizer
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -34,13 +37,16 @@ import 'package:image_picker/image_picker.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ProfessionalProfileScreen
+// ─────────────────────────────────────────────────────────────────────────────
+
 class ProfessionalProfileScreen extends StatefulWidget {
   final UserEntity? user;
   final ProfessionalEntity? professional;
   final VoidCallback? onBack;
   final Future<void> Function(String name, String? phone, String? city)?
       onSaveProfile;
-  // NEW — saves the handyman's GPS pin to professionals.latitude / .longitude
   final Future<void> Function(double latitude, double longitude)?
       onSaveLocation;
   final Future<void> Function(String currentPassword, String newPassword)?
@@ -90,7 +96,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
     _phone = widget.user?.phone;
     _city = widget.professional?.city;
     _avatarUrl = widget.user?.avatarUrl;
-    // Pre-load existing coordinates from the entity if already saved
     _savedLat = widget.professional?.latitude;
     _savedLng = widget.professional?.longitude;
   }
@@ -663,7 +668,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
       final bytes = await file.readAsBytes();
       final fileName = 'avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-      // Show local preview immediately
       setState(() => _avatarFile = file);
 
       final newUrl =
@@ -686,30 +690,221 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
     }
   }
 
-  // ── 4. LOCATION SHEET ─────────────────────────────────────
-  // Opens _LocationPickerSheet where the handyman pins their service
-  // location on a Google Map (green marker).
-  // Saved to professionals.latitude / .longitude via onSaveLocation.
-  // These coords appear as the green pin on the customer's AssessmentScreen.
+  // ── 4. LOCATION — permission check + modal ────────────────
+  //
+  // Flow:
+  //   a) Check if location service is enabled on device.
+  //   b) If permission is deniedForever  → show "Open Settings" dialog.
+  //   c) If permission is denied         → show "Allow Location" dialog,
+  //                                        then call requestPermission().
+  //   d) If permission is granted        → open _LocationPickerSheet.
+  //
+  // _LocationPickerSheet.onSave persists lat/lng AND syncs the geocoded
+  // city back to the City/Address field via onSaveProfile (best-effort).
 
-  void _openLocationSheet() {
+  Future<void> _openLocationSheet() async {
+    // ── a) Device location service ───────────────────────────
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (!mounted) return;
+      _showError(context, 'Location services are disabled on this device.');
+      return;
+    }
+
+    // ── b/c) Permission ──────────────────────────────────────
+    var status = await Geolocator.checkPermission();
+
+    if (status == LocationPermission.deniedForever) {
+      if (!mounted) return;
+      await _showLocationPermissionModal(deniedForever: true);
+      // Re-read after user may have changed settings
+      status = await Geolocator.checkPermission();
+      if (status != LocationPermission.always &&
+          status != LocationPermission.whileInUse) return;
+    } else if (status == LocationPermission.denied) {
+      if (!mounted) return;
+      // Show the explain-why dialog first, then trigger the OS prompt
+      await _showLocationPermissionModal(deniedForever: false);
+      if (!mounted) return;
+      status = await Geolocator.requestPermission();
+      if (status != LocationPermission.always &&
+          status != LocationPermission.whileInUse) {
+        if (mounted)
+          _showError(context,
+              'Location permission denied. Enable it in app settings.');
+        return;
+      }
+    }
+
+    // ── d) Permission granted → open map sheet ───────────────
+    if (!mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      enableDrag: false, // prevent sheet drag stealing map pan gestures
       backgroundColor: Colors.transparent,
       builder: (_) => _LocationPickerSheet(
         initialLat: _savedLat,
         initialLng: _savedLng,
-        onSave: (lat, lng) async {
+        onSave: (lat, lng, city) async {
           await widget.onSaveLocation?.call(lat, lng);
-          if (mounted)
+          if (mounted) {
             setState(() {
               _savedLat = lat;
               _savedLng = lng;
+              if (city != null && city.isNotEmpty) _city = city;
             });
+          }
+          // Best-effort: sync geocoded city to DB
+          if (city != null && city.isNotEmpty) {
+            try {
+              await widget.onSaveProfile?.call(_name, _phone, city);
+            } catch (_) {
+              // Non-fatal: location coords already saved
+            }
+          }
           _showSuccess(
               'Location saved! Customers can now see your route on the map.');
         },
+      ),
+    );
+  }
+
+  // ── Location permission modal ─────────────────────────────
+  //
+  // Mirrors the RequestServiceScreen permission dialog style:
+  //   • Location icon in a tinted circle
+  //   • Title + explanation text
+  //   • Tinted info-banner
+  //   • Primary action button  ("Allow Location" or "Open App Settings")
+  //   • Secondary cancel link  (only when deniedForever, so user can skip
+  //     going to Settings without triggering the OS prompt again)
+
+  Future<void> _showLocationPermissionModal(
+      {required bool deniedForever}) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        elevation: 0,
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // ── Icon ──────────────────────────────────────
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.location_on_rounded,
+                  color: AppColors.primary, size: 36),
+            ),
+            const SizedBox(height: 20),
+
+            // ── Title ─────────────────────────────────────
+            const Text(
+              'Allow Location Access',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textDark),
+            ),
+            const SizedBox(height: 10),
+
+            // ── Body ──────────────────────────────────────
+            Text(
+              deniedForever
+                  ? 'Location permission was permanently denied.\n\n'
+                      'Please open App Settings and enable location '
+                      'access for Fixify so you can pin your service area on the map.'
+                  : 'Fixify needs your location to accurately pin your '
+                      'service area on the map so customers can find you.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 13, color: AppColors.textLight, height: 1.55),
+            ),
+            const SizedBox(height: 14),
+
+            // ── Info banner ───────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline_rounded,
+                      color: AppColors.primary, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      deniedForever
+                          ? 'You will be taken to App Settings. After enabling location, return to Fixify.'
+                          : 'Your location is only used to set your service area. It is never shared without your consent.',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600,
+                          height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // ── Primary button ────────────────────────────
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () async {
+                  Navigator.of(ctx).pop();
+                  if (deniedForever) await Geolocator.openAppSettings();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: Text(
+                  deniedForever ? 'Open App Settings' : 'Allow Location',
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+
+            // ── Cancel (only shown for deniedForever) ─────
+            if (deniedForever) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12)),
+                  child: const Text(
+                    'Not Now',
+                    style: TextStyle(
+                        fontSize: 14,
+                        color: AppColors.textLight,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ]),
+        ),
       ),
     );
   }
@@ -817,7 +1012,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
                           color: Colors.white,
                           fontSize: 18,
                           fontWeight: FontWeight.w700)),
-                  // Edit button opens the edit sheet
                   GestureDetector(
                     onTap: _openEditSheet,
                     child: Container(
@@ -873,7 +1067,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
                             ),
                           ),
                   ),
-                  // Camera badge
                   Positioned(
                     bottom: 2,
                     right: 2,
@@ -1024,7 +1217,7 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
             value: price),
         _divider(),
 
-        // ── Service Location row (NEW) ─────────────────────────────────────
+        // ── Service Location row ───────────────────────────
         GestureDetector(
           onTap: _openLocationSheet,
           child: Padding(
@@ -1084,7 +1277,7 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
         ),
         _divider(),
 
-        // Verification status (unchanged)
+        // Verification status
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           child: Row(children: [
@@ -1349,17 +1542,24 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
 // Near-full-screen bottom sheet with:
 //   • Google Map — tap anywhere to drop a green marker
 //   • GPS button (top-right) — jumps to device location
+//     (permission already granted by parent before this sheet opens)
 //   • Zoom controls (bottom-right)
-//   • Reverse-geocoding — address label shown under pin
+//   • Map type toggle thumbnail (bottom-left) — Normal ↔ Satellite
+//   • Reverse-geocoding — address label + city extraction shown under pin
+//   • City badge — "City: X ← will update your profile"
 //   • Pin preview card + Save Location / Cancel buttons
+//   • "Tap to pin" hint overlay when no pin is set
+//   • RawGestureDetector wrapping the map — AllowMultipleGestureRecognizer
+//     wins the gesture arena immediately so single-finger panning goes to
+//     GoogleMap, not the sheet's drag-to-dismiss handler
 //
-// Green marker colour matches the handyman pin on AssessmentScreen map.
+// onSave(lat, lng, city?) — city passed back for profile City/Address sync.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _LocationPickerSheet extends StatefulWidget {
   final double? initialLat;
   final double? initialLng;
-  final Future<void> Function(double lat, double lng) onSave;
+  final Future<void> Function(double lat, double lng, String? city) onSave;
 
   const _LocationPickerSheet({
     this.initialLat,
@@ -1378,6 +1578,9 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
   bool _geocoding = false;
   bool _saving = false;
   String _addressLabel = '';
+  String? _geocodedCity;
+
+  MapType _mapType = MapType.normal;
 
   static const LatLng _defaultCamera = LatLng(7.0707, 125.6087); // Davao City
 
@@ -1391,49 +1594,56 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
 
   LatLng get _camera => _pinned ?? _defaultCamera;
 
+  // ── Map type toggle ────────────────────────────────────────
+
+  void _toggleMapType() => setState(() {
+        _mapType =
+            _mapType == MapType.normal ? MapType.satellite : MapType.normal;
+      });
+
+  // ── Pin & geocode ──────────────────────────────────────────
+
   Future<void> _onMapTap(LatLng ll) async {
     setState(() {
       _pinned = ll;
       _geocoding = true;
       _addressLabel = '';
+      _geocodedCity = null;
     });
     try {
       final marks = await placemarkFromCoordinates(ll.latitude, ll.longitude)
           .timeout(const Duration(seconds: 8));
       if (marks.isNotEmpty && mounted) {
         final p = marks.first;
+
+        // Full address label
         final parts = [
           p.street,
           p.subLocality ?? p.subAdministrativeArea,
           p.locality,
           p.administrativeArea,
         ].where((s) => s != null && s!.isNotEmpty).toList();
-        setState(() => _addressLabel = parts.join(', '));
+
+        // City — matches requestservice_customer.dart logic
+        final city = (p.locality ?? '').trim();
+
+        setState(() {
+          _addressLabel = parts.join(', ');
+          _geocodedCity = city.isNotEmpty ? city : null;
+        });
       }
     } catch (_) {
-      // Silent — coordinates are still valid without address label
+      // Silent — coordinates are still valid without an address label
     } finally {
       if (mounted) setState(() => _geocoding = false);
     }
   }
 
+  // ── GPS ────────────────────────────────────────────────────
+  // Permission is pre-checked by _openLocationSheet() in the parent,
+  // so here we only need to fetch the position.
+
   Future<void> _useGps() async {
-    final serviceOn = await Geolocator.isLocationServiceEnabled();
-    if (!serviceOn) {
-      _snack('Location services are disabled.');
-      return;
-    }
-
-    var perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
-    }
-    if (perm == LocationPermission.deniedForever ||
-        perm == LocationPermission.denied) {
-      _snack('Location permission denied. Pin manually on the map.');
-      return;
-    }
-
     setState(() => _locating = true);
     try {
       final pos = await Geolocator.getCurrentPosition(
@@ -1449,6 +1659,8 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
     }
   }
 
+  // ── Save ───────────────────────────────────────────────────
+
   Future<void> _save() async {
     if (_pinned == null) {
       _snack('Please pin your location on the map first.');
@@ -1456,7 +1668,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
     }
     setState(() => _saving = true);
     try {
-      await widget.onSave(_pinned!.latitude, _pinned!.longitude);
+      await widget.onSave(_pinned!.latitude, _pinned!.longitude, _geocodedCity);
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) setState(() => _saving = false);
@@ -1477,6 +1689,8 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.of(context).padding.bottom;
+    final isSatellite = _mapType == MapType.satellite;
+
     return Container(
       height: MediaQuery.of(context).size.height * 0.88,
       decoration: const BoxDecoration(
@@ -1484,7 +1698,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
       ),
       child: Column(children: [
-        // Drag handle
+        // ── Drag handle ────────────────────────────────────
         const SizedBox(height: 12),
         Container(
           width: 40,
@@ -1495,7 +1709,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
         ),
         const SizedBox(height: 16),
 
-        // Header
+        // ── Header ─────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Row(children: [
@@ -1530,12 +1744,22 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
         ),
         const SizedBox(height: 16),
 
-        // Map
+        // ── Map ────────────────────────────────────────────
+        // RawGestureDetector + AllowMultipleGestureRecognizer:
+        //   wins the gesture arena on first touch so GoogleMap gets all
+        //   pan/scale events; the sheet's drag handler never fires.
         Expanded(
           child: Stack(children: [
+            // Google Map
             GoogleMap(
               initialCameraPosition: CameraPosition(
                   target: _camera, zoom: _pinned != null ? 15 : 13),
+              mapType: _mapType,
+              gestureRecognizers: {
+                Factory<EagerGestureRecognizer>(
+                  () => EagerGestureRecognizer(),
+                ),
+              },
               onMapCreated: (c) {
                 _mapCtrl = c;
                 if (_pinned != null) {
@@ -1569,7 +1793,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
               compassEnabled: false,
             ),
 
-            // GPS button
+            // GPS button — top-right
             Positioned(
               top: 12,
               right: 12,
@@ -1601,7 +1825,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
               ),
             ),
 
-            // Zoom controls
+            // Zoom controls — bottom-right
             Positioned(
               bottom: 12,
               right: 12,
@@ -1614,10 +1838,71 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
               ]),
             ),
 
-            // Geocoding overlay
+            // Map type toggle thumbnail — bottom-left
+            Positioned(
+              bottom: 12,
+              left: 12,
+              child: GestureDetector(
+                onTap: _toggleMapType,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white, width: 2.5),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2)),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(7.5),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Thumbnail of the OTHER map type
+                        isSatellite
+                            ? Container(
+                                color: const Color(0xFF8DB8D6),
+                                child: CustomPaint(painter: _RoadMapPainter()),
+                              )
+                            : Container(
+                                color: const Color(0xFF3A5E38),
+                                child:
+                                    CustomPaint(painter: _SatellitePainter()),
+                              ),
+                        // Label
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            color: Colors.black.withOpacity(0.5),
+                            child: Text(
+                              isSatellite ? 'Map' : 'Satellite',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // Geocoding indicator — above map-type thumbnail
             if (_geocoding)
               Positioned(
-                bottom: 12,
+                bottom: 74,
                 left: 12,
                 child: Container(
                   padding:
@@ -1642,7 +1927,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                 ),
               ),
 
-            // Tap-to-pin hint
+            // "Tap to pin" hint — centre overlay
             if (_pinned == null && !_locating)
               Center(
                 child: IgnorePointer(
@@ -1669,7 +1954,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
           ]),
         ),
 
-        // Bottom bar: pin preview + buttons
+        // ── Bottom bar ─────────────────────────────────────
         Container(
           padding: EdgeInsets.fromLTRB(20, 16, 20, bottomPad + 16),
           decoration: BoxDecoration(
@@ -1747,6 +2032,43 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                                 fontSize: 11, color: AppColors.textLight),
                           ),
                         ],
+                        // City badge
+                        if (_geocodedCity != null &&
+                            _geocodedCity!.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Row(children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                    color: AppColors.primary.withOpacity(0.2)),
+                              ),
+                              child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.location_city_rounded,
+                                        color: AppColors.primary, size: 11),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'City: $_geocodedCity',
+                                      style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: AppColors.primary),
+                                    ),
+                                  ]),
+                            ),
+                            const SizedBox(width: 6),
+                            const Text(
+                              '← will update your profile',
+                              style: TextStyle(
+                                  fontSize: 10, color: AppColors.textLight),
+                            ),
+                          ]),
+                        ],
                       ]),
                 ),
                 if (_pinned != null)
@@ -1754,6 +2076,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                     onTap: () => setState(() {
                       _pinned = null;
                       _addressLabel = '';
+                      _geocodedCity = null;
                     }),
                     child: const Icon(Icons.close_rounded,
                         color: Color(0xFFBBBBBB), size: 18),
@@ -1857,4 +2180,69 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
           child: Icon(icon, size: 20, color: AppColors.textDark),
         ),
       );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom painters for map type thumbnail
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Mimics a simple road-map style (shown when currently in satellite mode)
+class _RoadMapPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height),
+        Paint()..color = const Color(0xFFD4E8F0));
+
+    final road = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(0, size.height * 0.5),
+        Offset(size.width, size.height * 0.5), road);
+    canvas.drawLine(Offset(size.width * 0.5, 0),
+        Offset(size.width * 0.5, size.height), road);
+
+    final block = Paint()..color = const Color(0xFFB8D4BC);
+    canvas.drawRect(
+        Rect.fromLTWH(4, 4, size.width * 0.4, size.height * 0.4), block);
+    canvas.drawRect(
+        Rect.fromLTWH(size.width * 0.55, size.height * 0.55, size.width * 0.4,
+            size.height * 0.4),
+        block);
+  }
+
+  @override
+  bool shouldRepaint(_) => false;
+}
+
+/// Mimics a satellite-view style (shown when currently in normal map mode)
+class _SatellitePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height),
+        Paint()..color = const Color(0xFF2D4A2A));
+
+    canvas.drawOval(Rect.fromLTWH(2, 2, size.width * 0.5, size.height * 0.5),
+        Paint()..color = const Color(0xFF3E6B38));
+    canvas.drawOval(
+        Rect.fromLTWH(size.width * 0.4, size.height * 0.3, size.width * 0.55,
+            size.height * 0.55),
+        Paint()..color = const Color(0xFF557A50));
+
+    canvas.drawLine(
+        Offset(0, size.height * 0.6),
+        Offset(size.width, size.height * 0.45),
+        Paint()
+          ..color = const Color(0xFFBBA96A)
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.round);
+
+    canvas.drawOval(
+        Rect.fromLTWH(size.width * 0.05, size.height * 0.6, size.width * 0.3,
+            size.height * 0.35),
+        Paint()..color = const Color(0xFF3B6E8C));
+  }
+
+  @override
+  bool shouldRepaint(_) => false;
 }

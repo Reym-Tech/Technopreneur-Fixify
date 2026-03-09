@@ -367,7 +367,11 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   /// All verified professionals sorted by (rating * reviewCount) descending.
   /// Tiebreak: higher raw rating wins.
   List<ProfessionalEntity> get _verifiedSorted {
-    final list = widget.professionals.where((p) => p.verified).toList();
+    // Only show pros that are BOTH verified AND currently online (available).
+    // getProfessionals() already filters available=true from Supabase, but
+    // this guard ensures the local list stays consistent if state is stale.
+    final list =
+        widget.professionals.where((p) => p.verified && p.available).toList();
     list.sort((a, b) {
       final scoreA = a.rating * a.reviewCount;
       final scoreB = b.rating * b.reviewCount;

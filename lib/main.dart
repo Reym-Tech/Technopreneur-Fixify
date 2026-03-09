@@ -48,6 +48,7 @@ import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
 import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
 import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
+import 'package:fixify/presentation/screens/customer/privacy_policy_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -656,6 +657,7 @@ class _MainAppState extends State<MainApp> {
     if (_navIndex == 1) {
       return BookingRequestsScreen(
         bookings: bookingEntities,
+        isAvailable: _pro?.available ?? true, // <-- ADD THIS
         currentNavIndex: _navIndex,
         onNavTap: (i) async {
           setState(() {
@@ -687,9 +689,13 @@ class _MainAppState extends State<MainApp> {
     }
 
     // ── Earnings tab (navIndex 2)
+    // ── Earnings tab (navIndex 2)
     if (_navIndex == 2) {
       return EarningsHandymanScreen(
         professionalId: _pro?.id,
+        // ▼ NEW: pass real data so the screen can compute live stats
+        bookings: bookingEntities,
+        reviews: _reviews.map((r) => r.toEntity()).toList(),
         currentNavIndex: _navIndex,
         onNavTap: (i) {
           setState(() {
@@ -701,14 +707,6 @@ class _MainAppState extends State<MainApp> {
           _navIndex = 0;
           _screen = 'home';
         }),
-        onWithdraw: (amount, method) async {
-          _notify('Withdrawal of ₱$amount requested via $method');
-          return Future.value();
-        },
-        onAddPaymentMethod: (method) async {
-          _notify('Payment method added: ${method['method']}');
-          return Future.value();
-        },
       );
     }
 
@@ -990,7 +988,23 @@ class _MainAppState extends State<MainApp> {
       onViewReviews: () => setState(() => _screen = 'reviews'),
       onApplyCredentials: () => setState(() => _screen = 'apply'),
       onViewVerification: () => setState(() => _screen = 'verification_status'),
-      onToggleAvailability: (_) {},
+      onToggleAvailability: (isAvailable) async {
+        if (_pro == null) return;
+        try {
+          await _ds.updateProfessionalAvailability(
+            professionalId: _pro!.id,
+            available: isAvailable,
+          );
+          // Refresh local pro model so UI stays in sync
+          final updated = await _ds.getProfessionalByUserId(_user!.id);
+          if (mounted && updated != null) setState(() => _pro = updated);
+          _notify(isAvailable
+              ? 'You are now Online — customers can find and book you.'
+              : 'You are now Offline — you will not receive new bookings.');
+        } catch (e) {
+          _notify('Failed to update availability: $e');
+        }
+      },
     );
   }
 
@@ -1224,6 +1238,13 @@ class _MainAppState extends State<MainApp> {
             await _refreshUser();
             return publicUrl;
           },
+          onPrivacyPolicy: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => PrivacyPolicyScreen(
+                onBack: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
           onLogout: () async => Supabase.instance.client.auth.signOut(),
         );
 
