@@ -1068,41 +1068,60 @@ class _MainAppState extends State<MainApp> {
           professionals: _professionals,
           initialServiceType: _preselectedServiceType,
           initialProblemTitle: _preselectedProblemTitle,
+          targetProfessionalId: _selectedPro?.id,
           onBack: () => setState(() {
             _screen = 'home';
             _preselectedServiceType = null;
             _preselectedProblemTitle = null;
+            _selectedPro = null;
           }),
           onSubmit: (result) async {
             try {
-              final booking = await _ds.createBooking(
-                customerId: _user!.id,
-                professionalId: result.matchedPro.id,
-                serviceType: result.serviceType,
-                scheduledDate: DateTime.now().add(const Duration(days: 1)),
-                notes: [
-                  result.problemTitle,
-                  if (result.description.isNotEmpty) result.description,
-                  if (result.notes != null) result.notes!,
-                ].join('\n'),
-                address: result.address,
-                priceEstimate: result.matchedPro.priceMin,
-                latitude: result.latitude,
-                longitude: result.longitude,
-              );
-              setState(() {
-                _selectedBooking = booking;
-                _bookings = [booking, ..._bookings];
-                _screen = 'booking_status';
-              });
-              _ds.subscribeToBookingUpdates(
+              final notesText = [
+                result.problemTitle,
+                if (result.description.isNotEmpty) result.description,
+                if (result.notes != null) result.notes!,
+              ].join('\n');
+
+              BookingModel? firstBooking;
+              for (final pro in result.matchedPros) {
+                final booking = await _ds.createBooking(
+                  customerId: _user!.id,
+                  professionalId: pro.id,
+                  serviceType: result.serviceType,
+                  scheduledDate: DateTime.now().add(const Duration(days: 1)),
+                  notes: notesText,
+                  address: result.address,
+                  priceEstimate: pro.priceMin,
+                  latitude: result.latitude,
+                  longitude: result.longitude,
+                );
+                firstBooking ??= booking;
+                _ds.subscribeToBookingUpdates(
                   bookingId: booking.id,
-                  onUpdate: (u) => setState(() {
-                        _selectedBooking = u;
-                        _bookings =
-                            _bookings.map((b) => b.id == u.id ? u : b).toList();
-                      }));
-              _notify('Service request submitted!');
+                  onUpdate: (u) {
+                    if (!mounted) return;
+                    setState(() {
+                      if (_selectedBooking?.id == u.id) _selectedBooking = u;
+                      _bookings =
+                          _bookings.map((b) => b.id == u.id ? u : b).toList();
+                    });
+                  },
+                );
+              }
+
+              if (firstBooking != null) {
+                setState(() {
+                  _selectedBooking = firstBooking;
+                  _bookings = [firstBooking!, ..._bookings];
+                  _screen = 'booking_status';
+                });
+              }
+
+              final count = result.matchedPros.length;
+              _notify(count == 1
+                  ? 'Request sent to 1 handyman!'
+                  : 'Request sent to $count handymen!');
             } catch (e) {
               if (mounted)
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1295,11 +1314,16 @@ class _MainAppState extends State<MainApp> {
         }),
         onRequestService: () => setState(() {
           _preselectedServiceType = null;
+          _preselectedProblemTitle = null;
+          _selectedPro =
+              null; // ← FIX: clear any leftover pro from profile view
           _screen = 'request_service';
         }),
         onRequestServiceWithType: (serviceType, serviceName) => setState(() {
           _preselectedServiceType = serviceType;
           _preselectedProblemTitle = serviceName;
+          _selectedPro =
+              null; // ← FIX: clear any leftover pro from profile view
           _screen = 'request_service';
         }),
         onViewBookings: () => setState(() {

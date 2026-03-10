@@ -1,22 +1,20 @@
 // lib/presentation/screens/customer/requestservice_customer.dart
 //
-// RequestServiceScreen — 4-step service request wizard.
-//
 // Changes vs previous version:
-//   • Added [initialProblemTitle] prop — when provided (e.g. "Pipe Leak Repair"),
-//     it pre-fills the Problem Title field in Step 2 so users don't have to
-//     retype the service name they already selected from the catalogue.
-//
-// Step 3 — Location (enhanced):
-//   • Asks for location permission on entry (Once / Always / Deny)
-//   • Tap-to-pin on Google Maps with red marker
-//   • "Use My Location" button (GPS crosshair)
-//   • Reverse-geocodes pin → auto-fills address fields
-//   • Address fields are editable after autofill
-//   • Toggle between Map view and Form-only view (for slow devices)
-//   • Additional Notes field (P.S.)
-//   • "Use two fingers to move the map" hint on single-finger scroll
-//   • Map type toggle: bottom-left thumbnail switches Normal ↔ Satellite
+//   • [targetProfessionalId] prop added.
+//       - When NULL  → Broadcast mode: all verified+available pros whose
+//         skills match the selected service type are collected into
+//         [RequestServiceResult.matchedPros]. main.dart creates one booking
+//         per pro so every matching handyman receives the request.
+//       - When set   → Direct mode (Book Again): only that specific pro is
+//         included in matchedPros (if they are still available), so the
+//         request goes exclusively to them.
+//   • [RequestServiceResult] now carries [matchedPros] (List<ProfessionalModel>)
+//     instead of the old single [matchedPro] field.  main.dart iterates the
+//     list to create bookings.  All other fields are unchanged.
+//   • _matchedPros getter replaces the old _matchedPro getter.
+//   • Step 4 confirm card no longer shows a matched-pro name (the list may
+//     contain multiple pros; showing one would be misleading).
 
 import 'dart:async';
 import 'dart:io';
@@ -42,7 +40,12 @@ class RequestServiceResult {
   final double? longitude;
   final String? notes;
   final String? photoPath;
-  final ProfessionalModel matchedPro;
+
+  /// All professionals that will receive this request.
+  ///
+  /// • Broadcast mode  → every verified+available pro with the matching skill.
+  /// • Direct mode     → exactly one pro (the one from Book Again).
+  final List<ProfessionalModel> matchedPros;
 
   const RequestServiceResult({
     required this.serviceType,
@@ -53,7 +56,7 @@ class RequestServiceResult {
     this.longitude,
     this.notes,
     this.photoPath,
-    required this.matchedPro,
+    required this.matchedPros,
   });
 }
 
@@ -72,6 +75,10 @@ class RequestServiceScreen extends StatefulWidget {
   /// Pre-fills the Problem Title field in Step 2.
   final String? initialProblemTitle;
 
+  /// When set, the request is sent ONLY to this professional (Book Again mode).
+  /// When null, all verified+available pros with the matching skill receive it.
+  final String? targetProfessionalId;
+
   const RequestServiceScreen({
     super.key,
     this.professionals = const [],
@@ -79,6 +86,7 @@ class RequestServiceScreen extends StatefulWidget {
     this.onBack,
     this.initialServiceType,
     this.initialProblemTitle,
+    this.targetProfessionalId,
   });
 
   @override
@@ -107,7 +115,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   // ── Map type & gesture control ───────────────────────────
   MapType _mapType = MapType.normal;
-  // When true the parent SingleChildScrollView is locked
   bool _lockScroll = false;
   final ScrollController _scrollCtrl = ScrollController();
 
@@ -160,20 +167,50 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     },
   ];
 
-  Set<String> get _availableTypes => widget.professionals
-      .where((p) => p.verified && p.available)
-      .expand((p) => p.skills)
-      .map((s) => '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')
-      .toSet();
+  // ── Which service types have at least one available, verified pro ──
+  Set<String> get _availableTypes {
+    if (widget.targetProfessionalId != null) {
+      // Direct mode: only enable the service type the target pro can handle.
+      final target = widget.professionals
+          .firstWhereOrNull((p) => p.id == widget.targetProfessionalId);
+      if (target == null) return {};
+      return target.skills
+          .map((s) => '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')
+          .toSet();
+    }
+    // Broadcast mode: any skill covered by at least one verified+available pro.
+    return widget.professionals
+        .where((p) => p.verified && p.available)
+        .expand((p) => p.skills)
+        .map((s) => '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')
+        .toSet();
+  }
 
-  ProfessionalModel? get _matchedPro {
-    if (_serviceType == null) return null;
-    final matches = widget.professionals.where((p) =>
-        p.verified &&
-        p.available &&
-        p.skills.any((s) => s.toLowerCase() == _serviceType!.toLowerCase()));
-    if (matches.isEmpty) return null;
-    return matches.reduce((a, b) => (a.rating ?? 0) >= (b.rating ?? 0) ? a : b);
+  // ── Collect all pros that should receive the request ──────
+  //
+  // Broadcast mode → all verified+available pros whose skills match.
+  // Direct mode    → just the target pro (if still available).
+  List<ProfessionalModel> get _matchedPros {
+    if (_serviceType == null) return [];
+
+    if (widget.targetProfessionalId != null) {
+      // Direct / Book Again mode.
+      final target = widget.professionals.firstWhereOrNull(
+        (p) =>
+            p.id == widget.targetProfessionalId &&
+            p.available &&
+            p.skills.any((s) => s.toLowerCase() == _serviceType!.toLowerCase()),
+      );
+      return target != null ? [target] : [];
+    }
+
+    // Broadcast mode: every verified+available pro with the matching skill.
+    return widget.professionals
+        .where((p) =>
+            p.verified &&
+            p.available &&
+            p.skills.any((s) => s.toLowerCase() == _serviceType!.toLowerCase()))
+        .toList();
   }
 
   String get _fullAddress {
@@ -211,7 +248,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     super.dispose();
   }
 
-  // ── Pointer tracking: lock page scroll while finger is on map ──
+  // ── Pointer tracking ──────────────────────────────────────
 
   void _onMapPointerDown(PointerDownEvent e) {
     if (!_lockScroll && mounted) setState(() => _lockScroll = true);
@@ -225,14 +262,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     if (_lockScroll && mounted) setState(() => _lockScroll = false);
   }
 
-  // ── NEW: map type toggle ───────────────────────────────────
-
-  void _toggleMapType() {
-    setState(() {
-      _mapType =
-          _mapType == MapType.normal ? MapType.satellite : MapType.normal;
-    });
-  }
+  void _toggleMapType() => setState(() {
+        _mapType =
+            _mapType == MapType.normal ? MapType.satellite : MapType.normal;
+      });
 
   // ── Navigation ─────────────────────────────────────────────
 
@@ -246,12 +279,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       return;
     }
     if (_step == 2) {
-      // Location permission is required — block if denied
       if (_permissionDenied) {
         _snack('Location access is required. Please allow it to continue.');
         return;
       }
-      // Must have a pinned location
       if (_pinned == null) {
         _snack('Please pin your location on the map first.');
         return;
@@ -317,7 +348,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       return;
     }
 
-    // status == denied → show the mandatory allow dialog (no "Not now" option)
     if (!mounted) return;
     await _showPermissionDialog();
 
@@ -449,19 +479,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           .timeout(const Duration(seconds: 8));
       if (marks.isNotEmpty && mounted) {
         final p = marks.first;
-
         setState(() {
-          // ── Street / House No. ────────────────────────────────
-          // p.street can return a Google Plus Code (e.g. "Q7CX+2PP") when
-          // there is no named street. Prefer a real street name from
-          // thoroughfare, then name, then street — skip Plus Codes entirely.
           final plusCodePattern = RegExp(r'^[0-9A-Z]{4,}\+[0-9A-Z]{2,}');
           String street = '';
-          for (final candidate in [
-            p.thoroughfare, // named road (most reliable)
-            p.name, // POI / landmark name — often has Purok/Sitio
-            p.street, // fallback
-          ]) {
+          for (final candidate in [p.thoroughfare, p.name, p.street]) {
             final v = (candidate ?? '').trim();
             if (v.isNotEmpty && !plusCodePattern.hasMatch(v)) {
               street = v;
@@ -470,23 +491,14 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           }
           if (street.isNotEmpty) _streetCtrl.text = street;
 
-          // ── Barangay ──────────────────────────────────────────
-          // Priority: subLocality (barangay in PH) → subThoroughfare
-          // (subdivision/purok) → name if it looks like a barangay.
-          // Deliberately skip subAdministrativeArea — that is the province.
           String barangay = '';
-          for (final candidate in [
-            p.subLocality, // Barangay X in PH when available
-            p.subThoroughfare, // house-level detail, sometimes has Purok
-          ]) {
+          for (final candidate in [p.subLocality, p.subThoroughfare]) {
             final v = (candidate ?? '').trim();
             if (v.isNotEmpty) {
               barangay = v;
               break;
             }
           }
-          // Last resort: if p.name looks like a barangay/purok and street
-          // didn't use it already, use it here.
           if (barangay.isEmpty) {
             final nameVal = (p.name ?? '').trim();
             final looksLikeBarangay = RegExp(
@@ -501,9 +513,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           }
           if (barangay.isNotEmpty) _barangayCtrl.text = barangay;
 
-          // ── City / Municipality ───────────────────────────────
-          // p.locality is the city/municipality (e.g. "Digos City").
-          // p.administrativeArea is the region/province — NOT shown here.
           final city = (p.locality ?? '').trim();
           if (city.isNotEmpty) _cityCtrl.text = city;
         });
@@ -539,8 +548,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   Future<void> _submit() async {
     if (_submitting) return;
-    final pro = _matchedPro;
-    if (pro == null) {
+    final pros = _matchedPros;
+    if (pros.isEmpty) {
       _snack('No available professional found for $_serviceType right now.');
       return;
     }
@@ -554,7 +563,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       longitude: _pinned?.longitude,
       notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       photoPath: _photoPath,
-      matchedPro: pro,
+      matchedPros: pros,
     ));
     if (mounted) setState(() => _submitting = false);
   }
@@ -580,11 +589,9 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         _buildStepper(),
         Expanded(
           child: NotificationListener<ScrollNotification>(
-            // Block the scroll bubbling up when fingers are on the map
             onNotification: (n) => _lockScroll,
             child: SingleChildScrollView(
               controller: _scrollCtrl,
-              // Disable physics entirely while map is being touched
               physics: _lockScroll
                   ? const NeverScrollableScrollPhysics()
                   : const ClampingScrollPhysics(),
@@ -632,11 +639,15 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   ),
                 ),
                 const SizedBox(width: 14),
-                const Text('Request Service',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700)),
+                Text(
+                  widget.targetProfessionalId != null
+                      ? 'Book Again'
+                      : 'Request Service',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700),
+                ),
               ]),
             )),
       );
@@ -862,7 +873,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                     ),
                   )
                 : _photoPath != null
-                    // ── Photo uploaded: show full image, natural height ──
                     ? Stack(
                         children: [
                           ClipRRect(
@@ -879,14 +889,11 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                                 child: Image.file(
                                   File(_photoPath!),
                                   width: double.infinity,
-                                  // No fixed height — image shows at its
-                                  // natural aspect ratio
                                   fit: BoxFit.fitWidth,
                                 ),
                               ),
                             ),
                           ),
-                          // Remove button
                           Positioned(
                             top: 10,
                             right: 10,
@@ -903,7 +910,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                               ),
                             ),
                           ),
-                          // Tap-to-replace hint at bottom
                           Positioned(
                             bottom: 0,
                             left: 0,
@@ -933,7 +939,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                           ),
                         ],
                       )
-                    // ── Placeholder: full-width, fixed height ──
                     : Container(
                         width: double.infinity,
                         height: 180,
@@ -982,7 +987,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     final isSatellite = _mapType == MapType.satellite;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // ── Header (no Map/Form toggle) ───────────────────────
       const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('Pin Your Location',
             style: TextStyle(
@@ -995,8 +999,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
             style: TextStyle(fontSize: 12, color: AppColors.textLight)),
       ]),
       const SizedBox(height: 16),
-
-      // ── Loading / permission check ────────────────────────
       if (!_permCheckDone)
         Container(
           height: 270,
@@ -1015,8 +1017,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
             ]),
           ),
         ),
-
-      // ── Permission denied — BLOCKING card ────────────────
       if (_permCheckDone && _permissionDenied) ...[
         Container(
           width: double.infinity,
@@ -1059,13 +1059,11 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   fontSize: 13, color: AppColors.textLight, height: 1.5),
             ),
             const SizedBox(height: 20),
-            // Open Settings button (for deniedForever)
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () async {
                   await Geolocator.openAppSettings();
-                  // Re-check after user returns from settings
                   if (mounted) {
                     setState(() {
                       _permCheckDone = false;
@@ -1089,7 +1087,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            // Retry button (in case it was just a soft deny)
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
@@ -1117,20 +1114,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         ),
         const SizedBox(height: 20),
       ],
-
-      // ── Map widget (only when permission granted) ─────────
       if (_permCheckDone && !_permissionDenied)
         ClipRRect(
           borderRadius: BorderRadius.circular(20),
           child: SizedBox(
             height: 270,
             child: Listener(
-              // Track every finger landing on / leaving the map area
               onPointerDown: _onMapPointerDown,
               onPointerUp: _onMapPointerUp,
               onPointerCancel: _onMapPointerCancel,
               child: Stack(children: [
-                // ── Google Map ─────────────────────────
                 GoogleMap(
                   initialCameraPosition:
                       CameraPosition(target: initialPos, zoom: 14),
@@ -1163,8 +1156,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   mapToolbarEnabled: false,
                   compassEnabled: false,
                 ),
-
-                // ── GPS button (top-right) ──────────────
                 Positioned(
                   top: 12,
                   right: 12,
@@ -1198,8 +1189,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                     ),
                   ),
                 ),
-
-                // ── Zoom controls (bottom-right) ────────
                 Positioned(
                   bottom: 12,
                   right: 12,
@@ -1211,8 +1200,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                         () => _mapCtrl?.animateCamera(CameraUpdate.zoomOut())),
                   ]),
                 ),
-
-                // ── NEW: Map type toggle thumbnail (bottom-left) ──
                 Positioned(
                   bottom: 12,
                   left: 12,
@@ -1237,21 +1224,17 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            // Thumbnail preview of the OTHER map type
                             isSatellite
                                 ? Container(
                                     color: const Color(0xFF8DB8D6),
-                                    child: CustomPaint(
-                                      painter: _RoadMapPainter(),
-                                    ),
+                                    child:
+                                        CustomPaint(painter: _RoadMapPainter()),
                                   )
                                 : Container(
                                     color: const Color(0xFF3A5E38),
                                     child: CustomPaint(
-                                      painter: _SatellitePainter(),
-                                    ),
+                                        painter: _SatellitePainter()),
                                   ),
-                            // Label at bottom
                             Positioned(
                               bottom: 0,
                               left: 0,
@@ -1277,8 +1260,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                     ),
                   ),
                 ),
-
-                // ── Geocoding indicator ─────────────────
                 if (_geocoding)
                   Positioned(
                     bottom: 74,
@@ -1306,8 +1287,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                       ]),
                     ),
                   ),
-
-                // ── "Tap map to pin" hint ───────────────
                 if (_pinned == null && !_locating)
                   Center(
                       child: IgnorePointer(
@@ -1334,8 +1313,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           ),
         ),
       const SizedBox(height: 14),
-
-      // ── Pinned location card ──────────────────────────────
       AnimatedContainer(
         duration: 300.ms,
         padding: const EdgeInsets.all(14),
@@ -1474,6 +1451,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   // ── STEP 4: CONFIRM ───────────────────────────────────────
 
   Widget _buildStep4() {
+    final pros = _matchedPros;
     final notesVal = _notesCtrl.text.trim();
     final rows = <Map<String, dynamic>>[
       {
@@ -1493,6 +1471,21 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         'label': 'Service Location',
         'value': _fullAddress.isEmpty ? 'No address entered' : _fullAddress
       },
+      // ── Broadcast vs Direct mode summary row ──────────────
+      if (widget.targetProfessionalId != null && pros.isNotEmpty)
+        {
+          'icon': Icons.person_rounded,
+          'label': 'Assigned To',
+          'value': pros.first.name ?? 'Handyman',
+        }
+      else if (widget.targetProfessionalId == null)
+        {
+          'icon': Icons.groups_rounded,
+          'label': 'Handymen Notified',
+          'value': pros.isEmpty
+              ? 'None available right now'
+              : '${pros.length} available handyman${pros.length == 1 ? '' : 's'}',
+        },
       if (notesVal.isNotEmpty)
         {
           'icon': Icons.sticky_note_2_outlined,
@@ -1573,14 +1566,11 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Uploaded Photo',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textLight,
-                ),
-              ),
+              const Text('Uploaded Photo',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textLight)),
               const SizedBox(height: 8),
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
@@ -1589,34 +1579,17 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                   height: 150,
                   width: double.infinity,
                   fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      height: 150,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF5F5F5),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.broken_image_rounded,
-                            size: 40,
-                            color: AppColors.textLight.withOpacity(0.3),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Image failed to load',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textLight.withOpacity(0.5),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    height: 150,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF5F5F5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Center(
+                        child: Icon(Icons.broken_image_rounded,
+                            size: 40, color: Color(0xFFBBBBBB))),
+                  ),
                 ),
               ),
             ],
@@ -1759,28 +1732,31 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   }
 }
 
+// ── Iterable helper (local copy so the file is self-contained) ─
+extension _IterableX<T> on Iterable<T> {
+  T? firstWhereOrNull(bool Function(T) test) {
+    for (final e in this) {
+      if (test(e)) return e;
+    }
+    return null;
+  }
+}
+
 // ── Custom painters for map type thumbnail ─────────────────────
 
-/// Mimics a simple road-map style (used when currently in satellite mode)
 class _RoadMapPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final bg = Paint()..color = const Color(0xFFD4E8F0);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bg);
-
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height),
+        Paint()..color = const Color(0xFFD4E8F0));
     final road = Paint()
       ..color = Colors.white
       ..strokeWidth = 3
       ..strokeCap = StrokeCap.round;
-
-    // Horizontal road
     canvas.drawLine(Offset(0, size.height * 0.5),
         Offset(size.width, size.height * 0.5), road);
-    // Vertical road
     canvas.drawLine(Offset(size.width * 0.5, 0),
         Offset(size.width * 0.5, size.height), road);
-
-    // Block fills
     final block = Paint()..color = const Color(0xFFB8D4BC);
     canvas.drawRect(
         Rect.fromLTWH(4, 4, size.width * 0.4, size.height * 0.4), block);
@@ -1794,39 +1770,28 @@ class _RoadMapPainter extends CustomPainter {
   bool shouldRepaint(_) => false;
 }
 
-/// Mimics a satellite-view style (used when currently in normal map mode)
 class _SatellitePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    // Dark green base
-    final bg = Paint()..color = const Color(0xFF2D4A2A);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bg);
-
-    // Lighter patches (vegetation / urban)
-    final patch1 = Paint()..color = const Color(0xFF3E6B38);
-    canvas.drawOval(
-        Rect.fromLTWH(2, 2, size.width * 0.5, size.height * 0.5), patch1);
-
-    final patch2 = Paint()..color = const Color(0xFF557A50);
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height),
+        Paint()..color = const Color(0xFF2D4A2A));
+    canvas.drawOval(Rect.fromLTWH(2, 2, size.width * 0.5, size.height * 0.5),
+        Paint()..color = const Color(0xFF3E6B38));
     canvas.drawOval(
         Rect.fromLTWH(size.width * 0.4, size.height * 0.3, size.width * 0.55,
             size.height * 0.55),
-        patch2);
-
-    // Road-like line
-    final road = Paint()
-      ..color = const Color(0xFFBBA96A)
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(Offset(0, size.height * 0.6),
-        Offset(size.width, size.height * 0.45), road);
-
-    // Water patch
-    final water = Paint()..color = const Color(0xFF3B6E8C);
+        Paint()..color = const Color(0xFF557A50));
+    canvas.drawLine(
+        Offset(0, size.height * 0.6),
+        Offset(size.width, size.height * 0.45),
+        Paint()
+          ..color = const Color(0xFFBBA96A)
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.round);
     canvas.drawOval(
         Rect.fromLTWH(size.width * 0.05, size.height * 0.6, size.width * 0.3,
             size.height * 0.35),
-        water);
+        Paint()..color = const Color(0xFF3B6E8C));
   }
 
   @override
