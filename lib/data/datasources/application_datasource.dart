@@ -18,6 +18,7 @@
 //   reviewed_at     TIMESTAMPTZ?
 
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:fixify/data/models/models.dart';
 
@@ -182,32 +183,73 @@ class ApplicationDataSource {
   }
 
   // ── Admin: approve ─────────────────────────────────────────
-  // 1. application status → approved
-  // 2. professionals.skills += service_type
-  // 3. professionals.verified = true
+  //
+  // Why RPC instead of a direct .update()?
+  //
+  // The "professionals: update own row" RLS policy checks auth.uid() = user_id,
+  // so when the admin calls a direct UPDATE the admin's uid never matches the
+  // professional's user_id — Supabase silently updates 0 rows.
+  //
+  // The SECURITY DEFINER function `approve_professional_application` runs as the
+  // DB owner (postgres role), bypassing RLS entirely, so the UPDATE always lands.
+  //
+  // Steps:
+  //   1. Fetch current skills from professionals (SELECT is allowed for all
+  //      authenticated users by the existing SELECT policy).
+  //   2. Merge the new skill into the skills array.
+  //   3. Call the RPC to apply the UPDATE (bypasses RLS).
+  //   4. Mark the application row as approved (admin UPDATE policy allows this).
 
   Future<void> approveApplication(ApplicationModel app) async {
+    debugPrint('[approveApplication] approving app ${app.id} '
+        'for professional ${app.professionalId}');
+
+    final newSkill = app.serviceType.toLowerCase();
+
+    // Step 1 — Fetch current skills so we can merge without losing existing ones.
+    // Falls back to empty list if the row is somehow missing (handled by RPC).
+    List<String> mergedSkills = [newSkill];
+    try {
+      final proData = await _client
+          .from('professionals')
+          .select('skills')
+          .eq('id', app.professionalId)
+          .maybeSingle();
+
+      if (proData != null) {
+        final current = List<String>.from(proData['skills'] as List? ?? []);
+        if (!current.contains(newSkill)) current.add(newSkill);
+        mergedSkills = current;
+      }
+    } catch (e) {
+      debugPrint(
+          '[approveApplication] could not pre-fetch skills (non-fatal): $e');
+    }
+
+    debugPrint('[approveApplication] merged skills: $mergedSkills');
+
+    // Step 2 — Call SECURITY DEFINER RPC to update professionals row.
+    // This bypasses the "update own row" RLS policy that blocks admin updates.
+    await _client.rpc('approve_professional_application', params: {
+      'p_professional_id': app.professionalId,
+      'p_skills': mergedSkills,
+      'p_verified': true,
+      'p_years_exp': app.yearsExp,
+      'p_price_min': app.priceMin,
+      'p_bio': app.bio,
+    });
+
+    debugPrint(
+        '[approveApplication] ✅ RPC executed — professionals row updated');
+
+    // Step 3 — Mark the application itself as approved.
+    // The "Admin can update application status" policy allows this.
     await _client.from(_table).update({
       'status': 'approved',
       'reviewed_at': DateTime.now().toIso8601String(),
     }).eq('id', app.id);
 
-    final proData = await _client
-        .from('professionals')
-        .select('skills')
-        .eq('id', app.professionalId)
-        .single();
-    final currentSkills = List<String>.from(proData['skills'] as List? ?? []);
-    final newSkill = app.serviceType.toLowerCase();
-    if (!currentSkills.contains(newSkill)) currentSkills.add(newSkill);
-
-    await _client.from('professionals').update({
-      'skills': currentSkills,
-      'verified': true,
-      'years_experience': app.yearsExp,
-      'price_min': app.priceMin,
-      'bio': app.bio,
-    }).eq('id', app.professionalId);
+    debugPrint('[approveApplication] ✅ application status set to approved');
   }
 
   // ── Admin: reject ──────────────────────────────────────────

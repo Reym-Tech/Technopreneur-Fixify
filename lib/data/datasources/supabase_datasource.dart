@@ -23,6 +23,7 @@ class SupabaseDataSource {
     final res = await _client.auth.signUp(email: email, password: password);
     if (res.user == null) throw Exception('Sign up failed');
 
+    // 1. Insert into users table
     await _client.from(AppConfig.usersTable).insert({
       'id': res.user!.id,
       'name': name,
@@ -31,6 +32,31 @@ class SupabaseDataSource {
       'phone': phone,
       'created_at': DateTime.now().toIso8601String(),
     });
+
+    // 2. FIX BUG 1: If registering as a professional, create the professionals
+    //    row immediately so getProfessionalByUserId() never returns null.
+    //    Without this row, the "Apply for Service" screen shows
+    //    "Professional profile not found" and approveApplication() silently
+    //    updates 0 rows (because professional_id references a non-existent row).
+    if (role == 'professional') {
+      try {
+        await _client.from(AppConfig.professionalsTable).insert({
+          'user_id': res.user!.id,
+          'skills': [],
+          'verified': false,
+          'rating': 0.0,
+          'review_count': 0,
+          'available': true,
+          'years_experience': 0,
+        });
+        debugPrint('✅ professionals row created for new user ${res.user!.id}');
+      } catch (e) {
+        // Log but don't rethrow — the user row is already created.
+        // _init() in main.dart has a fallback auto-create that will
+        // catch this on the next login if the insert fails here.
+        debugPrint('⚠️ Could not create professionals row during signUp: $e');
+      }
+    }
 
     final data = await _client
         .from(AppConfig.usersTable)
@@ -187,17 +213,6 @@ class SupabaseDataSource {
   }
 
   // ── PROFESSIONALS REALTIME ────────────────────────────────
-  //
-  // Fires [onUpdate] with the updated professional's id whenever the
-  // DB trigger (trg_update_professional_rating) writes a new rating or
-  // review_count to the professionals table.
-  //
-  // The caller should respond by re-fetching the full professionals list.
-  //
-  // IMPORTANT: The professionals table must be included in the Supabase
-  // realtime publication. Run this once in the Supabase SQL editor if it
-  // isn't already:
-  //   ALTER PUBLICATION supabase_realtime ADD TABLE professionals;
   RealtimeChannel subscribeToProfessionalsUpdates({
     required void Function(String professionalId) onUpdate,
   }) {
@@ -218,12 +233,6 @@ class SupabaseDataSource {
         .subscribe();
   }
 
-  /// Subscribes to new review inserts. More reliable than watching
-  /// professionals UPDATE events because INSERT payloads are always
-  /// complete regardless of REPLICA IDENTITY settings.
-  ///
-  /// Returns the channel so the caller can unsubscribe via
-  /// [unsubscribeChannel] when done.
   RealtimeChannel subscribeToReviewsInserts({
     required void Function(Map<String, dynamic> payload) onInsert,
   }) {
@@ -238,6 +247,7 @@ class SupabaseDataSource {
         .subscribe();
     return channel;
   }
+
   // ── BOOKINGS ──────────────────────────────────────────────
 
   Future<BookingModel> createBooking({

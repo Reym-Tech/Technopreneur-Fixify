@@ -3,14 +3,14 @@
 // BookingStatusScreen — 4-step status timeline for a customer booking.
 //
 // Changes from previous version:
-//  • Assessment CTA is visible for both Accepted AND InProgress statuses
-//    so customer can re-view the assessment details any time.
-//  • Assessment CTA shows dynamic price status:
-//      - "Awaiting price…" (orange) when assessmentPrice is null
-//      - "₱XXX — Tap to review" (green) when price is set
-//  • Professional card uses actual avatar photo (_ProAvatar widget)
-//    instead of just the first-letter initial.
-//  • Bottom sheet also uses _ProAvatar.
+//  • Assessment CTA is visible for both Accepted AND InProgress statuses.
+//  • Assessment CTA shows dynamic price status.
+//  • Professional card uses actual avatar photo (_ProAvatar widget).
+//  • "Book Again" button added to professional card and bottom sheet:
+//      - Green + enabled  when pro.available == true
+//      - Grey  + disabled when pro.available == false (shows "Currently Offline")
+//  • onBookAgain callback added — called with the ProfessionalEntity so the
+//    parent can route directly to RequestServiceScreen pre-filled with that pro.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -26,6 +26,10 @@ class BookingStatusScreen extends StatelessWidget {
   /// Called when customer taps "Assessment Ready" → navigates to AssessmentScreen.
   final VoidCallback? onViewAssessment;
 
+  /// Called when customer taps "Book Again" on a past professional.
+  /// Receives the [ProfessionalEntity] so the parent can pre-select them.
+  final Function(ProfessionalEntity)? onBookAgain;
+
   const BookingStatusScreen({
     super.key,
     required this.booking,
@@ -33,6 +37,7 @@ class BookingStatusScreen extends StatelessWidget {
     this.onWriteReview,
     this.onCancelBooking,
     this.onViewAssessment,
+    this.onBookAgain,
   });
 
   // ── Status helpers ─────────────────────────────────────────────────────────
@@ -55,14 +60,14 @@ class BookingStatusScreen extends StatelessWidget {
   bool get _isCancelled => booking.status == BookingStatus.cancelled;
   bool get _isAccepted => booking.status == BookingStatus.accepted;
   bool get _isInProgress => booking.status == BookingStatus.inProgress;
+  bool get _isCompleted => booking.status == BookingStatus.completed;
 
   bool get _showProfessional =>
       booking.professional != null &&
       booking.status != BookingStatus.pending &&
       !_isCancelled;
 
-  /// Show the Assessment CTA for both Accepted and InProgress so the
-  /// customer can always get back to the assessment / price details.
+  /// Show the Assessment CTA for both Accepted and InProgress.
   bool get _showAssessmentCTA =>
       (_isAccepted || _isInProgress) && onViewAssessment != null;
 
@@ -490,6 +495,7 @@ class BookingStatusScreen extends StatelessWidget {
 
   Widget _buildProfessionalCard(BuildContext context) {
     final pro = booking.professional!;
+    final bool isOnline = pro.available;
 
     return GestureDetector(
       onTap: () => _showHandymanSheet(context, pro),
@@ -506,6 +512,7 @@ class BookingStatusScreen extends StatelessWidget {
           ],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── Header row ──────────────────────────────────────────────────
           Row(children: [
             const Icon(Icons.person_pin_rounded,
                 size: 15, color: AppColors.primary),
@@ -516,27 +523,48 @@ class BookingStatusScreen extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                     color: AppColors.primary)),
             const Spacer(),
-            if (_isAccepted || _isInProgress)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.07),
-                    borderRadius: BorderRadius.circular(8)),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.info_outline_rounded,
-                      size: 11, color: AppColors.primary),
-                  SizedBox(width: 4),
-                  Text('View Profile',
-                      style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primary)),
-                ]),
+            // Online / Offline availability pill
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: isOnline
+                    ? const Color(0xFF34C759).withOpacity(0.10)
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isOnline
+                      ? const Color(0xFF34C759).withOpacity(0.30)
+                      : Colors.grey.shade300,
+                ),
               ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isOnline
+                        ? const Color(0xFF34C759)
+                        : Colors.grey.shade400,
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  isOnline ? 'Online' : 'Offline',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: isOnline
+                          ? const Color(0xFF34C759)
+                          : Colors.grey.shade500),
+                ),
+              ]),
+            ),
           ]),
           const SizedBox(height: 12),
+
+          // ── Pro info row ────────────────────────────────────────────────
           Row(children: [
-            // ── Use actual avatar photo ──────────────────────────────────
             _ProAvatar(name: pro.name, avatarUrl: pro.avatarUrl, size: 52),
             const SizedBox(width: 12),
             Expanded(
@@ -596,10 +624,21 @@ class BookingStatusScreen extends StatelessWidget {
                     ]),
                   ]),
             ),
-            if (_isAccepted || _isInProgress)
-              const Icon(Icons.chevron_right_rounded,
-                  color: AppColors.textLight, size: 20),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppColors.textLight, size: 20),
           ]),
+
+          // ── Book Again button — shown for completed/cancelled bookings ──
+          if (_isCompleted || _isCancelled) ...[
+            const SizedBox(height: 14),
+            const Divider(height: 1),
+            const SizedBox(height: 14),
+            _BookAgainButton(
+              pro: pro,
+              isOnline: isOnline,
+              onBookAgain: onBookAgain != null ? () => onBookAgain!(pro) : null,
+            ),
+          ],
         ]),
       ),
     ).animate().fadeIn(delay: 200.ms, duration: 300.ms);
@@ -616,6 +655,12 @@ class BookingStatusScreen extends StatelessWidget {
         isAccepted: _isAccepted || _isInProgress,
         priceSet: _priceSet,
         assessmentPrice: booking.assessmentPrice,
+        onBookAgain: (_isCompleted || _isCancelled) && onBookAgain != null
+            ? () {
+                Navigator.pop(context);
+                onBookAgain!(pro);
+              }
+            : null,
       ),
     );
   }
@@ -723,6 +768,46 @@ class BookingStatusScreen extends StatelessWidget {
   }
 }
 
+// ── Book Again Button ─────────────────────────────────────────────────────────
+
+class _BookAgainButton extends StatelessWidget {
+  final ProfessionalEntity pro;
+  final bool isOnline;
+  final VoidCallback? onBookAgain;
+
+  const _BookAgainButton({
+    required this.pro,
+    required this.isOnline,
+    this.onBookAgain,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: isOnline ? onBookAgain : null,
+        icon: Icon(
+          isOnline ? Icons.repeat_rounded : Icons.wifi_off_rounded,
+          size: 17,
+        ),
+        label: Text(isOnline ? 'Book Again' : 'Currently Offline'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isOnline ? AppColors.primary : Colors.grey.shade300,
+          foregroundColor: isOnline ? Colors.white : Colors.grey.shade500,
+          disabledBackgroundColor: Colors.grey.shade200,
+          disabledForegroundColor: Colors.grey.shade400,
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+          elevation: 0,
+        ),
+      ),
+    );
+  }
+}
+
 // ── Handyman Profile Bottom Sheet ─────────────────────────────────────────────
 
 class _HandymanProfileSheet extends StatelessWidget {
@@ -732,16 +817,23 @@ class _HandymanProfileSheet extends StatelessWidget {
   final bool priceSet;
   final double? assessmentPrice;
 
+  /// If non-null, a "Book Again" CTA is rendered at the bottom of the sheet.
+  /// The callback already pops the sheet before calling the parent handler.
+  final VoidCallback? onBookAgain;
+
   const _HandymanProfileSheet({
     required this.pro,
     this.onViewAssessment,
     required this.isAccepted,
     required this.priceSet,
     this.assessmentPrice,
+    this.onBookAgain,
   });
 
   @override
   Widget build(BuildContext context) {
+    final bool isOnline = pro.available;
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -804,7 +896,31 @@ class _HandymanProfileSheet extends StatelessWidget {
                             ),
                           ],
                         ]),
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 4),
+                        // Online/Offline status
+                        Row(children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isOnline
+                                  ? const Color(0xFF34C759)
+                                  : Colors.grey.shade400,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            isOnline ? 'Online' : 'Offline',
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: isOnline
+                                    ? const Color(0xFF34C759)
+                                    : Colors.grey.shade500),
+                          ),
+                        ]),
+                        const SizedBox(height: 4),
                         Row(children: [
                           ...List.generate(
                               5,
@@ -862,43 +978,95 @@ class _HandymanProfileSheet extends StatelessWidget {
           ),
         ),
 
-        // ── CTA ─────────────────────────────────────────────────────────────
-        if (isAccepted && onViewAssessment != null)
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-                24, 0, 24, MediaQuery.of(context).padding.bottom + 16),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: Icon(
-                  priceSet
-                      ? Icons.price_check_rounded
-                      : Icons.hourglass_top_rounded,
-                  size: 18,
+        // ── CTA section ──────────────────────────────────────────────────────
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+              24, 0, 24, MediaQuery.of(context).padding.bottom + 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Assessment CTA (active bookings)
+              if (isAccepted && onViewAssessment != null) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: Icon(
+                      priceSet
+                          ? Icons.price_check_rounded
+                          : Icons.hourglass_top_rounded,
+                      size: 18,
+                    ),
+                    label: Text(priceSet
+                        ? 'Review Price  ·  ₱${assessmentPrice!.toStringAsFixed(2)}'
+                        : 'View Assessment (Price Pending)'),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      onViewAssessment?.call();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: priceSet
+                          ? AppColors.primary
+                          : const Color(0xFFFF9500),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                      textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 15),
+                      elevation: 0,
+                    ),
+                  ),
                 ),
-                label: Text(priceSet
-                    ? 'Review Price  ·  ₱${assessmentPrice!.toStringAsFixed(2)}'
-                    : 'View Assessment (Price Pending)'),
-                onPressed: () {
-                  Navigator.pop(context);
-                  onViewAssessment?.call();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      priceSet ? AppColors.primary : const Color(0xFFFF9500),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
-                  textStyle: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 15),
-                  elevation: 0,
+              ],
+
+              // Book Again CTA (completed / cancelled bookings)
+              if (onBookAgain != null) ...[
+                if (isAccepted && onViewAssessment != null)
+                  const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: isOnline ? onBookAgain : null,
+                    icon: Icon(
+                      isOnline ? Icons.repeat_rounded : Icons.wifi_off_rounded,
+                      size: 18,
+                    ),
+                    label: Text(isOnline ? 'Book Again' : 'Currently Offline'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          isOnline ? AppColors.primary : Colors.grey.shade300,
+                      foregroundColor:
+                          isOnline ? Colors.white : Colors.grey.shade500,
+                      disabledBackgroundColor: Colors.grey.shade200,
+                      disabledForegroundColor: Colors.grey.shade400,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                      textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 15),
+                      elevation: 0,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          )
-        else
-          SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+                if (!isOnline) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'This handyman is currently offline. Check back later to book them.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 11, color: Colors.grey.shade500, height: 1.4),
+                  ),
+                ],
+              ],
+
+              // Fallback spacer when no CTA
+              if (!isAccepted &&
+                  onViewAssessment == null &&
+                  onBookAgain == null)
+                const SizedBox(height: 0),
+            ],
+          ),
+        ),
       ]),
     );
   }

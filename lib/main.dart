@@ -1159,6 +1159,29 @@ class _MainAppState extends State<MainApp> {
                   }
                 }
               : null,
+          // ── NEW: Book Again ────────────────────────────────────────────────
+          // Shown on completed and cancelled bookings. Routes the customer back
+          // to RequestServiceScreen with the same professional pre-selected so
+          // they can rebook in one tap. Enabled only when pro.available == true
+          // (enforced inside BookingStatusScreen itself via the button state).
+          onBookAgain: (_selectedBooking!.status == BookingStatus.completed ||
+                  _selectedBooking!.status == BookingStatus.cancelled)
+              ? (pro) {
+                  // Find the live ProfessionalModel from our cached list so we
+                  // get the freshest `available` flag, not the snapshot in the booking.
+                  final liveModel =
+                      _professionals.firstWhereOrNull((p) => p.id == pro.id);
+                  if (liveModel == null || !liveModel.available) {
+                    _notify('This handyman is currently offline.');
+                    return;
+                  }
+                  setState(() {
+                    _selectedPro = liveModel;
+                    _preselectedServiceType = _selectedBooking!.serviceType;
+                    _screen = 'request_service';
+                  });
+                }
+              : null,
         );
 
       case 'assessment':
