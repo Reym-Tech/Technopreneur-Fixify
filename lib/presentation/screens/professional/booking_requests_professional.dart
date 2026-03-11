@@ -1,19 +1,15 @@
 // lib/presentation/screens/professional/booking_requests_professional.dart
 //
-// BookingRequestsScreen — Professional's incoming booking requests (navIndex=1).
+// BookingRequestsScreen — Professional's incoming open booking requests.
 //
-// Shows PENDING bookings only with Accept / Decline actions.
-// Tap card → expands to show full details.
-// When the pro is offline an overlay banner blocks new accepts and explains why.
-//
-// Props:
-//   bookings        → List<BookingEntity>   — all pro bookings (filtered internally to pending)
-//   isAvailable     → bool                  — mirrors the toggle state from main.dart
-//   onAccept        → Function(BookingEntity)
-//   onDecline       → Function(BookingEntity)
-//   onNavTap        → Function(int)
-//   currentNavIndex → int
-//   onRefresh       → Future<void> Function()?
+// OPEN-BOOKING MODEL changes:
+//   • "bookings" prop now contains OPEN (unassigned) requests, not all bookings.
+//   • onDecline now dismisses the request from this pro's view only —
+//     the booking stays open for other pros (it is NOT cancelled in the DB).
+//   • onAccept calls claimBooking() via main.dart — first-accept-wins.
+//   • Decline button label changed to "Skip" to reflect that the job is not
+//     being cancelled, just dismissed from this pro's list.
+//   • All prop names, types, and widget structure are unchanged.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -47,6 +43,8 @@ class BookingRequestsScreen extends StatefulWidget {
 class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
   String? _expandedId;
 
+  // In the open-booking model all items passed in are already pending+unassigned,
+  // so we display all of them. The filter is kept for safety.
   List<BookingEntity> get _pending =>
       widget.bookings.where((b) => b.status == BookingStatus.pending).toList();
 
@@ -61,7 +59,6 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
         backgroundColor: AppColors.backgroundLight,
         body: Column(children: [
           _buildHeader(),
-          // ── Offline banner ─────────────────────────────────────────
           if (!widget.isAvailable) _buildOfflineBanner(),
           Expanded(child: _pending.isEmpty ? _empty() : _buildList()),
         ]),
@@ -163,16 +160,14 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
                             fontWeight: FontWeight.w800,
                             letterSpacing: -0.3)),
                     Text(
-                      '${_pending.length} pending request${_pending.length == 1 ? '' : 's'}',
+                      '${_pending.length} open request${_pending.length == 1 ? '' : 's'}',
                       style: TextStyle(
                           color: Colors.white.withOpacity(0.6), fontSize: 13),
                     ),
                   ],
                 ),
               ),
-              // Status pill next to count badge
               Row(children: [
-                // Online / Offline pill
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -247,11 +242,11 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
             return _RequestCard(
               booking: b,
               expanded: expanded,
-              // Disable accept/decline when offline — pro must go online first
               isAvailable: widget.isAvailable,
               onTap: () => setState(() => _expandedId = expanded ? null : b.id),
               onAccept:
                   widget.isAvailable ? () => widget.onAccept?.call(b) : null,
+              // Decline = skip/dismiss from this pro's view only (not a DB cancel)
               onDecline: () => widget.onDecline?.call(b),
             ).animate().fadeIn(delay: (i * 60).ms).slideY(begin: 0.06, end: 0);
           },
@@ -272,7 +267,7 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
                   size: 52, color: AppColors.primary.withOpacity(0.4)),
             ),
             const SizedBox(height: 20),
-            const Text('No pending requests',
+            const Text('No open requests',
                 style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
@@ -280,7 +275,7 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
             const SizedBox(height: 8),
             Text(
               widget.isAvailable
-                  ? 'New booking requests from customers will appear here.'
+                  ? 'New customer requests matching your skills will appear here.'
                   : 'You\'re offline. Go online from your Dashboard to start receiving requests.',
               textAlign: TextAlign.center,
               style: const TextStyle(
@@ -467,7 +462,6 @@ class _RequestCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
             child: Column(children: [
-              // Offline warning on the card itself
               if (!isAvailable)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10),
@@ -481,9 +475,9 @@ class _RequestCard extends StatelessWidget {
                       border: Border.all(
                           color: const Color(0xFFFF3B30).withOpacity(0.2)),
                     ),
-                    child: Row(
+                    child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
+                      children: [
                         Icon(Icons.wifi_off_rounded,
                             size: 13, color: Color(0xFFFF3B30)),
                         SizedBox(width: 6),
@@ -503,20 +497,21 @@ class _RequestCard extends StatelessWidget {
                   child: OutlinedButton(
                     onPressed: onDecline,
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFFFF3B30)),
-                      foregroundColor: const Color(0xFFFF3B30),
+                      side: const BorderSide(color: Color(0xFFAAAAAA)),
+                      foregroundColor: AppColors.textMedium,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14)),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    child: const Text('Decline',
+                    // "Skip" instead of "Decline" — this does NOT cancel the
+                    // booking, it only removes it from this pro's local view.
+                    child: const Text('Skip',
                         style: TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
-                    // null disables the button when offline
                     onPressed: onAccept,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: isAvailable

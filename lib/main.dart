@@ -1,33 +1,24 @@
 // lib/main.dart
-// Changes from previous version:
-//  1. AuthFlow now accepts an optional initialEmail so RegisterScreen can
-//     pass the just-registered email back to LoginScreen (autofill fix).
-//  2. _handleRegister no longer signs the user in implicitly — it explicitly
-//     signs out any session that Supabase may have created on signUp so the
-//     app stays on the LoginScreen (fixes the post-register splash loop).
-//  3. _handleLogin now calls setState after a successful login to force
-//     AppNavigator to re-evaluate _isLoggedIn immediately, instead of
-//     waiting solely for the auth stream (fixes the blank-after-login bug).
-//  4. AppNavigator._checkInitialSession now also force-refreshes after the
-//     auth stream fires to cover race conditions.
 //
-// ASSESSMENT PHASE FIXES (this version):
-//  FIX-1 [Pro side]: In _professionalFlow(), all _screen== checks are now
-//         evaluated BEFORE _navIndex== checks. Previously, if the handyman
-//         was on navIndex=1 (Requests) and tapped a booking detail, the
-//         navIndex==1 branch rendered BookingRequestsScreen instead of
-//         ProBookingDetailScreen — causing the "goes back to Requests after
-//         setting price" bug.
-//  FIX-2 [Customer side]: onViewAssessment in _customerFlow() now fires for
-//         BOTH BookingStatus.accepted AND BookingStatus.assessment. Previously
-//         it was gated only on `accepted`, so once the booking advanced to
-//         `assessment` (price set) the CTA disappeared and the customer
-//         couldn't confirm.
-//  FIX-3 [Customer side]: Both onBookingTap handlers (CustomerBookingsScreen
-//         and CustomerDashboardScreen) now call _ds.subscribeToBookingUpdates()
-//         immediately after selecting a booking, so real-time DB changes
-//         (e.g. handyman setting a price) are reflected live without the
-//         customer needing to pull-to-refresh.
+// OPEN-BOOKING MODEL:
+//   Customer creates ONE booking with no professional assigned.
+//   All matching pros see it as an open request.
+//   First pro to accept claims it via claimBooking().
+//   Customer's booking list always shows exactly one entry per request.
+//
+// KEY CHANGES from broadcast model:
+//   • _init() professional branch: loads open requests via getOpenBookingRequests()
+//     in addition to assigned bookings via getProfessionalBookings().
+//     Subscribes to open requests realtime channel.
+//   • onSubmit in RequestServiceScreen: creates exactly ONE booking (no loop).
+//   • onAccept in BookingRequestsScreen: calls claimBooking() instead of
+//     updateBookingStatus(). Handles BookingAlreadyClaimedException gracefully.
+//   • _openRequests state list added for pros (separate from _bookings which
+//     holds assigned/active bookings).
+//   • Customer side: no sibling-cancellation logic needed — there is only
+//     ever one booking per request now.
+//   • _subscribeToBooking() retained for customer-side realtime status updates.
+//   • _deduped() retained as a safety net.
 
 import 'package:fixify/presentation/screens/admin/superadmin_analytics.dart';
 import 'package:fixify/presentation/screens/professional/earnings.dart';
@@ -127,6 +118,7 @@ class _AppNavigatorState extends State<AppNavigator> {
     });
   }
 
+
   @override
   Widget build(BuildContext context) {
     if (!_initialCheckDone) {
@@ -161,6 +153,7 @@ class _AuthFlowState extends State<AuthFlow> {
       if (mounted) setState(() => _showSplash = false);
     });
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -249,6 +242,11 @@ class _MainAppState extends State<MainApp> {
   ProfessionalModel? _pro;
   List<ProfessionalModel> _professionals = [];
   List<BookingModel> _bookings = [];
+
+  // Open (unassigned) booking requests visible to this professional.
+  // Kept separate from _bookings (which holds assigned/claimed bookings).
+  List<BookingModel> _openRequests = [];
+
   List<ApplicationModel> _applications = [];
   List<ReviewModel> _reviews = [];
   int _navIndex = 0;
@@ -261,12 +259,76 @@ class _MainAppState extends State<MainApp> {
   final Set<String> _reviewedBookingIds = {};
   BookingModel? _selectedBooking;
 
-  // tracks which booking the pro tapped in history
   BookingEntity? _selectedProBooking;
 
   bool _loading = true;
 
   RealtimeChannel? _professionalsChannel;
+
+  // Realtime channel for open booking requests (pro side).
+  RealtimeChannel? _openRequestsChannel;
+  RealtimeChannel? _selectedProBookingChannel;
+  String? _selectedProBookingId;
+
+  // ── Deduplication helper ──────────────────────────────────────────────────
+  List<BookingModel> _deduped(List<BookingModel> list) {
+    final seen = <String>{};
+    final result = <BookingModel>[];
+    for (final b in list.reversed) {
+      if (seen.add(b.id)) result.add(b);
+    }
+    return result.reversed.toList();
+  }
+
+  // ── Customer-side realtime subscription for a single booking ─────────────
+  // Keeps the customer's booking status in sync as the pro updates it.
+  void _subscribeToBooking(BookingModel booking) {
+    _ds.subscribeToBookingUpdates(
+      bookingId: booking.id,
+      onUpdate: (updated) {
+        if (!mounted) return;
+        setState(() {
+          if (_selectedBooking?.id == updated.id) {
+            _selectedBooking = updated;
+          }
+          _bookings = _deduped(
+              _bookings.map((b) => b.id == updated.id ? updated : b).toList());
+        });
+      },
+    );
+  }
+  // Professional-side realtime subscription for a single booking (detail view).
+  // Keeps the handyman's booking detail in sync as the customer confirms price.
+  void _subscribeToProBooking(BookingEntity booking) {
+    if (_selectedProBookingId == booking.id &&
+        _selectedProBookingChannel != null) {
+      return;
+    }
+    if (_selectedProBookingChannel != null) {
+      _ds.unsubscribeChannel(_selectedProBookingChannel!);
+    }
+    _selectedProBookingId = booking.id;
+    _selectedProBookingChannel = _ds.subscribeToBookingUpdates(
+      bookingId: booking.id,
+      onUpdate: (updated) {
+        if (!mounted) return;
+        setState(() {
+          final hasBooking = _bookings.any((b) => b.id == updated.id);
+          final updatedList = hasBooking
+              ? _bookings
+                  .map((b) => b.id == updated.id ? updated : b)
+                  .toList()
+              : [updated, ..._bookings];
+          _bookings = _deduped(updatedList);
+          if (_selectedProBooking?.id == updated.id) {
+            _selectedProBooking = updated.toEntity();
+          }
+        });
+      },
+    );
+  }
+
+
 
   @override
   void initState() {
@@ -277,10 +339,17 @@ class _MainAppState extends State<MainApp> {
     _init();
   }
 
+
   @override
   void dispose() {
     if (_professionalsChannel != null) {
       _ds.unsubscribeChannel(_professionalsChannel!);
+    }
+    if (_openRequestsChannel != null) {
+      _ds.unsubscribeChannel(_openRequestsChannel!);
+    }
+    if (_selectedProBookingChannel != null) {
+      _ds.unsubscribeChannel(_selectedProBookingChannel!);
     }
     super.dispose();
   }
@@ -313,16 +382,45 @@ class _MainAppState extends State<MainApp> {
           }
 
           if (_pro != null) {
+            // Load bookings already assigned to this pro
             _bookings = await _ds.getProfessionalBookings(_pro!.id);
+
+            // Load open requests matching this pro's skills
+            _openRequests = await _ds.getOpenBookingRequests(
+              skills: _pro!.skills,
+            );
+
             _applications = await _appDs.getMyApplications(_pro!.id);
             _reviews = await _ds.getProfessionalReviews(_pro!.id);
-            _ds.subscribeToProfessionalBookings(
-              professionalId: _pro!.id,
-              onNewBooking: (b) {
-                setState(() => _bookings = [b, ..._bookings]);
-                _notify('New booking request!');
+
+            // Subscribe to new open requests arriving in real time
+            _openRequestsChannel = _ds.subscribeToOpenBookingRequests(
+              skills: _pro!.skills,
+              onNewRequest: (newRequest) {
+                if (!mounted) return;
+                // Only add if not already in the list
+                if (!_openRequests.any((r) => r.id == newRequest.id)) {
+                  setState(
+                      () => _openRequests = [newRequest, ..._openRequests]);
+                  _notify('New booking request!');
+                }
               },
             );
+
+            // subscribeToProfessionalBookings fires when this pro claims a
+            // booking (professional_id flips from null → this pro's id).
+            _ds.subscribeToProfessionalBookings(
+              professionalId: _pro!.id,
+              onNewBooking: (claimed) {
+                if (!mounted) return;
+                setState(() {
+                  // Move from open requests to assigned bookings
+                  _openRequests.removeWhere((r) => r.id == claimed.id);
+                  _bookings = _deduped([claimed, ..._bookings]);
+                });
+              },
+            );
+
             _appDs.subscribeToMyApplications(
               professionalId: _pro!.id,
               onUpdate: (a) {
@@ -343,6 +441,7 @@ class _MainAppState extends State<MainApp> {
         } else {
           // ── Customer ──────────────────────────────────────────────────
           _bookings = await _ds.getCustomerBookings(_user!.id);
+
           for (final b in _bookings) {
             if (b.status == BookingStatus.completed) {
               final reviewed = await _ds.hasReviewedBooking(
@@ -352,6 +451,18 @@ class _MainAppState extends State<MainApp> {
               if (reviewed) _reviewedBookingIds.add(b.id);
             }
           }
+
+          // Subscribe to active bookings so status updates arrive live
+          for (final existingBooking in _bookings) {
+            final isActive = existingBooking.status == BookingStatus.pending ||
+                existingBooking.status == BookingStatus.accepted ||
+                existingBooking.status == BookingStatus.assessment ||
+                existingBooking.status == BookingStatus.inProgress;
+            if (isActive) {
+              _subscribeToBooking(existingBooking);
+            }
+          }
+
           _notifDs.getNotifications(userId: _user!.id).then((list) {
             if (mounted)
               setState(() =>
@@ -388,11 +499,16 @@ class _MainAppState extends State<MainApp> {
     try {
       if (_user == null) return;
       if (_user!.isProfessional && _pro != null) {
-        final list = await _ds.getProfessionalBookings(_pro!.id);
-        if (mounted) setState(() => _bookings = list);
+        final assigned = await _ds.getProfessionalBookings(_pro!.id);
+        final open = await _ds.getOpenBookingRequests(skills: _pro!.skills);
+        if (mounted)
+          setState(() {
+            _bookings = _deduped(assigned);
+            _openRequests = open;
+          });
       } else if (_user!.role == 'customer') {
         final list = await _ds.getCustomerBookings(_user!.id);
-        if (mounted) setState(() => _bookings = list);
+        if (mounted) setState(() => _bookings = _deduped(list));
       }
     } catch (e) {
       debugPrint('Refresh error: $e');
@@ -426,7 +542,7 @@ class _MainAppState extends State<MainApp> {
       if (mounted)
         setState(() {
           _professionals = pros;
-          _bookings = bookings;
+          _bookings = _deduped(bookings);
         });
     } catch (e) {
       debugPrint('Pull-to-refresh (customer) error: $e');
@@ -437,11 +553,13 @@ class _MainAppState extends State<MainApp> {
     if (_user == null || _pro == null) return;
     try {
       final bookings = await _ds.getProfessionalBookings(_pro!.id);
+      final open = await _ds.getOpenBookingRequests(skills: _pro!.skills);
       final reviews = await _ds.getProfessionalReviews(_pro!.id);
       final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
       if (mounted)
         setState(() {
-          _bookings = bookings;
+          _bookings = _deduped(bookings);
+          _openRequests = open;
           _reviews = reviews;
           if (updatedPro != null) _pro = updatedPro;
         });
@@ -463,6 +581,7 @@ class _MainAppState extends State<MainApp> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ));
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -638,19 +757,19 @@ class _MainAppState extends State<MainApp> {
 
   // ── PROFESSIONAL FLOW ─────────────────────────────────────
   //
-  // FIX-1: _screen checks come FIRST, before _navIndex checks.
-  // This ensures ProBookingDetailScreen is always rendered when
-  // _screen == 'pro_booking_detail', regardless of which nav tab
-  // the handyman was on when they opened the detail.
+  // _screen checks come FIRST, before _navIndex checks.
+  // _openRequests feeds BookingRequestsScreen (unassigned pending jobs).
+  // _bookings feeds history/dashboard (assigned jobs).
 
   Widget _professionalFlow() {
     final u = _user!.toEntity();
     final proEntity = _pro?.toEntity();
+    // For dashboard/history: assigned bookings only
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
+    // For requests screen: open unassigned bookings
+    final openRequestEntities = _openRequests.map((b) => b.toEntity()).toList();
 
     // ── SCREEN CHECKS FIRST ───────────────────────────────────────────────
-    // FIX-1: These must come before navIndex checks so that tapping a booking
-    // detail from any nav tab doesn't fall through to BookingRequestsScreen.
 
     if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
       return ProBookingDetailScreen(
@@ -675,8 +794,6 @@ class _MainAppState extends State<MainApp> {
         },
         onUpdateStatus: (newStatus) async {
           try {
-            // Guard: prevent direct jump to inProgress — must go through
-            // customer confirmation (assessment → confirmAssessment → inProgress).
             if (newStatus == BookingStatus.inProgress) {
               _notify('Waiting for the customer to confirm the price first.');
               return;
@@ -722,6 +839,7 @@ class _MainAppState extends State<MainApp> {
             _selectedProBooking = booking;
             _screen = 'pro_booking_detail';
           });
+          _subscribeToProBooking(booking);
         },
       );
     }
@@ -822,11 +940,12 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    // ── NAV INDEX CHECKS (after screen checks) ────────────────────────────
+    // ── NAV INDEX CHECKS ──────────────────────────────────────────────────
 
     if (_navIndex == 1) {
       return BookingRequestsScreen(
-        bookings: bookingEntities,
+        // Pass open (unassigned) requests — NOT assigned bookings
+        bookings: openRequestEntities,
         isAvailable: _pro?.available ?? true,
         currentNavIndex: _navIndex,
         onNavTap: (i) async {
@@ -838,22 +957,40 @@ class _MainAppState extends State<MainApp> {
         },
         onRefresh: _refreshBookings,
         onAccept: (booking) async {
+          if (_pro == null) return;
           try {
-            await _ds.updateBookingStatus(booking.id, BookingStatus.accepted);
-            await _refreshBookings();
-            _notify('Booking accepted! Customer has been notified.');
+            // claimBooking() atomically assigns this pro and sets status=accepted.
+            // If another pro already claimed it, BookingAlreadyClaimedException
+            // is caught and shown to the user without crashing.
+            final claimed = await _ds.claimBooking(
+              bookingId: booking.id,
+              professionalId: _pro!.id,
+            );
+            setState(() {
+              // Remove from open requests and add to assigned bookings
+              _openRequests.removeWhere((r) => r.id == claimed.id);
+              _bookings = _deduped([claimed, ..._bookings]);
+              // Jump straight to the booking detail for the accepted job
+              _selectedProBooking = claimed.toEntity();
+              _screen = 'pro_booking_detail';
+            });
+            _subscribeToProBooking(_selectedProBooking!);
+            _notify('Booking accepted! Customer has been notified. ✅');
+          } on BookingAlreadyClaimedException catch (e) {
+            // Remove the stale entry from the local list so the UI updates
+            setState(
+                () => _openRequests.removeWhere((r) => r.id == booking.id));
+            _notify(e.message);
           } catch (e) {
             _notify('Error: $e');
           }
         },
         onDecline: (booking) async {
-          try {
-            await _ds.updateBookingStatus(booking.id, BookingStatus.cancelled);
-            await _refreshBookings();
-            _notify('Booking declined.');
-          } catch (e) {
-            _notify('Error: $e');
-          }
+          // Declining an open request just removes it from this pro's view.
+          // The booking remains open for other pros — we do NOT cancel it
+          // because it was never assigned to this pro.
+          setState(() => _openRequests.removeWhere((r) => r.id == booking.id));
+          _notify('Request dismissed.');
         },
       );
     }
@@ -964,10 +1101,12 @@ class _MainAppState extends State<MainApp> {
       user: u,
       professional: proEntity,
       bookings: bookingEntities,
+      openRequestCount: _openRequests.length,
       reviews: _reviews.map((r) => r.toEntity()).toList(),
       pendingApplications:
           _applications.where((a) => a.status == 'pending').length,
       currentNavIndex: _navIndex,
+      onRefresh: _refreshProfessionalDashboard,
       onNavTap: (i) async {
         setState(() {
           _navIndex = i;
@@ -1012,10 +1151,6 @@ class _MainAppState extends State<MainApp> {
   }
 
   // ── CUSTOMER FLOW ─────────────────────────────────────────
-  //
-  // FIX-2: onViewAssessment now fires for BOTH `accepted` AND `assessment`.
-  // FIX-3: Both onBookingTap handlers subscribe to real-time booking updates
-  //        immediately so the customer sees price changes without refreshing.
 
   Widget _customerFlow() {
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
@@ -1029,8 +1164,6 @@ class _MainAppState extends State<MainApp> {
           _screen = i == 3 ? 'profile' : 'home';
         }),
         onRefresh: _refreshBookings,
-        // FIX-3: Subscribe to real-time updates when a booking is opened
-        // from the bookings list so price changes appear immediately.
         onBookingTap: (booking) {
           final model = _bookings.firstWhere((b) => b.id == booking.id,
               orElse: () => _bookings.first);
@@ -1038,19 +1171,7 @@ class _MainAppState extends State<MainApp> {
             _selectedBooking = model;
             _screen = 'booking_status';
           });
-          _ds.subscribeToBookingUpdates(
-            bookingId: model.id,
-            onUpdate: (updated) {
-              if (!mounted) return;
-              setState(() {
-                if (_selectedBooking?.id == updated.id)
-                  _selectedBooking = updated;
-                _bookings = _bookings
-                    .map((b) => b.id == updated.id ? updated : b)
-                    .toList();
-              });
-            },
-          );
+          _subscribeToBooking(model);
         },
       );
     }
@@ -1093,6 +1214,10 @@ class _MainAppState extends State<MainApp> {
             _preselectedProblemTitle = null;
             _selectedPro = null;
           }),
+          // OPEN-BOOKING MODEL:
+          // Creates exactly ONE booking with no professional assigned.
+          // All matching pros will see it as an open request and the first
+          // to accept will claim it. No loop, no duplicates.
           onSubmit: (result) async {
             try {
               final notesText = [
@@ -1101,45 +1226,64 @@ class _MainAppState extends State<MainApp> {
                 if (result.notes != null) result.notes!,
               ].join('\n');
 
-              BookingModel? firstBooking;
-              for (final pro in result.matchedPros) {
-                final booking = await _ds.createBooking(
-                  customerId: _user!.id,
-                  professionalId: pro.id,
-                  serviceType: result.serviceType,
-                  scheduledDate: DateTime.now().add(const Duration(days: 1)),
-                  notes: notesText,
-                  address: result.address,
-                  priceEstimate: pro.priceMin,
-                  latitude: result.latitude,
-                  longitude: result.longitude,
-                );
-                firstBooking ??= booking;
-                _ds.subscribeToBookingUpdates(
-                  bookingId: booking.id,
-                  onUpdate: (u) {
-                    if (!mounted) return;
-                    setState(() {
-                      if (_selectedBooking?.id == u.id) _selectedBooking = u;
-                      _bookings =
-                          _bookings.map((b) => b.id == u.id ? u : b).toList();
-                    });
-                  },
-                );
-              }
+              final lowestPrice = result.matchedPros.isNotEmpty
+                  ? result.matchedPros
+                      .map((p) => p.priceMin ?? 0.0)
+                      .reduce((a, b) => a < b ? a : b)
+                  : null;
 
-              if (firstBooking != null) {
+              final booking = await _ds.createBooking(
+                customerId: _user!.id,
+                professionalId: null,
+                serviceType: result.serviceType,
+                scheduledDate: DateTime.now().add(const Duration(days: 1)),
+                notes: notesText,
+                address: result.address,
+                priceEstimate: lowestPrice,
+                latitude: result.latitude,
+                longitude: result.longitude,
+              );
+
+              _subscribeToBooking(booking);
+              await _refreshBookings();
+
+              // ── ADD THIS BLOCK ─────────────────────────────────────────
+              // Insert a notification row for every matched professional.
+              // Their bell badge and notifications screen update in real time
+              // via subscribeToNotifications() which listens to INSERT events.
+              for (final pro in result.matchedPros) {
+                try {
+                  await _notifDs.pushToUser(
+                    targetUserId:
+                        pro.userId, // professionals.user_id FK → users.id
+                    role: 'professional',
+                    type: NotificationTypeStrings.bookingRequest,
+                    title: 'New Booking Request',
+                    message: 'A customer needs ${result.serviceType} service'
+                        ' near ${result.address.split(',').first}.',
+                    referenceId: booking.id,
+                    referenceType: 'booking',
+                  );
+                } catch (e) {
+                  // Log but do not rethrow — a notification failure must never
+                  // block the booking from being created successfully.
+                  debugPrint('[Notify] Could not notify pro ${pro.id}: $e');
+                }
+              }
+              // ── END BLOCK ──────────────────────────────────────────────
+
+              final created =
+                  _bookings.firstWhereOrNull((b) => b.id == booking.id) ??
+                      booking;
+
+              if (mounted) {
                 setState(() {
-                  _selectedBooking = firstBooking;
-                  _bookings = [firstBooking!, ..._bookings];
+                  _selectedBooking = created;
                   _screen = 'booking_status';
                 });
               }
 
-              final count = result.matchedPros.length;
-              _notify(count == 1
-                  ? 'Request sent to 1 handyman!'
-                  : 'Request sent to $count handymen!');
+              _notify('Request sent! Looking for an available handyman...');
             } catch (e) {
               if (mounted)
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1174,10 +1318,6 @@ class _MainAppState extends State<MainApp> {
         return BookingStatusScreen(
           booking: _selectedBooking!.toEntity(),
           onBack: () => setState(() => _screen = 'home'),
-          // FIX-2: Fire onViewAssessment for BOTH `accepted` and `assessment`.
-          // Previously only `accepted` was covered, so once the handyman set
-          // a price (advancing to `assessment`), the CTA disappeared and the
-          // customer could not confirm.
           onViewAssessment:
               (_selectedBooking!.status == BookingStatus.accepted ||
                       _selectedBooking!.status == BookingStatus.assessment)
@@ -1346,8 +1486,6 @@ class _MainAppState extends State<MainApp> {
           _navIndex = 1;
           _screen = 'home';
         }),
-        // FIX-3: Subscribe to real-time updates when a booking is opened
-        // from the dashboard so price changes appear immediately.
         onBookingTap: (booking) {
           final model = _bookings.firstWhere((b) => b.id == booking.id,
               orElse: () => _bookings.first);
@@ -1355,19 +1493,7 @@ class _MainAppState extends State<MainApp> {
             _selectedBooking = model;
             _screen = 'booking_status';
           });
-          _ds.subscribeToBookingUpdates(
-            bookingId: model.id,
-            onUpdate: (updated) {
-              if (!mounted) return;
-              setState(() {
-                if (_selectedBooking?.id == updated.id)
-                  _selectedBooking = updated;
-                _bookings = _bookings
-                    .map((b) => b.id == updated.id ? updated : b)
-                    .toList();
-              });
-            },
-          );
+          _subscribeToBooking(model);
         },
         onFilterBySkill: (skill) async {
           try {
@@ -1410,6 +1536,8 @@ class _MainAppState extends State<MainApp> {
         onNotificationsViewed: () => setState(() => _unreadNotifCount = 0),
       );
 
+  // Direct booking (from professional profile → Book Now flow).
+  // professionalId is required here since the customer explicitly chose a pro.
   Future<void> _createBooking(
       DateTime date, String serviceType, String? notes, String? address,
       {double? latitude, double? longitude}) async {
@@ -1417,7 +1545,7 @@ class _MainAppState extends State<MainApp> {
     try {
       final booking = await _ds.createBooking(
         customerId: _user!.id,
-        professionalId: _selectedPro!.id,
+        professionalId: _selectedPro!.id, // direct booking — pro is known
         serviceType: serviceType,
         scheduledDate: date,
         notes: notes,
@@ -1426,17 +1554,14 @@ class _MainAppState extends State<MainApp> {
         latitude: latitude,
         longitude: longitude,
       );
+      await _refreshBookings();
+      final refreshed =
+          _bookings.firstWhereOrNull((b) => b.id == booking.id) ?? booking;
       setState(() {
-        _selectedBooking = booking;
-        _bookings = [booking, ..._bookings];
+        _selectedBooking = refreshed;
         _screen = 'booking_status';
       });
-      _ds.subscribeToBookingUpdates(
-          bookingId: booking.id,
-          onUpdate: (u) => setState(() {
-                _selectedBooking = u;
-                _bookings = _bookings.map((b) => b.id == u.id ? u : b).toList();
-              }));
+      _subscribeToBooking(booking);
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)
@@ -1494,3 +1619,8 @@ extension IterableExtension<T> on Iterable<T> {
     return null;
   }
 }
+
+
+
+
+

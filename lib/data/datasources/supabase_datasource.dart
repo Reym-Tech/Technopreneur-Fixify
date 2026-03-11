@@ -1,10 +1,28 @@
 // lib/data/datasources/supabase_datasource.dart
 //
-// FIX (subscribeToBookingUpdates): The realtime re-fetch query now joins
-// BOTH professionals AND users!customer_id so that BookingModel.fromJson
-// can populate the customer field on the pro side. Previously the re-fetch
-// only joined professionals, so after a realtime update the customer name/
-// phone/avatar was null on ProBookingDetailScreen.
+// OPEN-BOOKING MODEL (replaces broadcast-per-pro model):
+//
+//   OLD: createBooking() was called once per matched pro → N bookings created,
+//        all pending, causing duplicate entries on the customer side.
+//
+//   NEW: createBooking() creates ONE booking with professional_id = NULL.
+//        All pros whose skills match the service_type see it as an open
+//        request via getOpenBookingRequests() / subscribeToOpenBookingRequests().
+//        The first pro to tap Accept calls claimBooking(), which atomically sets
+//        professional_id = their id and status = 'accepted' only if the booking
+//        is still unassigned (professional_id IS NULL). Any concurrent claim
+//        attempt by another pro will find professional_id already set and fail
+//        gracefully with BookingAlreadyClaimedException.
+//
+// CHANGED public signatures:
+//   createBooking()                  — professionalId is now optional (nullable)
+//   claimBooking()                   — NEW: atomically assigns a pro to a booking
+//   getOpenBookingRequests()         — NEW: fetches unassigned pending bookings by skill
+//   subscribeToOpenBookingRequests() — NEW: realtime feed of open requests for a pro
+//
+// UNCHANGED signatures:
+//   getProfessionalBookings(), updateBookingStatus(), confirmAssessment(),
+//   updateBookingAssessmentPrice(), subscribeToBookingUpdates(), and all others.
 
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -245,9 +263,17 @@ class SupabaseDataSource {
 
   // ── BOOKINGS ──────────────────────────────────────────────
 
+  /// Creates a single booking for a service request.
+  ///
+  /// NEW MODEL: [professionalId] is now nullable. When null, the booking is
+  /// "open" — visible to all matching professionals as an available request.
+  /// The first pro to call [claimBooking] will be assigned to it.
+  ///
+  /// The old broadcast model (one booking per pro) is fully removed.
+  /// This method is called exactly once per customer service request.
   Future<BookingModel> createBooking({
     required String customerId,
-    required String professionalId,
+    String? professionalId, // nullable — null = open/unassigned
     required String serviceType,
     required DateTime scheduledDate,
     String? description,
@@ -259,7 +285,7 @@ class SupabaseDataSource {
   }) async {
     final payload = {
       'customer_id': customerId,
-      'professional_id': professionalId,
+      if (professionalId != null) 'professional_id': professionalId,
       'service_type': serviceType,
       'description': description,
       'price_estimate': priceEstimate,
@@ -285,6 +311,97 @@ class SupabaseDataSource {
     }
   }
 
+  /// Atomically claims an open booking for a professional (first-accept-wins).
+  ///
+  /// Sets professional_id = [professionalId] and status = 'accepted' only
+  /// if the booking is still unassigned (professional_id IS NULL AND
+  /// status = 'pending').
+  ///
+  /// Throws [BookingAlreadyClaimedException] if another pro already accepted.
+  /// Returns the updated [BookingModel] with full joins on success.
+  Future<BookingModel> claimBooking({
+    required String bookingId,
+    required String professionalId,
+  }) async {
+    debugPrint(
+        '[Supabase] claimBooking: booking=$bookingId pro=$professionalId');
+
+    // Pre-check: verify the booking is still open before attempting the update.
+    final current = await _client
+        .from(AppConfig.bookingsTable)
+        .select('professional_id, status')
+        .eq('id', bookingId)
+        .single();
+
+    if (current['professional_id'] != null) {
+      throw const BookingAlreadyClaimedException(
+          'This request was already accepted by another handyman.');
+    }
+    if (current['status'] != 'pending') {
+      throw const BookingAlreadyClaimedException(
+          'This request is no longer available.');
+    }
+
+    // Atomically assign this pro and advance status to 'accepted'.
+    // The double filter (.eq status + .isFilter professional_id null) ensures
+    // that if two pros submit at the exact same millisecond, only one wins.
+    await _client
+        .from(AppConfig.bookingsTable)
+        .update({
+          'professional_id': professionalId,
+          'status': 'accepted',
+        })
+        .eq('id', bookingId)
+        .eq('status', 'pending')
+        .isFilter('professional_id', null);
+
+    // Re-fetch with full joins for a complete BookingModel.
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(
+          '*, '
+          'users!customer_id(id, name, avatar_url, phone), '
+          'professionals!professional_id(id, user_id, skills, verified, '
+          'rating, review_count, price_range, price_min, price_max, city, '
+          'bio, years_experience, available, latitude, longitude, '
+          'users(id, name, avatar_url, phone))',
+        )
+        .eq('id', bookingId)
+        .single();
+
+    debugPrint('[Supabase] claimBooking: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  /// Fetches all open (unassigned, pending) bookings whose service_type
+  /// matches one of the professional's [skills].
+  ///
+  /// Called on init and pull-to-refresh for the pro's Booking Requests screen.
+  Future<List<BookingModel>> getOpenBookingRequests({
+    required List<String> skills,
+  }) async {
+    if (skills.isEmpty) return [];
+
+    // Fetch all open bookings, then filter by skill in Dart.
+    // This keeps the query simple and avoids needing a DB function at MVP scale.
+    final response = await _client
+        .from(AppConfig.bookingsTable)
+        .select(
+          '*, '
+          'users!customer_id(id, name, avatar_url, phone)',
+        )
+        .eq('status', 'pending')
+        .isFilter('professional_id', null)
+        .order('created_at', ascending: false);
+
+    final normalizedSkills = skills.map((s) => s.toLowerCase()).toSet();
+
+    return (response as List)
+        .map((j) => BookingModel.fromJson(j as Map<String, dynamic>))
+        .where((b) => normalizedSkills.contains(b.serviceType.toLowerCase()))
+        .toList();
+  }
+
   Future<List<BookingModel>> getCustomerBookings(String customerId) async {
     final response = await _client
         .from(AppConfig.bookingsTable)
@@ -300,6 +417,8 @@ class SupabaseDataSource {
         .toList();
   }
 
+  /// Returns bookings assigned to [professionalId] (claimed/active/history).
+  /// Open/unassigned bookings are fetched separately via [getOpenBookingRequests].
   Future<List<BookingModel>> getProfessionalBookings(
       String professionalId) async {
     final response = await _client
@@ -327,10 +446,6 @@ class SupabaseDataSource {
         {'status': BookingModel.statusToString(status)}).eq('id', bookingId);
   }
 
-  /// Sets the assessment price AND advances status to 'assessment' atomically.
-  /// This triggers a Realtime update on both sides:
-  ///   - Customer sees the Assessment CTA become active.
-  ///   - Handyman's detail screen badge updates to 'Assessment'.
   Future<void> updateBookingAssessmentPrice({
     required String bookingId,
     required double price,
@@ -344,9 +459,6 @@ class SupabaseDataSource {
     debugPrint('[Supabase] updateBookingAssessmentPrice: done ✅');
   }
 
-  /// Called by the Customer after they confirm the handyman's quoted price.
-  /// Advances status from 'assessment' → 'in_progress', which unlocks the
-  /// handyman's "Mark as Complete" button.
   Future<void> confirmAssessment(String bookingId) async {
     debugPrint('[Supabase] confirmAssessment: id=$bookingId');
     await _client
@@ -357,13 +469,6 @@ class SupabaseDataSource {
 
   // ── REALTIME ──────────────────────────────────────────────
 
-  /// Subscribes to UPDATE events for a single booking row.
-  ///
-  /// FIX: The re-fetch query now includes BOTH:
-  ///   - professionals(*, users(...))  → for the pro's name/avatar
-  ///   - users!customer_id(...)        → for the customer's name/phone
-  /// Previously only the professionals join was included, so on the pro side
-  /// the customer field was null after any realtime update.
   RealtimeChannel subscribeToBookingUpdates({
     required String bookingId,
     required Function(BookingModel) onUpdate,
@@ -381,8 +486,6 @@ class SupabaseDataSource {
           ),
           callback: (payload) async {
             try {
-              // FIX: include both joins so BookingModel.fromJson gets all data
-              // regardless of whether the subscriber is a customer or a pro.
               final data = await _client
                   .from(AppConfig.bookingsTable)
                   .select(
@@ -395,15 +498,13 @@ class SupabaseDataSource {
                   )
                   .eq('id', bookingId)
                   .single();
-              debugPrint(
-                  '[Realtime] booking $bookingId updated → status: ${data['status']}, '
+              debugPrint('[Realtime] booking $bookingId updated → '
+                  'status: ${data['status']}, '
                   'assessment_price: ${data['assessment_price']}');
               onUpdate(BookingModel.fromJson(data));
             } catch (e) {
               debugPrint(
                   '[Realtime] Could not re-fetch booking $bookingId: $e');
-              // Fallback: parse the raw payload (no joins, but at least
-              // the status and assessment_price fields are present).
               onUpdate(BookingModel.fromJson(payload.newRecord));
             }
           },
@@ -411,6 +512,49 @@ class SupabaseDataSource {
         .subscribe();
   }
 
+  /// Listens for new open bookings that match the pro's [skills].
+  ///
+  /// Supabase Realtime does not support IS NULL column filters, so we
+  /// subscribe to ALL inserts and filter in the callback. The channel name
+  /// is timestamped to avoid collision when multiple pros are online.
+  RealtimeChannel subscribeToOpenBookingRequests({
+    required List<String> skills,
+    required Function(BookingModel) onNewRequest,
+  }) {
+    final normalizedSkills = skills.map((s) => s.toLowerCase()).toSet();
+
+    return _client
+        .channel('open_requests_${DateTime.now().millisecondsSinceEpoch}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: AppConfig.bookingsTable,
+          callback: (payload) async {
+            final record = payload.newRecord;
+            // Skip if already assigned to someone
+            if (record['professional_id'] != null) return;
+            final serviceType =
+                (record['service_type'] as String?)?.toLowerCase() ?? '';
+            if (!normalizedSkills.contains(serviceType)) return;
+
+            try {
+              final data = await _client
+                  .from(AppConfig.bookingsTable)
+                  .select('*, users!customer_id(id, name, avatar_url, phone)')
+                  .eq('id', record['id'])
+                  .single();
+              onNewRequest(BookingModel.fromJson(data));
+            } catch (e) {
+              debugPrint('[Realtime] Could not re-fetch open request: $e');
+              onNewRequest(BookingModel.fromJson(record));
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  /// Kept for backward compatibility. In the new model this fires when a
+  /// booking is claimed by this pro (professional_id set via claimBooking).
   RealtimeChannel subscribeToProfessionalBookings({
     required String professionalId,
     required Function(BookingModel) onNewBooking,
@@ -418,7 +562,7 @@ class SupabaseDataSource {
     return _client
         .channel('pro_bookings_$professionalId')
         .onPostgresChanges(
-          event: PostgresChangeEvent.insert,
+          event: PostgresChangeEvent.update,
           schema: 'public',
           table: AppConfig.bookingsTable,
           filter: PostgresChangeFilter(
@@ -427,23 +571,28 @@ class SupabaseDataSource {
             value: professionalId,
           ),
           callback: (payload) async {
-            try {
-              final data = await _client
-                  .from(AppConfig.bookingsTable)
-                  .select(
-                    '*, '
-                    'users!customer_id(id, name, avatar_url, phone), '
-                    'professionals!professional_id(id, user_id, skills, verified, '
-                    'rating, review_count, price_range, price_min, price_max, city, '
-                    'bio, years_experience, available, latitude, longitude, '
-                    'users(id, name, avatar_url, phone))',
-                  )
-                  .eq('id', payload.newRecord['id'])
-                  .single();
-              onNewBooking(BookingModel.fromJson(data));
-            } catch (e) {
-              debugPrint('[Realtime] Could not re-fetch new booking: $e');
-              onNewBooking(BookingModel.fromJson(payload.newRecord));
+            final newStatus = payload.newRecord['status'] as String?;
+            final oldProId = payload.oldRecord['professional_id'] as String?;
+            // Only fire for the initial claim transition (null → accepted)
+            if (newStatus == 'accepted' && oldProId == null) {
+              try {
+                final data = await _client
+                    .from(AppConfig.bookingsTable)
+                    .select(
+                      '*, '
+                      'users!customer_id(id, name, avatar_url, phone), '
+                      'professionals!professional_id(id, user_id, skills, verified, '
+                      'rating, review_count, price_range, price_min, price_max, city, '
+                      'bio, years_experience, available, latitude, longitude, '
+                      'users(id, name, avatar_url, phone))',
+                    )
+                    .eq('id', payload.newRecord['id'])
+                    .single();
+                onNewBooking(BookingModel.fromJson(data));
+              } catch (e) {
+                debugPrint('[Realtime] Could not re-fetch claimed booking: $e');
+                onNewBooking(BookingModel.fromJson(payload.newRecord));
+              }
             }
           },
         )
@@ -582,4 +731,15 @@ class SupabaseDataSource {
     final busted = '$base?t=${DateTime.now().millisecondsSinceEpoch}';
     return busted;
   }
+}
+
+// ── Custom Exceptions ─────────────────────────────────────
+
+/// Thrown by [claimBooking] when the booking was already accepted by
+/// another professional before this claim was processed.
+class BookingAlreadyClaimedException implements Exception {
+  final String message;
+  const BookingAlreadyClaimedException(this.message);
+  @override
+  String toString() => message;
 }

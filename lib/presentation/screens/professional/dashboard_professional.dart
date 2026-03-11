@@ -5,6 +5,11 @@
 //   2. Wrapped CustomScrollView in a RefreshIndicator so pull-to-refresh works
 //      with sliver-based layouts.
 //   3. _fetchUnreadCount is also called on every pull-to-refresh cycle.
+//   4. [FIX] Added `openRequestCount` prop. The pending banner and the
+//      "Booking Requests" menu card badge now use this value instead of
+//      _pendingCount (which counts pending items in assigned _bookings —
+//      always 0 after a booking is claimed). This was causing stale
+//      "2 New Requests" banners to persist even after all requests were handled.
 
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
@@ -19,6 +24,13 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   final UserEntity? user;
   final ProfessionalEntity? professional;
   final List<BookingEntity> bookings;
+
+  /// Number of open (unassigned) booking requests visible to this professional.
+  /// Sourced from _openRequests.length in main.dart — kept separate from
+  /// [bookings] which only holds assigned/claimed jobs. Used for the pending
+  /// banner and the "Booking Requests" menu card badge.
+  final int openRequestCount;
+
   final int pendingApplications;
   final Function(BookingEntity, BookingStatus)? onUpdateStatus;
   final VoidCallback? onViewRequests;
@@ -41,6 +53,7 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.user,
     this.professional,
     this.bookings = const [],
+    this.openRequestCount = 0,
     this.pendingApplications = 0,
     this.onUpdateStatus,
     this.onViewRequests,
@@ -68,6 +81,7 @@ class _ProfessionalDashboardScreenState
   // ── Notification bell state ───────────────────────────────
   int _unreadNotifCount = 0;
   late final NotificationDataSource _notifDs;
+  RealtimeChannel? _notifChannel;
 
   @override
   void initState() {
@@ -75,6 +89,13 @@ class _ProfessionalDashboardScreenState
     _available = widget.professional?.available ?? true;
     _notifDs = NotificationDataSource(Supabase.instance.client);
     _fetchUnreadCount();
+    _subscribeToNotifications();
+  }
+
+  @override
+  void dispose() {
+    if (_notifChannel != null) _notifDs.unsubscribe(_notifChannel!);
+    super.dispose();
   }
 
   Future<void> _fetchUnreadCount() async {
@@ -88,6 +109,15 @@ class _ProfessionalDashboardScreenState
     }
   }
 
+  void _subscribeToNotifications() {
+    final userId = widget.user?.id;
+    if (userId == null || userId.isEmpty) return;
+    _notifChannel = _notifDs.subscribeToNotifications(
+      userId: userId,
+      onNew: (_) => _fetchUnreadCount(),
+    );
+  }
+
   /// Triggered by the RefreshIndicator. Calls parent refresh then re-fetches
   /// the unread notification count so the bell badge stays in sync.
   Future<void> _handleRefresh() async {
@@ -96,8 +126,6 @@ class _ProfessionalDashboardScreenState
   }
 
   // ── Derived stats ─────────────────────────────────────────
-  int get _pendingCount =>
-      widget.bookings.where((b) => b.status == BookingStatus.pending).length;
 
   int get _completedCount =>
       widget.bookings.where((b) => b.status == BookingStatus.completed).length;
@@ -158,7 +186,9 @@ class _ProfessionalDashboardScreenState
                   child: _buildVerificationBanner(),
                 ).animate().fadeIn(delay: 180.ms),
               ),
-            if (_pendingCount > 0)
+            // FIX: Use openRequestCount — this reflects actual open/unassigned
+            // requests, not pending items in already-assigned bookings.
+            if (widget.openRequestCount > 0)
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -647,8 +677,13 @@ class _ProfessionalDashboardScreenState
   }
 
   // ── PENDING BANNER ────────────────────────────────────────
+  // FIX: Uses widget.openRequestCount instead of the old _pendingCount.
+  // _pendingCount counted BookingStatus.pending inside _bookings (assigned
+  // jobs), which is always 0 after a booking is claimed. openRequestCount
+  // reflects the actual number of unassigned open requests from _openRequests.
 
   Widget _buildPendingBanner() {
+    final count = widget.openRequestCount;
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: BackdropFilter(
@@ -677,8 +712,7 @@ class _ProfessionalDashboardScreenState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                        '$_pendingCount New Request${_pendingCount > 1 ? 's' : ''}',
+                    Text('$count New Request${count > 1 ? 's' : ''}',
                         style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
@@ -713,15 +747,18 @@ class _ProfessionalDashboardScreenState
   }
 
   // ── MENU CARDS ────────────────────────────────────────────
+  // FIX: "Booking Requests" badge now uses openRequestCount, not _pendingCount.
 
   Widget _buildMenuCards() {
+    final openCount = widget.openRequestCount;
     return Column(
       children: [
         _menuCard(
           icon: Icons.calendar_month_rounded,
           title: 'Booking Requests',
           subtitle: 'View and accept new service requests',
-          badge: _pendingCount > 0 ? '$_pendingCount' : null,
+          // FIX: badge reflects open/unassigned requests, not pending assigned ones
+          badge: openCount > 0 ? '$openCount' : null,
           badgeColor: const Color(0xFFFF3B30),
           onTap: widget.onViewRequests,
         ),
