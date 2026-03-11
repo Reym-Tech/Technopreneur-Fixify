@@ -1,16 +1,21 @@
 // lib/presentation/screens/customer/booking_status_screen.dart
 //
-// BookingStatusScreen — 4-step status timeline for a customer booking.
+// BookingStatusScreen — 5-step status timeline for a customer booking.
 //
-// Changes from previous version:
-//  • Assessment CTA is visible for both Accepted AND InProgress statuses.
-//  • Assessment CTA shows dynamic price status.
-//  • Professional card uses actual avatar photo (_ProAvatar widget).
-//  • "Book Again" button added to professional card and bottom sheet:
-//      - Green + enabled  when pro.available == true
-//      - Grey  + disabled when pro.available == false (shows "Currently Offline")
-//  • onBookAgain callback added — called with the ProfessionalEntity so the
-//    parent can route directly to RequestServiceScreen pre-filled with that pro.
+// CHANGE: Added `Assessment` step between `Accepted` and `In Progress`.
+//
+//   Pending → Accepted → Assessment → In Progress → Completed
+//
+// Assessment CTA behaviour:
+//   • Status = accepted   → Handyman accepted but hasn't set a price yet.
+//                           CTA shows "Awaiting Assessment" (orange, disabled confirm).
+//   • Status = assessment → Handyman set a price. CTA shows price + "Confirm & Start"
+//                           (green, enabled). Customer must confirm before job starts.
+//   • Status = inProgress → Customer confirmed; job is underway. CTA hidden.
+//
+// Validation:
+//   • Customer CANNOT confirm if no assessmentPrice is set (guarded in
+//     AssessmentScreen._handleConfirm, but also reflected in this CTA state).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -23,11 +28,10 @@ class BookingStatusScreen extends StatelessWidget {
   final VoidCallback? onWriteReview;
   final VoidCallback? onCancelBooking;
 
-  /// Called when customer taps "Assessment Ready" → navigates to AssessmentScreen.
+  /// Called when customer taps the Assessment CTA → navigates to AssessmentScreen.
   final VoidCallback? onViewAssessment;
 
   /// Called when customer taps "Book Again" on a past professional.
-  /// Receives the [ProfessionalEntity] so the parent can pre-select them.
   final Function(ProfessionalEntity)? onBookAgain;
 
   const BookingStatusScreen({
@@ -42,16 +46,19 @@ class BookingStatusScreen extends StatelessWidget {
 
   // ── Status helpers ─────────────────────────────────────────────────────────
 
+  // CHANGE: 5-step index (0-4). Assessment = 2.
   int get _statusStep {
     switch (booking.status) {
       case BookingStatus.pending:
         return 0;
       case BookingStatus.accepted:
         return 1;
-      case BookingStatus.inProgress:
+      case BookingStatus.assessment:
         return 2;
-      case BookingStatus.completed:
+      case BookingStatus.inProgress:
         return 3;
+      case BookingStatus.completed:
+        return 4;
       default:
         return 0;
     }
@@ -59,6 +66,7 @@ class BookingStatusScreen extends StatelessWidget {
 
   bool get _isCancelled => booking.status == BookingStatus.cancelled;
   bool get _isAccepted => booking.status == BookingStatus.accepted;
+  bool get _isAssessment => booking.status == BookingStatus.assessment;
   bool get _isInProgress => booking.status == BookingStatus.inProgress;
   bool get _isCompleted => booking.status == BookingStatus.completed;
 
@@ -67,9 +75,10 @@ class BookingStatusScreen extends StatelessWidget {
       booking.status != BookingStatus.pending &&
       !_isCancelled;
 
-  /// Show the Assessment CTA for both Accepted and InProgress.
+  // CHANGE: Show Assessment CTA for `accepted` (awaiting price) and
+  // `assessment` (price set, ready to confirm). Hide once `inProgress`.
   bool get _showAssessmentCTA =>
-      (_isAccepted || _isInProgress) && onViewAssessment != null;
+      (_isAccepted || _isAssessment) && onViewAssessment != null;
 
   bool get _priceSet => booking.assessmentPrice != null;
 
@@ -123,12 +132,21 @@ class BookingStatusScreen extends StatelessWidget {
   }
 
   // ── Assessment CTA ────────────────────────────────────────────────────────
+  //
+  // CHANGE: Reflects two distinct states:
+  //   • accepted   → Handyman hasn't set a price yet (orange, informational)
+  //   • assessment → Price is set; customer needs to confirm (green, actionable)
 
   Widget _buildAssessmentCTA(BuildContext context) {
-    final bool priceReady = _priceSet;
-    final String priceLabel = priceReady
-        ? '₱${booking.assessmentPrice!.toStringAsFixed(2)} — Tap to review'
-        : 'Awaiting handyman\'s price…';
+    // In `assessment` status the price is guaranteed set (the datasource
+    // advances to `assessment` only when setting the price). In `accepted`
+    // we fall back to checking assessmentPrice directly.
+    final bool priceReady = _isAssessment || _priceSet;
+    final String title =
+        priceReady ? 'Price Ready — Tap to Review' : 'Awaiting Assessment';
+    final String subtitle = priceReady
+        ? '₱${booking.assessmentPrice!.toStringAsFixed(2)} — Confirm to start the job'
+        : 'The handyman is reviewing your request and will set a price shortly.';
     final Color statusColor =
         priceReady ? const Color(0xFF34C759) : const Color(0xFFFF9500);
 
@@ -171,7 +189,7 @@ class BookingStatusScreen extends StatelessWidget {
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(
-                priceReady ? 'Assessment Ready' : 'Awaiting Assessment',
+                title,
                 style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,
@@ -188,7 +206,7 @@ class BookingStatusScreen extends StatelessWidget {
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(
-                    priceLabel,
+                    subtitle,
                     style: TextStyle(
                         color: statusColor,
                         fontSize: 12,
@@ -253,6 +271,8 @@ class BookingStatusScreen extends StatelessWidget {
   }
 
   // ── Status Timeline Card ───────────────────────────────────────────────────
+  //
+  // CHANGE: 5-step timeline — added Assessment between Accepted and In Progress.
 
   Widget _buildStatusCard() {
     final steps = [
@@ -264,6 +284,10 @@ class BookingStatusScreen extends StatelessWidget {
           label: 'Accepted',
           sub: 'Professional accepted the booking',
           icon: Icons.thumb_up_rounded),
+      _StepInfo(
+          label: 'Assessment',
+          sub: 'Price agreed by both parties',
+          icon: Icons.price_check_rounded),
       _StepInfo(
           label: 'In Progress',
           sub: 'Service is underway',
@@ -454,6 +478,11 @@ class BookingStatusScreen extends StatelessWidget {
           _detailRow(Icons.location_on_rounded, 'Address', booking.address!),
         if (booking.notes != null && booking.notes!.isNotEmpty)
           _detailRow(Icons.notes_rounded, 'Notes', booking.notes!),
+        // CHANGE: Show agreed price once assessment is confirmed.
+        if ((_isAssessment || _isInProgress || _isCompleted) &&
+            booking.assessmentPrice != null)
+          _detailRow(Icons.payments_rounded, 'Agreed Price',
+              '₱${booking.assessmentPrice!.toStringAsFixed(2)}'),
       ]),
     ).animate().fadeIn(delay: 100.ms, duration: 300.ms);
   }
@@ -491,7 +520,7 @@ class BookingStatusScreen extends StatelessWidget {
     );
   }
 
-  // ── Professional Card (tappable → profile sheet) ──────────────────────────
+  // ── Professional Card ─────────────────────────────────────────────────────
 
   Widget _buildProfessionalCard(BuildContext context) {
     final pro = booking.professional!;
@@ -512,7 +541,6 @@ class BookingStatusScreen extends StatelessWidget {
           ],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // ── Header row ──────────────────────────────────────────────────
           Row(children: [
             const Icon(Icons.person_pin_rounded,
                 size: 15, color: AppColors.primary),
@@ -523,7 +551,6 @@ class BookingStatusScreen extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                     color: AppColors.primary)),
             const Spacer(),
-            // Online / Offline availability pill
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -562,8 +589,6 @@ class BookingStatusScreen extends StatelessWidget {
             ),
           ]),
           const SizedBox(height: 12),
-
-          // ── Pro info row ────────────────────────────────────────────────
           Row(children: [
             _ProAvatar(name: pro.name, avatarUrl: pro.avatarUrl, size: 52),
             const SizedBox(width: 12),
@@ -627,8 +652,6 @@ class BookingStatusScreen extends StatelessWidget {
             const Icon(Icons.chevron_right_rounded,
                 color: AppColors.textLight, size: 20),
           ]),
-
-          // ── Book Again button — shown for completed/cancelled bookings ──
           if (_isCompleted || _isCancelled) ...[
             const SizedBox(height: 14),
             const Divider(height: 1),
@@ -652,8 +675,8 @@ class BookingStatusScreen extends StatelessWidget {
       builder: (_) => _HandymanProfileSheet(
         pro: pro,
         onViewAssessment: onViewAssessment,
-        isAccepted: _isAccepted || _isInProgress,
-        priceSet: _priceSet,
+        isAccepted: _isAccepted || _isAssessment,
+        priceSet: _priceSet || _isAssessment,
         assessmentPrice: booking.assessmentPrice,
         onBookAgain: (_isCompleted || _isCancelled) && onBookAgain != null
             ? () {
@@ -816,9 +839,6 @@ class _HandymanProfileSheet extends StatelessWidget {
   final bool isAccepted;
   final bool priceSet;
   final double? assessmentPrice;
-
-  /// If non-null, a "Book Again" CTA is rendered at the bottom of the sheet.
-  /// The callback already pops the sheet before calling the parent handler.
   final VoidCallback? onBookAgain;
 
   const _HandymanProfileSheet({
@@ -848,13 +868,11 @@ class _HandymanProfileSheet extends StatelessWidget {
                 color: const Color(0xFFDDDDDD),
                 borderRadius: BorderRadius.circular(2))),
         const SizedBox(height: 20),
-
         Flexible(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // ── Header ──────────────────────────────────────────────────
               Row(children: [
                 _ProAvatar(name: pro.name, avatarUrl: pro.avatarUrl, size: 64),
                 const SizedBox(width: 14),
@@ -897,7 +915,6 @@ class _HandymanProfileSheet extends StatelessWidget {
                           ],
                         ]),
                         const SizedBox(height: 4),
-                        // Online/Offline status
                         Row(children: [
                           Container(
                             width: 8,
@@ -943,8 +960,6 @@ class _HandymanProfileSheet extends StatelessWidget {
                 ),
               ]),
               const SizedBox(height: 20),
-
-              // ── Info pills ───────────────────────────────────────────────
               Wrap(spacing: 8, runSpacing: 8, children: [
                 if (pro.yearsExperience > 0)
                   _pill(Icons.work_history_rounded,
@@ -958,8 +973,6 @@ class _HandymanProfileSheet extends StatelessWidget {
                   ...pro.skills.map((s) => _pill(Icons.build_rounded,
                       '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')),
               ]),
-
-              // ── Bio ──────────────────────────────────────────────────────
               if (pro.bio != null && pro.bio!.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 const Text('About',
@@ -972,100 +985,84 @@ class _HandymanProfileSheet extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 13, color: AppColors.textLight, height: 1.5)),
               ],
-
               const SizedBox(height: 24),
             ]),
           ),
         ),
-
-        // ── CTA section ──────────────────────────────────────────────────────
         Padding(
           padding: EdgeInsets.fromLTRB(
               24, 0, 24, MediaQuery.of(context).padding.bottom + 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Assessment CTA (active bookings)
-              if (isAccepted && onViewAssessment != null) ...[
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: Icon(
-                      priceSet
-                          ? Icons.price_check_rounded
-                          : Icons.hourglass_top_rounded,
-                      size: 18,
-                    ),
-                    label: Text(priceSet
-                        ? 'Review Price  ·  ₱${assessmentPrice!.toStringAsFixed(2)}'
-                        : 'View Assessment (Price Pending)'),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      onViewAssessment?.call();
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: priceSet
-                          ? AppColors.primary
-                          : const Color(0xFFFF9500),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                      textStyle: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 15),
-                      elevation: 0,
-                    ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (isAccepted && onViewAssessment != null) ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: Icon(
+                    priceSet
+                        ? Icons.price_check_rounded
+                        : Icons.hourglass_top_rounded,
+                    size: 18,
+                  ),
+                  label: Text(priceSet
+                      ? 'Review Price  ·  ₱${assessmentPrice!.toStringAsFixed(2)}'
+                      : 'View Assessment (Price Pending)'),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    onViewAssessment?.call();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        priceSet ? AppColors.primary : const Color(0xFFFF9500),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 15),
+                    elevation: 0,
                   ),
                 ),
-              ],
-
-              // Book Again CTA (completed / cancelled bookings)
-              if (onBookAgain != null) ...[
-                if (isAccepted && onViewAssessment != null)
-                  const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: isOnline ? onBookAgain : null,
-                    icon: Icon(
-                      isOnline ? Icons.repeat_rounded : Icons.wifi_off_rounded,
-                      size: 18,
-                    ),
-                    label: Text(isOnline ? 'Book Again' : 'Currently Offline'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          isOnline ? AppColors.primary : Colors.grey.shade300,
-                      foregroundColor:
-                          isOnline ? Colors.white : Colors.grey.shade500,
-                      disabledBackgroundColor: Colors.grey.shade200,
-                      disabledForegroundColor: Colors.grey.shade400,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                      textStyle: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 15),
-                      elevation: 0,
-                    ),
-                  ),
-                ),
-                if (!isOnline) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'This handyman is currently offline. Check back later to book them.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.grey.shade500, height: 1.4),
-                  ),
-                ],
-              ],
-
-              // Fallback spacer when no CTA
-              if (!isAccepted &&
-                  onViewAssessment == null &&
-                  onBookAgain == null)
-                const SizedBox(height: 0),
+              ),
             ],
-          ),
+            if (onBookAgain != null) ...[
+              if (isAccepted && onViewAssessment != null)
+                const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: isOnline ? onBookAgain : null,
+                  icon: Icon(
+                    isOnline ? Icons.repeat_rounded : Icons.wifi_off_rounded,
+                    size: 18,
+                  ),
+                  label: Text(isOnline ? 'Book Again' : 'Currently Offline'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        isOnline ? AppColors.primary : Colors.grey.shade300,
+                    foregroundColor:
+                        isOnline ? Colors.white : Colors.grey.shade500,
+                    disabledBackgroundColor: Colors.grey.shade200,
+                    disabledForegroundColor: Colors.grey.shade400,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 15),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+              if (!isOnline) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'This handyman is currently offline. Check back later to book them.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 11, color: Colors.grey.shade500, height: 1.4),
+                ),
+              ],
+            ],
+          ]),
         ),
       ]),
     );

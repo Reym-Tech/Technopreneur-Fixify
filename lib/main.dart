@@ -10,6 +10,24 @@
 //     waiting solely for the auth stream (fixes the blank-after-login bug).
 //  4. AppNavigator._checkInitialSession now also force-refreshes after the
 //     auth stream fires to cover race conditions.
+//
+// ASSESSMENT PHASE FIXES (this version):
+//  FIX-1 [Pro side]: In _professionalFlow(), all _screen== checks are now
+//         evaluated BEFORE _navIndex== checks. Previously, if the handyman
+//         was on navIndex=1 (Requests) and tapped a booking detail, the
+//         navIndex==1 branch rendered BookingRequestsScreen instead of
+//         ProBookingDetailScreen — causing the "goes back to Requests after
+//         setting price" bug.
+//  FIX-2 [Customer side]: onViewAssessment in _customerFlow() now fires for
+//         BOTH BookingStatus.accepted AND BookingStatus.assessment. Previously
+//         it was gated only on `accepted`, so once the booking advanced to
+//         `assessment` (price set) the CTA disappeared and the customer
+//         couldn't confirm.
+//  FIX-3 [Customer side]: Both onBookingTap handlers (CustomerBookingsScreen
+//         and CustomerDashboardScreen) now call _ds.subscribeToBookingUpdates()
+//         immediately after selecting a booking, so real-time DB changes
+//         (e.g. handyman setting a price) are reflected live without the
+//         customer needing to pull-to-refresh.
 
 import 'package:fixify/presentation/screens/admin/superadmin_analytics.dart';
 import 'package:fixify/presentation/screens/professional/earnings.dart';
@@ -89,11 +107,6 @@ class _AppNavigatorState extends State<AppNavigator> {
   bool _isLoggedIn = false;
   bool _initialCheckDone = false;
 
-  // FIX: Hold AuthFlow in a stable field with a GlobalKey so Flutter never
-  // recreates it when AppNavigator rebuilds (e.g. when the signOut stream
-  // event fires during registration). Without this, every AppNavigator rebuild
-  // that returns AuthFlow() produces a fresh instance when _initialCheckDone
-  // flips, resetting _showSplash=true and wiping _prefillEmail.
   final _authFlowKey = GlobalKey();
   late final Widget _authFlow;
 
@@ -101,8 +114,6 @@ class _AppNavigatorState extends State<AppNavigator> {
   void initState() {
     super.initState();
     _authFlow = AuthFlow(key: _authFlowKey);
-    // Check synchronously — Supabase hydrates the session from storage before
-    // the first frame, so no artificial delay is needed.
     final session = Supabase.instance.client.auth.currentSession;
     _isLoggedIn = session != null;
     _initialCheckDone = true;
@@ -110,9 +121,6 @@ class _AppNavigatorState extends State<AppNavigator> {
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (!mounted) return;
       final loggedIn = data.session != null;
-      // Only rebuild when login state actually changes — this prevents a
-      // signedOut event during registration (already logged out) from
-      // triggering a rebuild that races with _initialCheckDone.
       if (_isLoggedIn != loggedIn) {
         setState(() => _isLoggedIn = loggedIn);
       }
@@ -129,8 +137,6 @@ class _AppNavigatorState extends State<AppNavigator> {
                 valueColor: AlwaysStoppedAnimation(AppColors.primary))),
       );
     }
-    // Return the same AuthFlow instance every time so its internal state
-    // (_showSplash, _showRegister, _prefillEmail) is always preserved.
     return _isLoggedIn ? const MainApp() : _authFlow;
   }
 }
@@ -146,10 +152,6 @@ class AuthFlow extends StatefulWidget {
 class _AuthFlowState extends State<AuthFlow> {
   bool _showSplash = true;
   bool _showRegister = false;
-
-  /// Email pre-filled on LoginScreen after a successful registration.
-  /// Set via RegisterScreen.onSuccess(email) — no Supabase calls happen here
-  /// so the auth stream is never disturbed and AuthFlow is never recreated.
   String? _prefillEmail;
 
   @override
@@ -170,10 +172,6 @@ class _AuthFlowState extends State<AuthFlow> {
           _showRegister = false;
           _prefillEmail = null;
         }),
-        // RegisterScreen owns all Supabase signup logic. When it succeeds it
-        // calls onSuccess(email) so we can switch to LoginScreen with the
-        // email pre-filled — without ever calling signOut() from here, which
-        // was the root cause of the splash-loop bug.
         onSuccess: (email) => setState(() {
           _showRegister = false;
           _prefillEmail = email;
@@ -192,7 +190,6 @@ class _AuthFlowState extends State<AuthFlow> {
         await Supabase.instance.client.auth
             .signInWithPassword(email: email, password: password);
         debugPrint('✅ Login successful');
-        // AppNavigator.onAuthStateChange fires → _isLoggedIn = true → MainApp.
       },
     );
   }
@@ -259,8 +256,6 @@ class _MainAppState extends State<MainApp> {
   ProfessionalModel? _selectedPro;
   List<ReviewModel> _proReviews = [];
   int _unreadNotifCount = 0;
-  // Holds the freshly-fetched professional after a profile tap.
-  // Used instead of _selectedPro so rating/review_count are always live.
   ProfessionalModel? _selectedProFresh;
 
   final Set<String> _reviewedBookingIds = {};
@@ -271,10 +266,6 @@ class _MainAppState extends State<MainApp> {
 
   bool _loading = true;
 
-  // ── Realtime channel for professionals rating/review updates ──
-  // Subscribed only for customer accounts. Fires when the DB trigger
-  // (trg_update_professional_rating) updates a professionals row after
-  // a new review is inserted.
   RealtimeChannel? _professionalsChannel;
 
   @override
@@ -288,7 +279,6 @@ class _MainAppState extends State<MainApp> {
 
   @override
   void dispose() {
-    // Clean up the professionals realtime channel to avoid memory leaks.
     if (_professionalsChannel != null) {
       _ds.unsubscribeChannel(_professionalsChannel!);
     }
@@ -374,14 +364,6 @@ class _MainAppState extends State<MainApp> {
             debugPrint('Could not load notif count: $e');
           }
 
-          // ── Subscribe to professionals table updates ───────────────────
-          // When the DB trigger fires after a review insert and updates
-          // rating + review_count, re-fetch the full professionals list
-          // so the dashboard shows live ratings without needing a manual
-          // pull-to-refresh.
-          // When a new review is inserted the DB trigger updates the
-// professionals row. We re-fetch the full list so ratings
-// refresh in real time without needing REPLICA IDENTITY FULL.
           _professionalsChannel = _ds.subscribeToReviewsInserts(
             onInsert: (_) async {
               try {
@@ -655,11 +637,192 @@ class _MainAppState extends State<MainApp> {
   }
 
   // ── PROFESSIONAL FLOW ─────────────────────────────────────
+  //
+  // FIX-1: _screen checks come FIRST, before _navIndex checks.
+  // This ensures ProBookingDetailScreen is always rendered when
+  // _screen == 'pro_booking_detail', regardless of which nav tab
+  // the handyman was on when they opened the detail.
 
   Widget _professionalFlow() {
     final u = _user!.toEntity();
     final proEntity = _pro?.toEntity();
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
+
+    // ── SCREEN CHECKS FIRST ───────────────────────────────────────────────
+    // FIX-1: These must come before navIndex checks so that tapping a booking
+    // detail from any nav tab doesn't fall through to BookingRequestsScreen.
+
+    if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
+      return ProBookingDetailScreen(
+        booking: _selectedProBooking!,
+        onBack: () => setState(() => _screen = 'booking_history'),
+        onSetPrice: (price) async {
+          try {
+            await _ds.updateBookingAssessmentPrice(
+              bookingId: _selectedProBooking!.id,
+              price: price,
+            );
+            await _refreshBookings();
+            final updated = _bookings
+                .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
+            if (mounted && updated != null) {
+              setState(() => _selectedProBooking = updated.toEntity());
+            }
+          } catch (e) {
+            _notify('Failed to save price: $e');
+            rethrow;
+          }
+        },
+        onUpdateStatus: (newStatus) async {
+          try {
+            // Guard: prevent direct jump to inProgress — must go through
+            // customer confirmation (assessment → confirmAssessment → inProgress).
+            if (newStatus == BookingStatus.inProgress) {
+              _notify('Waiting for the customer to confirm the price first.');
+              return;
+            }
+            await _ds.updateBookingStatus(_selectedProBooking!.id, newStatus);
+            await _refreshBookings();
+            final updated = _bookings
+                .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
+            if (mounted && updated != null) {
+              setState(() => _selectedProBooking = updated.toEntity());
+            }
+            if (newStatus == BookingStatus.completed) {
+              _notify('Job marked as complete! Great work. ✅');
+            }
+          } catch (e) {
+            _notify('Error updating status: $e');
+            rethrow;
+          }
+        },
+      );
+    }
+
+    if (_screen == 'booking_history') {
+      return BookingHistoryScreen(
+        bookings: bookingEntities,
+        currentNavIndex: _navIndex,
+        onNavTap: (i) => setState(() {
+          _navIndex = i;
+          _screen = 'home';
+        }),
+        onBack: () => setState(() => _screen = 'home'),
+        onRefresh: _refreshBookings,
+        onUpdateStatus: (booking, status) async {
+          try {
+            await _ds.updateBookingStatus(booking.id, status);
+            await _refreshBookings();
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
+        onViewDetail: (booking) {
+          setState(() {
+            _selectedProBooking = booking;
+            _screen = 'pro_booking_detail';
+          });
+        },
+      );
+    }
+
+    if (_screen == 'reviews') {
+      return ProfessionalReviewsScreen(
+        reviews: _reviews.map((r) => r.toEntity()).toList(),
+        professional: _pro?.toEntity(),
+        currentNavIndex: _navIndex,
+        onNavTap: (i) => setState(() {
+          _navIndex = i;
+          _screen = 'home';
+        }),
+        onBack: () => setState(() => _screen = 'home'),
+        onRefresh: () async {
+          await _refreshReviews();
+        },
+      );
+    }
+
+    if (_screen == 'apply') {
+      final proId = _pro?.id;
+      if (proId == null) {
+        return Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0F3D2E),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                  color: Colors.white),
+              onPressed: () => setState(() => _screen = 'home'),
+            ),
+            title: const Text('Apply for Service',
+                style: TextStyle(color: Colors.white)),
+            elevation: 0,
+          ),
+          body: Center(
+              child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.error_outline_rounded,
+                  size: 56, color: Color(0xFFFF9500)),
+              const SizedBox(height: 16),
+              const Text(
+                  'Professional profile not found.\nPlease log out and log back in.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 15, color: Color(0xFF666666))),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => Supabase.instance.client.auth.signOut(),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12))),
+                child: const Text('Log Out & Try Again'),
+              ),
+            ]),
+          )),
+        );
+      }
+      return ApplyScreen(
+        professionalId: proId,
+        userId: _user!.id,
+        onBack: () => setState(() => _screen = 'home'),
+        onSubmit: (data) async {
+          try {
+            final app = await _appDs.submitApplication(
+              professionalId: proId,
+              userId: _user!.id,
+              serviceType: data.serviceType,
+              credentialFile: data.credentialFile,
+              validIdFile: data.validIdFile,
+              yearsExp: data.yearsExp,
+              priceMin: data.priceMin,
+              bio: data.bio,
+            );
+            setState(() {
+              _applications = [app, ..._applications];
+              _screen = 'verification_status';
+            });
+            _notify(
+                "Application submitted! We'll review it within 24–48 hours.");
+          } catch (e) {
+            if (mounted)
+              ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Submission failed: $e')));
+          }
+        },
+      );
+    }
+
+    if (_screen == 'verification_status') {
+      return VerificationStatusScreen(
+        applications: _applications,
+        onBack: () => setState(() => _screen = 'home'),
+        onApplyNew: () => setState(() => _screen = 'apply'),
+      );
+    }
+
+    // ── NAV INDEX CHECKS (after screen checks) ────────────────────────────
 
     if (_navIndex == 1) {
       return BookingRequestsScreen(
@@ -795,171 +958,7 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
-      return ProBookingDetailScreen(
-        booking: _selectedProBooking!,
-        onBack: () => setState(() => _screen = 'booking_history'),
-        onSetPrice: (price) async {
-          try {
-            await _ds.updateBookingAssessmentPrice(
-              bookingId: _selectedProBooking!.id,
-              price: price,
-            );
-            await _refreshBookings();
-            final updated = _bookings
-                .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
-            if (mounted && updated != null) {
-              setState(() => _selectedProBooking = updated.toEntity());
-            }
-          } catch (e) {
-            _notify('Failed to save price: $e');
-            rethrow;
-          }
-        },
-        onUpdateStatus: (newStatus) async {
-          try {
-            await _ds.updateBookingStatus(_selectedProBooking!.id, newStatus);
-            await _refreshBookings();
-            final updated = _bookings
-                .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
-            if (mounted && updated != null) {
-              setState(() => _selectedProBooking = updated.toEntity());
-            }
-            if (newStatus == BookingStatus.completed) {
-              _notify('Job marked as complete! Great work. ✅');
-            } else if (newStatus == BookingStatus.inProgress) {
-              _notify('Job started! Customer has been notified. 🔧');
-            }
-          } catch (e) {
-            _notify('Error updating status: $e');
-            rethrow;
-          }
-        },
-      );
-    }
-
-    if (_screen == 'booking_history') {
-      return BookingHistoryScreen(
-        bookings: bookingEntities,
-        currentNavIndex: _navIndex,
-        onNavTap: (i) => setState(() {
-          _navIndex = i;
-          _screen = 'home';
-        }),
-        onBack: () => setState(() => _screen = 'home'),
-        onRefresh: _refreshBookings,
-        onUpdateStatus: (booking, status) async {
-          try {
-            await _ds.updateBookingStatus(booking.id, status);
-            await _refreshBookings();
-          } catch (e) {
-            _notify('Error: $e');
-          }
-        },
-        onViewDetail: (booking) {
-          setState(() {
-            _selectedProBooking = booking;
-            _screen = 'pro_booking_detail';
-          });
-        },
-      );
-    }
-
-    if (_screen == 'reviews') {
-      return ProfessionalReviewsScreen(
-        reviews: _reviews.map((r) => r.toEntity()).toList(),
-        professional: _pro?.toEntity(),
-        currentNavIndex: _navIndex,
-        onNavTap: (i) => setState(() {
-          _navIndex = i;
-          _screen = 'home';
-        }),
-        onBack: () => setState(() => _screen = 'home'),
-        onRefresh: () async {
-          await _refreshReviews();
-        },
-      );
-    }
-
-    if (_screen == 'apply') {
-      final proId = _pro?.id;
-      if (proId == null) {
-        return Scaffold(
-          backgroundColor: AppColors.backgroundLight,
-          appBar: AppBar(
-            backgroundColor: const Color(0xFF0F3D2E),
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                  color: Colors.white),
-              onPressed: () => setState(() => _screen = 'home'),
-            ),
-            title: const Text('Apply for Service',
-                style: TextStyle(color: Colors.white)),
-            elevation: 0,
-          ),
-          body: Center(
-              child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.error_outline_rounded,
-                  size: 56, color: Color(0xFFFF9500)),
-              const SizedBox(height: 16),
-              const Text(
-                  'Professional profile not found.\nPlease log out and log back in.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 15, color: Color(0xFF666666))),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () => Supabase.instance.client.auth.signOut(),
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12))),
-                child: const Text('Log Out & Try Again'),
-              ),
-            ]),
-          )),
-        );
-      }
-      return ApplyScreen(
-        professionalId: proId,
-        userId: _user!.id,
-        onBack: () => setState(() => _screen = 'home'),
-        onSubmit: (data) async {
-          try {
-            final app = await _appDs.submitApplication(
-              professionalId: proId,
-              userId: _user!.id,
-              serviceType: data.serviceType,
-              credentialFile: data.credentialFile,
-              validIdFile: data.validIdFile,
-              yearsExp: data.yearsExp,
-              priceMin: data.priceMin,
-              bio: data.bio,
-            );
-            setState(() {
-              _applications = [app, ..._applications];
-              _screen = 'verification_status';
-            });
-            _notify(
-                "Application submitted! We'll review it within 24–48 hours.");
-          } catch (e) {
-            if (mounted)
-              ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Submission failed: $e')));
-          }
-        },
-      );
-    }
-
-    if (_screen == 'verification_status') {
-      return VerificationStatusScreen(
-        applications: _applications,
-        onBack: () => setState(() => _screen = 'home'),
-        onApplyNew: () => setState(() => _screen = 'apply'),
-      );
-    }
+    // ── Dashboard (navIndex == 0, screen == 'home') ───────────────────────
 
     return ProfessionalDashboardScreen(
       user: u,
@@ -1013,6 +1012,10 @@ class _MainAppState extends State<MainApp> {
   }
 
   // ── CUSTOMER FLOW ─────────────────────────────────────────
+  //
+  // FIX-2: onViewAssessment now fires for BOTH `accepted` AND `assessment`.
+  // FIX-3: Both onBookingTap handlers subscribe to real-time booking updates
+  //        immediately so the customer sees price changes without refreshing.
 
   Widget _customerFlow() {
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
@@ -1026,6 +1029,8 @@ class _MainAppState extends State<MainApp> {
           _screen = i == 3 ? 'profile' : 'home';
         }),
         onRefresh: _refreshBookings,
+        // FIX-3: Subscribe to real-time updates when a booking is opened
+        // from the bookings list so price changes appear immediately.
         onBookingTap: (booking) {
           final model = _bookings.firstWhere((b) => b.id == booking.id,
               orElse: () => _bookings.first);
@@ -1033,6 +1038,19 @@ class _MainAppState extends State<MainApp> {
             _selectedBooking = model;
             _screen = 'booking_status';
           });
+          _ds.subscribeToBookingUpdates(
+            bookingId: model.id,
+            onUpdate: (updated) {
+              if (!mounted) return;
+              setState(() {
+                if (_selectedBooking?.id == updated.id)
+                  _selectedBooking = updated;
+                _bookings = _bookings
+                    .map((b) => b.id == updated.id ? updated : b)
+                    .toList();
+              });
+            },
+          );
         },
       );
     }
@@ -1133,7 +1151,6 @@ class _MainAppState extends State<MainApp> {
       case 'professional_profile':
         if (_selectedPro == null) return _home();
         return customer.ProfessionalProfileScreen(
-          // Use fresh DB data if available, fall back to cached while loading
           professional: (_selectedProFresh ?? _selectedPro!).toEntity(),
           reviews: _proReviews.map((r) => r.toEntity()).toList(),
           onBack: () => setState(() {
@@ -1143,6 +1160,7 @@ class _MainAppState extends State<MainApp> {
           }),
           onBookNow: () => setState(() => _screen = 'request_service'),
         );
+
       case 'booking':
         if (_selectedPro == null) return _home();
         return customer.BookingScreen(
@@ -1156,14 +1174,21 @@ class _MainAppState extends State<MainApp> {
         return BookingStatusScreen(
           booking: _selectedBooking!.toEntity(),
           onBack: () => setState(() => _screen = 'home'),
-          onViewAssessment: _selectedBooking!.status == BookingStatus.accepted
-              ? () => setState(() => _screen = 'assessment')
-              : null,
+          // FIX-2: Fire onViewAssessment for BOTH `accepted` and `assessment`.
+          // Previously only `accepted` was covered, so once the handyman set
+          // a price (advancing to `assessment`), the CTA disappeared and the
+          // customer could not confirm.
+          onViewAssessment:
+              (_selectedBooking!.status == BookingStatus.accepted ||
+                      _selectedBooking!.status == BookingStatus.assessment)
+                  ? () => setState(() => _screen = 'assessment')
+                  : null,
           onWriteReview: _selectedBooking!.status == BookingStatus.completed &&
                   !_reviewedBookingIds.contains(_selectedBooking!.id)
               ? () => setState(() => _screen = 'review')
               : null,
-          onCancelBooking: _selectedBooking!.status == BookingStatus.pending
+          onCancelBooking: (_selectedBooking!.status == BookingStatus.pending ||
+                  _selectedBooking!.status == BookingStatus.accepted)
               ? () async {
                   try {
                     await _ds.updateBookingStatus(
@@ -1178,16 +1203,9 @@ class _MainAppState extends State<MainApp> {
                   }
                 }
               : null,
-          // ── NEW: Book Again ────────────────────────────────────────────────
-          // Shown on completed and cancelled bookings. Routes the customer back
-          // to RequestServiceScreen with the same professional pre-selected so
-          // they can rebook in one tap. Enabled only when pro.available == true
-          // (enforced inside BookingStatusScreen itself via the button state).
           onBookAgain: (_selectedBooking!.status == BookingStatus.completed ||
                   _selectedBooking!.status == BookingStatus.cancelled)
               ? (pro) {
-                  // Find the live ProfessionalModel from our cached list so we
-                  // get the freshest `available` flag, not the snapshot in the booking.
                   final liveModel =
                       _professionals.firstWhereOrNull((p) => p.id == pro.id);
                   if (liveModel == null || !liveModel.available) {
@@ -1315,21 +1333,21 @@ class _MainAppState extends State<MainApp> {
         onRequestService: () => setState(() {
           _preselectedServiceType = null;
           _preselectedProblemTitle = null;
-          _selectedPro =
-              null; // ← FIX: clear any leftover pro from profile view
+          _selectedPro = null;
           _screen = 'request_service';
         }),
         onRequestServiceWithType: (serviceType, serviceName) => setState(() {
           _preselectedServiceType = serviceType;
           _preselectedProblemTitle = serviceName;
-          _selectedPro =
-              null; // ← FIX: clear any leftover pro from profile view
+          _selectedPro = null;
           _screen = 'request_service';
         }),
         onViewBookings: () => setState(() {
           _navIndex = 1;
           _screen = 'home';
         }),
+        // FIX-3: Subscribe to real-time updates when a booking is opened
+        // from the dashboard so price changes appear immediately.
         onBookingTap: (booking) {
           final model = _bookings.firstWhere((b) => b.id == booking.id,
               orElse: () => _bookings.first);
@@ -1337,6 +1355,19 @@ class _MainAppState extends State<MainApp> {
             _selectedBooking = model;
             _screen = 'booking_status';
           });
+          _ds.subscribeToBookingUpdates(
+            bookingId: model.id,
+            onUpdate: (updated) {
+              if (!mounted) return;
+              setState(() {
+                if (_selectedBooking?.id == updated.id)
+                  _selectedBooking = updated;
+                _bookings = _bookings
+                    .map((b) => b.id == updated.id ? updated : b)
+                    .toList();
+              });
+            },
+          );
         },
         onFilterBySkill: (skill) async {
           try {
@@ -1348,18 +1379,14 @@ class _MainAppState extends State<MainApp> {
             debugPrint('Filter error: $e');
           }
         },
-        // AFTER:
         onProfessionalTap: (entity) {
           final model = _professionals.firstWhere((p) => p.id == entity.id);
           setState(() {
-            _selectedPro = model; // show immediately with cached data
-            _selectedProFresh = null; // clear stale fresh copy
-            _proReviews = []; // clear while loading
+            _selectedPro = model;
+            _selectedProFresh = null;
+            _proReviews = [];
             _screen = 'professional_profile';
           });
-          // Re-fetch both the professional's latest data AND their reviews
-          // in parallel so rating/review_count are always live.
-          // REPLACE WITH:
           _ds.getProfessionalById(entity.id).then((freshPro) {
             if (!mounted) return;
             if (freshPro != null) setState(() => _selectedProFresh = freshPro);

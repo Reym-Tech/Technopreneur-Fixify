@@ -1,4 +1,27 @@
 // lib/presentation/screens/professional/pro_booking_detail_screen.dart
+//
+// CHANGE: Added `assessment` status support.
+//
+// New lifecycle from the handyman's perspective:
+//
+//   accepted   → Handyman can set a price. "Set Price" button saves the price
+//                AND advances the booking to `assessment` status (via datasource).
+//                "Start Job" is NOT shown yet.
+//
+//   assessment → Price is set; waiting for customer to confirm.
+//                Handyman sees a "Waiting for Customer Confirmation" banner.
+//                "Start Job" is still NOT shown (locked).
+//
+//   inProgress → Customer confirmed the price. Handyman now sees "Start Job" →
+//                actually this IS the in_progress state, so the button shown
+//                is "Mark as Complete". The Start Job transition happened
+//                implicitly when the customer confirmed.
+//
+// Validation enforced here:
+//   • "Set Price" button: Validates price > 0 (unchanged).
+//   • "Start Job" (now named "Mark as Complete" in inProgress) — only reachable
+//     after customer confirms, so no extra guard needed here. The action bar
+//     shows a locked banner for `assessment` status instead.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,10 +50,6 @@ class ProBookingDetailScreen extends StatefulWidget {
 
 class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
   // ── Google Maps deep link ─────────────────────────────────────────────────
-  //
-  // Uses the professional's saved lat/lng as origin (if set) so Maps opens
-  // with turn-by-turn directions straight to the customer's location.
-  // Falls back gracefully: coords → address search → nothing.
 
   Future<void> _openInGoogleMaps() async {
     final custLat = widget.booking.latitude;
@@ -42,9 +61,7 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     Uri uri;
 
     if (custLat != null && custLng != null) {
-      // Best case: exact coordinates
       if (proLat != null && proLng != null) {
-        // Directions: pro location → customer location
         uri = Uri.parse(
           'https://www.google.com/maps/dir/?api=1'
           '&origin=$proLat,$proLng'
@@ -52,14 +69,12 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
           '&travelmode=driving',
         );
       } else {
-        // Just show the destination pin
         uri = Uri.parse(
           'https://www.google.com/maps/search/?api=1'
           '&query=$custLat,$custLng',
         );
       }
     } else if (address.isNotEmpty) {
-      // Fallback: address string (old bookings without lat/lng)
       final encoded = Uri.encodeComponent(address);
       if (proLat != null && proLng != null) {
         uri = Uri.parse(
@@ -130,7 +145,8 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
       await widget.onSetPrice?.call(parsed);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Assessment price saved!'),
+          content: const Text(
+              'Price sent to customer! Waiting for their confirmation.'),
           backgroundColor: AppColors.primary,
           behavior: SnackBarBehavior.floating,
           shape:
@@ -197,8 +213,17 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final s = widget.booking.status;
-    final isEditable =
-        s == BookingStatus.accepted || s == BookingStatus.inProgress;
+
+    // CHANGE: Price setter is shown for `accepted` only.
+    // Once the price is set the booking moves to `assessment`, and the
+    // handyman sees a waiting banner instead (no editing while awaiting confirm).
+    final bool showPriceSetter = s == BookingStatus.accepted;
+
+    // Show price as read-only for assessment / in-progress / completed.
+    final bool showPriceReadOnly = (s == BookingStatus.assessment ||
+            s == BookingStatus.inProgress ||
+            s == BookingStatus.completed) &&
+        widget.booking.assessmentPrice != null;
 
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
@@ -237,26 +262,27 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
             child: Column(children: [
-              // Location card — always shown at top
               _buildLocationCard(),
               const SizedBox(height: 16),
-
-              // Customer card
               _buildCustomerCard(),
               const SizedBox(height: 16),
-
-              // Service details
               _buildServiceCard(),
               const SizedBox(height: 16),
 
-              // Price setter (accepted / in-progress only)
-              if (isEditable) ...[
+              // CHANGE: Price setter — only shown for `accepted`.
+              if (showPriceSetter) ...[
                 _buildPriceSetter(),
                 const SizedBox(height: 16),
               ],
 
-              // Price read-only (completed / cancelled)
-              if (!isEditable && widget.booking.assessmentPrice != null) ...[
+              // CHANGE: Waiting-for-confirmation banner — shown for `assessment`.
+              if (s == BookingStatus.assessment) ...[
+                _buildAwaitingConfirmationBanner(),
+                const SizedBox(height: 16),
+              ],
+
+              // Price read-only — shown once agreed.
+              if (showPriceReadOnly) ...[
                 _buildPriceReadOnly(),
                 const SizedBox(height: 16),
               ],
@@ -268,6 +294,62 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         _buildActionBar(),
       ]),
     );
+  }
+
+  // ── Awaiting confirmation banner ──────────────────────────────────────────
+  //
+  // CHANGE: New widget shown when status == assessment.
+  // Informs the handyman that the price has been sent and they must wait.
+
+  Widget _buildAwaitingConfirmationBanner() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF9500).withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFF9500).withOpacity(0.3)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFF9500).withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.hourglass_top_rounded,
+              color: Color(0xFFFF9500), size: 20),
+        ),
+        const SizedBox(width: 12),
+        const Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              'Waiting for Customer Confirmation',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFCC7700)),
+            ),
+            SizedBox(height: 4),
+            Text(
+              'Your price has been sent. Once the customer confirms, '
+              'the job will move to In Progress and you can begin work.',
+              style: TextStyle(
+                  fontSize: 12, color: Color(0xFFAA6600), height: 1.4),
+            ),
+          ]),
+        ),
+      ]),
+    )
+        .animate(onPlay: (c) => c.repeat(reverse: true))
+        .fadeIn(duration: 600.ms)
+        .then()
+        .custom(
+          duration: 1800.ms,
+          builder: (_, value, child) =>
+              Opacity(opacity: 0.7 + (0.3 * value), child: child),
+        );
   }
 
   // ── Location card ─────────────────────────────────────────────────────────
@@ -291,117 +373,103 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
               offset: const Offset(0, 4))
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          const Row(children: [
-            Icon(Icons.location_on_rounded, size: 15, color: AppColors.primary),
-            SizedBox(width: 6),
-            Text('Service Location',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.primary)),
-          ]),
-          const SizedBox(height: 14),
-
-          if (hasAnyLocation) ...[
-            // Address text
-            if (hasAddress)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF5F8F5),
-                  borderRadius: BorderRadius.circular(14),
-                  border:
-                      Border.all(color: AppColors.primary.withOpacity(0.12)),
-                ),
-                child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.place_rounded,
-                          size: 16, color: AppColors.primary.withOpacity(0.6)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          widget.booking.address!,
-                          style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textDark,
-                              height: 1.4),
-                        ),
-                      ),
-                    ]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.location_on_rounded, size: 15, color: AppColors.primary),
+          SizedBox(width: 6),
+          Text('Service Location',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primary)),
+        ]),
+        const SizedBox(height: 14),
+        if (hasAnyLocation) ...[
+          if (hasAddress)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F8F5),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.primary.withOpacity(0.12)),
               ),
-
-            // Coordinates chip (shows if available)
-            if (hasCoords) ...[
-              const SizedBox(height: 10),
-              Row(children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF34C759).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                        color: const Color(0xFF34C759).withOpacity(0.3)),
+              child:
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(Icons.place_rounded,
+                    size: 16, color: AppColors.primary.withOpacity(0.6)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.booking.address!,
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textDark,
+                        height: 1.4),
                   ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.my_location_rounded,
-                        size: 12, color: Color(0xFF34C759)),
-                    const SizedBox(width: 5),
-                    const Text('Exact GPS location available',
-                        style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF34C759))),
-                  ]),
                 ),
               ]),
-            ],
-
-            const SizedBox(height: 14),
-
-            // Get Directions button
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.directions_rounded, size: 18),
-                label: const Text('Get Directions in Google Maps'),
-                onPressed: _openInGoogleMaps,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1A73E8),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                  textStyle: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 14),
-                  elevation: 0,
-                ),
-              ),
             ),
-          ] else ...[
-            // No location at all
+          if (hasCoords) ...[
+            const SizedBox(height: 10),
             Row(children: [
-              const Icon(Icons.location_off_rounded,
-                  size: 18, color: AppColors.textLight),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                  'No location provided. Ask the customer for their address.',
-                  style: TextStyle(
-                      fontSize: 13, color: AppColors.textLight, height: 1.4),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF34C759).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: const Color(0xFF34C759).withOpacity(0.3)),
                 ),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.my_location_rounded,
+                      size: 12, color: Color(0xFF34C759)),
+                  SizedBox(width: 5),
+                  Text('Exact GPS location available',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF34C759))),
+                ]),
               ),
             ]),
           ],
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.directions_rounded, size: 18),
+              label: const Text('Get Directions in Google Maps'),
+              onPressed: _openInGoogleMaps,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1A73E8),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                textStyle:
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                elevation: 0,
+              ),
+            ),
+          ),
+        ] else ...[
+          const Row(children: [
+            Icon(Icons.location_off_rounded,
+                size: 18, color: AppColors.textLight),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'No location provided. Ask the customer for their address.',
+                style: TextStyle(
+                    fontSize: 13, color: AppColors.textLight, height: 1.4),
+              ),
+            ),
+          ]),
         ],
-      ),
+      ]),
     ).animate().fadeIn(duration: 300.ms);
   }
 
@@ -579,7 +647,8 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         ]),
         const SizedBox(height: 6),
         const Text(
-          'Set your price for this job. The customer will see it on their Assessment screen and can confirm or decline.',
+          'Set your price for this job. Once submitted, the customer will be '
+          'notified and must confirm before the job starts.',
           style:
               TextStyle(fontSize: 11, color: AppColors.textLight, height: 1.4),
         ),
@@ -662,8 +731,8 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
                     height: 16,
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.check_rounded, size: 18),
-            label: Text(_settingPrice ? 'Saving…' : 'Set Price for Customer'),
+                : const Icon(Icons.send_rounded, size: 18),
+            label: Text(_settingPrice ? 'Sending…' : 'Send Price to Customer'),
             onPressed: _settingPrice ? null : _handleSetPrice,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
@@ -685,6 +754,10 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
 
   Widget _buildPriceReadOnly() {
     final price = widget.booking.assessmentPrice;
+    final s = widget.booking.status;
+    final isConfirmed =
+        s == BookingStatus.inProgress || s == BookingStatus.completed;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -702,28 +775,43 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.1),
+            color: isConfirmed
+                ? const Color(0xFF34C759).withOpacity(0.1)
+                : const Color(0xFFFF9500).withOpacity(0.1),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: const Icon(Icons.monetization_on_rounded,
-              color: AppColors.primary, size: 22),
+          child: Icon(
+            isConfirmed
+                ? Icons.check_circle_rounded
+                : Icons.monetization_on_rounded,
+            color:
+                isConfirmed ? const Color(0xFF34C759) : const Color(0xFFFF9500),
+            size: 22,
+          ),
         ),
         const SizedBox(width: 12),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Agreed Price',
-              style: TextStyle(
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              isConfirmed ? 'Agreed Price' : 'Price Sent (Awaiting Confirm)',
+              style: const TextStyle(
                   fontSize: 11,
                   color: AppColors.textLight,
-                  fontWeight: FontWeight.w500)),
-          const SizedBox(height: 2),
-          Text(
-            price != null ? '₱${price.toStringAsFixed(2)}' : 'Not set',
-            style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AppColors.primary),
-          ),
-        ]),
+                  fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              price != null ? '₱${price.toStringAsFixed(2)}' : 'Not set',
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: isConfirmed
+                      ? const Color(0xFF34C759)
+                      : AppColors.primary),
+            ),
+          ]),
+        ),
       ]),
     ).animate().fadeIn(delay: 200.ms, duration: 300.ms);
   }
@@ -758,6 +846,41 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
       return _statusBadge(
           const Color(0xFFFF3B30), Icons.cancel_rounded, 'Booking Cancelled');
     }
+
+    // CHANGE: `assessment` — price sent, locked until customer confirms.
+    if (s == BookingStatus.assessment) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF9500).withOpacity(0.08),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFFF9500).withOpacity(0.30)),
+        ),
+        child:
+            const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: Color(0xFFFF9500)),
+          ),
+          SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              'Waiting for customer to confirm the price…',
+              style: TextStyle(
+                  color: Color(0xFFCC7700),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ]),
+      );
+    }
+
+    // CHANGE: `inProgress` — customer confirmed, handyman can now mark complete.
     if (s == BookingStatus.inProgress) {
       return SizedBox(
         width: double.infinity,
@@ -787,31 +910,32 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         ),
       );
     }
-    // Accepted → Start Job
-    return SizedBox(
+
+    // `accepted` — Handyman must set a price first (done via the price setter
+    // card above). The action bar shows a reminder if no price entered yet,
+    // or an idle state while the price setter handles the submit.
+    return Container(
       width: double.infinity,
-      child: ElevatedButton.icon(
-        icon: _updatingStatus
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white))
-            : const Icon(Icons.play_arrow_rounded, size: 22),
-        label: const Text('Start Job'),
-        onPressed: _updatingStatus
-            ? null
-            : () => _handleStatusUpdate(BookingStatus.inProgress, 'Start Job'),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF5856D6),
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-          elevation: 0,
-        ),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primary.withOpacity(0.20)),
       ),
+      child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(Icons.price_check_rounded, color: AppColors.primary, size: 20),
+        SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            'Set a price above to send it to the customer',
+            style: TextStyle(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
+                fontSize: 14),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ]),
     );
   }
 
@@ -834,10 +958,13 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
+  // CHANGE: Added `assessment` case.
   Color _statusColor(BookingStatus s) {
     switch (s) {
       case BookingStatus.accepted:
         return const Color(0xFF007AFF);
+      case BookingStatus.assessment:
+        return const Color(0xFFFF9500);
       case BookingStatus.inProgress:
         return const Color(0xFF5856D6);
       case BookingStatus.completed:
@@ -849,10 +976,13 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     }
   }
 
+  // CHANGE: Added `assessment` label.
   String _statusLabel(BookingStatus s) {
     switch (s) {
       case BookingStatus.accepted:
         return 'Accepted';
+      case BookingStatus.assessment:
+        return 'Awaiting Confirm';
       case BookingStatus.inProgress:
         return 'In Progress';
       case BookingStatus.completed:

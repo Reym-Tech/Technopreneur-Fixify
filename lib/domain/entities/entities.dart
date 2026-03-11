@@ -56,11 +56,10 @@ class ProfessionalEntity extends Equatable {
   final bool available;
 
   /// Phone number sourced from the professional's users row.
-  /// Used to launch the device dialer directly from the card.
   final String? phone;
 
   /// Handyman's registered GPS location — used to draw the route on the
-  /// AssessmentScreen map. Null when not yet set on the professional profile.
+  /// AssessmentScreen map.
   final double? latitude;
   final double? longitude;
 
@@ -94,7 +93,23 @@ class ProfessionalEntity extends Equatable {
 // BOOKING
 // ─────────────────────────────────────────
 
-enum BookingStatus { pending, accepted, inProgress, completed, cancelled }
+// CHANGE: Added `assessment` between `accepted` and `inProgress`.
+//
+// Full lifecycle:
+//   pending    → Handyman not yet responded
+//   accepted   → Handyman accepted; can now set a price
+//   assessment → Handyman has set a price; awaiting customer confirmation
+//   inProgress → Customer confirmed the price; Handyman can now start the job
+//   completed  → Handyman marked the job done
+//   cancelled  → Either side cancelled
+enum BookingStatus {
+  pending,
+  accepted,
+  assessment, // NEW — price set by handyman, awaiting customer confirmation
+  inProgress,
+  completed,
+  cancelled,
+}
 
 class BookingEntity extends Equatable {
   final String id;
@@ -111,14 +126,12 @@ class BookingEntity extends Equatable {
   final ProfessionalEntity? professional;
   final UserEntity? customer;
 
-  /// Customer's pinned GPS location from RequestServiceScreen step 3.
-  /// Used as the destination marker on the AssessmentScreen map.
+  /// Customer's pinned GPS location from RequestServiceScreen.
   final double? latitude;
   final double? longitude;
 
   /// Price set by the handyman after accepting the booking.
-  /// Shown on AssessmentScreen for the customer to confirm or decline.
-  /// Null means the handyman has not yet set a price (falls back to priceEstimate).
+  /// Moving to `assessment` status means this is non-null.
   final double? assessmentPrice;
 
   const BookingEntity({

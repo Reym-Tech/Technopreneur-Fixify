@@ -69,6 +69,7 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
         return _history
             .where((b) =>
                 b.status == BookingStatus.accepted ||
+                b.status == BookingStatus.assessment || // ← ADD
                 b.status == BookingStatus.inProgress)
             .toList();
       case 'Completed':
@@ -213,14 +214,10 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
           onTap: widget.onViewDetail != null
               ? () => widget.onViewDetail!(list[i])
               : null,
-          onMarkComplete: list[i].status == BookingStatus.accepted ||
-                  list[i].status == BookingStatus.inProgress
+          onMarkComplete: list[i].status ==
+                  BookingStatus.inProgress // ← only inProgress
               ? () =>
                   widget.onUpdateStatus?.call(list[i], BookingStatus.completed)
-              : null,
-          onMarkInProgress: list[i].status == BookingStatus.accepted
-              ? () =>
-                  widget.onUpdateStatus?.call(list[i], BookingStatus.inProgress)
               : null,
         ).animate().fadeIn(delay: (i * 50).ms).slideY(begin: 0.06, end: 0),
       ),
@@ -319,21 +316,21 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
 class _HistoryCard extends StatelessWidget {
   final BookingEntity booking;
   final VoidCallback? onTap;
-  final VoidCallback? onMarkComplete;
-  final VoidCallback? onMarkInProgress;
+  final VoidCallback?
+      onMarkComplete; // onMarkInProgress removed — Start Job is now gated behind customer confirmation
 
   const _HistoryCard({
     required this.booking,
     this.onTap,
     this.onMarkComplete,
-    this.onMarkInProgress,
   });
 
   @override
   Widget build(BuildContext context) {
     final color = _statusColor(booking.status);
     final label = _statusLabel(booking.status);
-    final isActionable = onMarkComplete != null || onMarkInProgress != null;
+    final bool isActionable =
+        onMarkComplete != null; // ← remove onMarkInProgress
 
     return GestureDetector(
       onTap: onTap,
@@ -442,44 +439,23 @@ class _HistoryCard extends StatelessWidget {
               ]),
               if (isActionable) ...[
                 const SizedBox(height: 10),
-                Row(children: [
-                  if (onMarkInProgress != null)
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: onMarkInProgress,
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                              color: const Color(0xFF5856D6).withOpacity(0.5)),
-                          foregroundColor: const Color(0xFF5856D6),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        child: const Text('Start Job',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 13)),
-                      ),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: onMarkComplete,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF34C759),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      elevation: 0,
                     ),
-                  if (onMarkInProgress != null && onMarkComplete != null)
-                    const SizedBox(width: 10),
-                  if (onMarkComplete != null)
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: onMarkComplete,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF34C759),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          elevation: 0,
-                        ),
-                        child: const Text('Mark Complete',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 13)),
-                      ),
-                    ),
-                ]),
+                    child: const Text('Mark Complete',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 13)),
+                  ),
+                ),
               ],
             ]),
           ),
@@ -492,6 +468,8 @@ class _HistoryCard extends StatelessWidget {
     switch (s) {
       case BookingStatus.accepted:
         return const Color(0xFF007AFF);
+      case BookingStatus.assessment: // ← ADD
+        return const Color(0xFFFF9500); // ← ADD
       case BookingStatus.inProgress:
         return const Color(0xFF5856D6);
       case BookingStatus.completed:
@@ -507,6 +485,8 @@ class _HistoryCard extends StatelessWidget {
     switch (s) {
       case BookingStatus.accepted:
         return 'Accepted';
+      case BookingStatus.assessment: // ← ADD
+        return 'Awaiting Confirm'; // ← ADD
       case BookingStatus.inProgress:
         return 'In Progress';
       case BookingStatus.completed:

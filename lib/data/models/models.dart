@@ -1,6 +1,11 @@
 // lib/data/models/models.dart
 // Self-contained models — NO inheritance from entity classes.
 // Each model holds its own fields and converts from/to JSON.
+//
+// FIX: Added `assessment` case to both _parseStatus() and statusToString().
+// Previously the DB value 'assessment' fell through to the default branch
+// and returned BookingStatus.pending — causing both sides to show Pending
+// after the handyman set a price.
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
@@ -361,10 +366,15 @@ class BookingModel extends Equatable {
     }
   }
 
+  // FIX: Added `assessment` case. Previously this was missing, so a DB row
+  // with status='assessment' silently fell through to `default` and returned
+  // BookingStatus.pending — making both sides appear stuck on Pending.
   static BookingStatus _parseStatus(String s) {
     switch (s) {
       case 'accepted':
         return BookingStatus.accepted;
+      case 'assessment':
+        return BookingStatus.assessment;
       case 'in_progress':
         return BookingStatus.inProgress;
       case 'completed':
@@ -376,10 +386,15 @@ class BookingModel extends Equatable {
     }
   }
 
+  // FIX: Added `assessment` case so statusToString() round-trips correctly.
+  // Without this, calling statusToString(BookingStatus.assessment) returned
+  // 'pending', corrupting any updateBookingStatus() call that passed assessment.
   static String statusToString(BookingStatus s) {
     switch (s) {
       case BookingStatus.accepted:
         return 'accepted';
+      case BookingStatus.assessment:
+        return 'assessment';
       case BookingStatus.inProgress:
         return 'in_progress';
       case BookingStatus.completed:

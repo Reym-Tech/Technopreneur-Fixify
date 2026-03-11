@@ -214,6 +214,11 @@ class StatusBadge extends StatelessWidget {
         return {'color': AppColors.statusPending, 'label': 'Pending'};
       case BookingStatus.accepted:
         return {'color': AppColors.statusAccepted, 'label': 'Accepted'};
+      case BookingStatus.assessment: // ← ADD
+        return {
+          'color': const Color(0xFFFF9500),
+          'label': 'Awaiting Confirm'
+        }; // ← ADD
       case BookingStatus.inProgress:
         return {'color': AppColors.statusInProgress, 'label': 'In Progress'};
       case BookingStatus.completed:

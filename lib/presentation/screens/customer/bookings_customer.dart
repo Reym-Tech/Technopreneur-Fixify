@@ -12,6 +12,10 @@
 //   onNavTap       → Function(int)
 //   currentNavIndex → int
 //   onRefresh      → Future<void> Function()?
+//
+// FIX: Added `assessment` to:
+//   - _filtered('Active') so Assessment bookings appear in the Active tab
+//   - _statusColor() / _statusLabel() so the badge shows correctly
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -57,9 +61,11 @@ class _CustomerBookingsScreenState extends State<CustomerBookingsScreen>
   List<BookingEntity> _filtered(String filter) {
     switch (filter) {
       case 'Active':
+        // FIX: include `assessment` so price-negotiation bookings show here
         return widget.bookings
             .where((b) =>
                 b.status == BookingStatus.accepted ||
+                b.status == BookingStatus.assessment ||
                 b.status == BookingStatus.inProgress)
             .toList();
       case 'Pending':
@@ -376,10 +382,9 @@ class _BookingCard extends StatelessWidget {
           // Divider + footer
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8F8F8),
-              borderRadius:
-                  const BorderRadius.vertical(bottom: Radius.circular(20)),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF8F8F8),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
             ),
             child: Row(children: [
               const Icon(Icons.calendar_today_outlined,
@@ -414,10 +419,14 @@ class _BookingCard extends StatelessWidget {
     );
   }
 
+  // FIX: Added `assessment` case — was missing, so assessment bookings
+  // showed as orange 'Pending' badge instead of their own amber colour.
   Color _statusColor(BookingStatus s) {
     switch (s) {
       case BookingStatus.accepted:
         return const Color(0xFF007AFF);
+      case BookingStatus.assessment:
+        return const Color(0xFFFF9500);
       case BookingStatus.inProgress:
         return const Color(0xFF5856D6);
       case BookingStatus.completed:
@@ -429,10 +438,14 @@ class _BookingCard extends StatelessWidget {
     }
   }
 
+  // FIX: Added `assessment` case — was missing, so assessment bookings
+  // showed label 'Pending' instead of 'Price Ready'.
   String _statusLabel(BookingStatus s) {
     switch (s) {
       case BookingStatus.accepted:
         return 'Accepted';
+      case BookingStatus.assessment:
+        return 'Price Ready';
       case BookingStatus.inProgress:
         return 'In Progress';
       case BookingStatus.completed:

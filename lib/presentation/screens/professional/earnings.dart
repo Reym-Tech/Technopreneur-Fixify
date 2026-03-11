@@ -297,6 +297,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         return Colors.red;
       case BookingStatus.accepted:
         return Colors.blue;
+      case BookingStatus.assessment: // ← ADD
+        return const Color(0xFFFF9500);
       case BookingStatus.inProgress:
         return const Color(0xFF5856D6);
     }
@@ -312,6 +314,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         return 'Cancelled';
       case BookingStatus.accepted:
         return 'Accepted';
+      case BookingStatus.assessment: // ← ADD
+        return 'Awaiting Confirm'; // ← ADD
       case BookingStatus.inProgress:
         return 'In Progress';
     }
