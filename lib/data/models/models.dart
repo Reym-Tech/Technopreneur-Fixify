@@ -1,11 +1,13 @@
 // lib/data/models/models.dart
 // Self-contained models — NO inheritance from entity classes.
-// Each model holds its own fields and converts from/to JSON.
 //
-// FIX: Added `assessment` case to both _parseStatus() and statusToString().
-// Previously the DB value 'assessment' fell through to the default branch
-// and returned BookingStatus.pending — causing both sides to show Pending
-// after the handyman set a price.
+// SCHEDULING UPDATE:
+//   • Added BookingStatus.scheduleProposed and BookingStatus.scheduled.
+//   • _parseStatus() and statusToString() handle 'schedule_proposed' and
+//     'scheduled' DB values.
+//   • BookingModel now carries scheduledTime (DateTime?) and
+//     rescheduleReason (String?) — mapped from the new DB columns
+//     scheduled_time and reschedule_reason.
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
@@ -49,13 +51,9 @@ class UserModel extends Equatable {
     );
   }
 
-  /// Parse a possibly-partial user object (e.g. joined selects that only include
-  /// `name`/`phone`/`avatar_url`). Falls back to sensible defaults to avoid
-  /// casting errors when fields are missing.
   factory UserModel.fromJsonSafe(Map<String, dynamic> json) {
     final rawId = json['id']?.toString();
     final id = (rawId != null && rawId.isNotEmpty) ? rawId : '';
-
     final name = json['name']?.toString() ?? '';
     final email = json['email']?.toString() ?? '';
     final role = json['role']?.toString() ?? 'customer';
@@ -125,12 +123,7 @@ class ProfessionalModel extends Equatable {
   final String? bio;
   final int yearsExperience;
   final bool available;
-
-  /// Phone number sourced from the joined users row.
   final String? phone;
-
-  /// Handyman's registered GPS location.
-  /// Stored in the `professionals` table as `latitude` / `longitude`.
   final double? latitude;
   final double? longitude;
 
@@ -162,7 +155,6 @@ class ProfessionalModel extends Equatable {
       userId: json['user_id'] as String,
       name: user?['name'] as String? ?? '',
       avatarUrl: user?['avatar_url'] as String?,
-      // Phone lives in the joined users row, not in professionals directly.
       phone: user?['phone'] as String?,
       skills: List<String>.from(json['skills'] as List? ?? []),
       verified: json['verified'] as bool? ?? false,
@@ -180,7 +172,6 @@ class ProfessionalModel extends Equatable {
     );
   }
 
-  /// Creates a copy with updated lat/lng — used for live location polling.
   ProfessionalModel copyWithLocation(double? lat, double? lng) =>
       ProfessionalModel(
         id: id,
@@ -262,13 +253,15 @@ class BookingModel extends Equatable {
   final DateTime createdAt;
   final ProfessionalModel? professional;
   final UserModel? customer;
-
-  /// Customer's pinned GPS location from RequestServiceScreen step 3.
   final double? latitude;
   final double? longitude;
-
-  /// Price set by the handyman during the assessment phase.
   final double? assessmentPrice;
+
+  /// Date/time proposed by the handyman (status = scheduleProposed or scheduled).
+  final DateTime? scheduledTime;
+
+  /// Reason given when the handyman proposes a reschedule.
+  final String? rescheduleReason;
 
   const BookingModel({
     required this.id,
@@ -287,26 +280,12 @@ class BookingModel extends Equatable {
     this.latitude,
     this.longitude,
     this.assessmentPrice,
+    this.scheduledTime,
+    this.rescheduleReason,
   });
 
   factory BookingModel.fromJson(Map<String, dynamic> json) {
     try {
-      // ── Resolve the join collision ──────────────────────────────────────
-      //
-      // When getProfessionalBookings fetches:
-      //   users!customer_id(...)  → lands in json['users']  (customer data)
-      //   professionals!professional_id(...) → lands in json['professionals']
-      //     └─ which itself has users(...) → nested inside professionals map
-      //
-      // When getCustomerBookings fetches:
-      //   professionals(*, users(...)) → lands in json['professionals']
-      //     └─ customer data is NOT joined at the top level
-      //
-      // So:
-      //  • json['users']          → customer UserModel (pro-side query only)
-      //  • json['professionals']  → ProfessionalModel (both queries)
-      //  • json['professionals']['users'] → professional's user row
-
       final proJson = json['professionals'] as Map<String, dynamic>?;
       final custJson = json['users'] as Map<String, dynamic>?;
 
@@ -339,6 +318,15 @@ class BookingModel extends Equatable {
         createdAt = DateTime.now();
       }
 
+      // Parse scheduledTime from the new scheduled_time column
+      DateTime? scheduledTime;
+      try {
+        final st = json['scheduled_time']?.toString();
+        if (st != null && st.isNotEmpty) scheduledTime = DateTime.parse(st);
+      } catch (_) {}
+
+      final rescheduleReason = json['reschedule_reason'] as String?;
+
       return BookingModel(
         id: id,
         customerId: customerId,
@@ -357,6 +345,8 @@ class BookingModel extends Equatable {
         latitude: (json['latitude'] as num?)?.toDouble(),
         longitude: (json['longitude'] as num?)?.toDouble(),
         assessmentPrice: (json['assessment_price'] as num?)?.toDouble(),
+        scheduledTime: scheduledTime,
+        rescheduleReason: rescheduleReason,
       );
     } catch (e, st) {
       debugPrint('[BookingModel.fromJson] error parsing json: $e');
@@ -366,13 +356,15 @@ class BookingModel extends Equatable {
     }
   }
 
-  // FIX: Added `assessment` case. Previously this was missing, so a DB row
-  // with status='assessment' silently fell through to `default` and returned
-  // BookingStatus.pending — making both sides appear stuck on Pending.
+  // ── Status parsing ────────────────────────────────────────
   static BookingStatus _parseStatus(String s) {
     switch (s) {
       case 'accepted':
         return BookingStatus.accepted;
+      case 'schedule_proposed':
+        return BookingStatus.scheduleProposed;
+      case 'scheduled':
+        return BookingStatus.scheduled;
       case 'assessment':
         return BookingStatus.assessment;
       case 'in_progress':
@@ -386,13 +378,14 @@ class BookingModel extends Equatable {
     }
   }
 
-  // FIX: Added `assessment` case so statusToString() round-trips correctly.
-  // Without this, calling statusToString(BookingStatus.assessment) returned
-  // 'pending', corrupting any updateBookingStatus() call that passed assessment.
   static String statusToString(BookingStatus s) {
     switch (s) {
       case BookingStatus.accepted:
         return 'accepted';
+      case BookingStatus.scheduleProposed:
+        return 'schedule_proposed';
+      case BookingStatus.scheduled:
+        return 'scheduled';
       case BookingStatus.assessment:
         return 'assessment';
       case BookingStatus.inProgress:
@@ -423,6 +416,8 @@ class BookingModel extends Equatable {
         latitude: latitude,
         longitude: longitude,
         assessmentPrice: assessmentPrice,
+        scheduledTime: scheduledTime,
+        rescheduleReason: rescheduleReason,
       );
 
   BookingModel copyWithStatus(BookingStatus newStatus) => BookingModel(
@@ -442,10 +437,10 @@ class BookingModel extends Equatable {
         latitude: latitude,
         longitude: longitude,
         assessmentPrice: assessmentPrice,
+        scheduledTime: scheduledTime,
+        rescheduleReason: rescheduleReason,
       );
 
-  /// Returns a copy with the professional's location updated.
-  /// Used by the live location polling timer.
   BookingModel copyWithProLocation(double? lat, double? lng) => BookingModel(
         id: id,
         customerId: customerId,
@@ -463,6 +458,8 @@ class BookingModel extends Equatable {
         latitude: latitude,
         longitude: longitude,
         assessmentPrice: assessmentPrice,
+        scheduledTime: scheduledTime,
+        rescheduleReason: rescheduleReason,
       );
 
   Map<String, dynamic> toJson() => {
@@ -478,6 +475,8 @@ class BookingModel extends Equatable {
         'latitude': latitude,
         'longitude': longitude,
         'assessment_price': assessmentPrice,
+        'scheduled_time': scheduledTime?.toIso8601String(),
+        'reschedule_reason': rescheduleReason,
       };
 
   @override

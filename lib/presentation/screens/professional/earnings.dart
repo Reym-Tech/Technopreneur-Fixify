@@ -5,18 +5,14 @@
 // FIXES from previous version:
 //  1. _effectivePrice() helper — always uses assessmentPrice (the price the
 //     pro actually agreed on) when available, falling back to priceEstimate.
-//     Previously all stats used raw priceEstimate which is often null or the
-//     customer's initial estimate, not the final agreed amount.
-//  2. All earnings aggregations (_totalEarnings, _thisMonthEarnings, etc.)
-//     now go through _effectivePrice so the numbers match reality.
+//  2. All earnings aggregations go through _effectivePrice.
 //  3. Monthly bar chart and service breakdown also use _effectivePrice.
 //  4. Transaction tiles show the effective price instead of the raw estimate.
-//  5. Empty-state cards now explain WHY there's no data (helps debugging in
-//     dev: e.g. "No completed bookings yet" vs just "No data").
-//  6. Pending amount now counts bookings in accepted/inProgress/pending states
-//     (all jobs that haven't been paid out yet) not just 'pending'.
-//  7. _transactionBookings now also includes 'accepted' and 'inProgress' so
-//     the pro can see active jobs alongside completed ones.
+//  5. Empty-state cards explain WHY there's no data.
+//  6. Pending amount counts bookings in accepted/inProgress/pending states.
+//  7. _transactionBookings includes 'accepted' and 'inProgress'.
+//  8. BookingStatus.scheduleProposed added to all exhaustive switches.
+//  9. withOpacity replaced with withValues throughout.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -55,7 +51,6 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // Filter state
   DateTimeRange? _selectedDateRange;
   BookingStatus? _selectedStatusFilter;
   String? _searchQuery;
@@ -74,10 +69,6 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
   }
 
   // ── KEY FIX: Effective price helper ─────────────────────
-  //
-  // The pro sets an assessment_price after accepting a booking.
-  // This is the real agreed amount — prefer it over the initial estimate.
-  // Falls back to priceEstimate if assessmentPrice is null or zero.
   double _effectivePrice(BookingEntity b) {
     final ap = b.assessmentPrice;
     if (ap != null && ap > 0) return ap;
@@ -90,7 +81,6 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       .where((b) => b.status == BookingStatus.completed)
       .toList();
 
-  /// All bookings that haven't been paid out yet (active pipeline)
   List<BookingEntity> get _unpaid => widget.bookings
       .where((b) =>
           b.status == BookingStatus.pending ||
@@ -287,6 +277,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     return '${diff.inDays}d ago';
   }
 
+  // FIX: BookingStatus.scheduleProposed added to make switch exhaustive.
   Color _statusColor(BookingStatus s) {
     switch (s) {
       case BookingStatus.completed:
@@ -297,13 +288,18 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         return Colors.red;
       case BookingStatus.accepted:
         return Colors.blue;
-      case BookingStatus.assessment: // ← ADD
+      case BookingStatus.assessment:
         return const Color(0xFFFF9500);
       case BookingStatus.inProgress:
         return const Color(0xFF5856D6);
+      case BookingStatus.scheduleProposed:
+        return const Color(0xFF9C27B0); // purple — schedule pending review
+      case BookingStatus.scheduled:
+        return const Color(0xFF007AFF); // blue — confirmed schedule
     }
   }
 
+  // FIX: scheduleProposed + scheduled added to make switch exhaustive.
   String _statusLabel(BookingStatus s) {
     switch (s) {
       case BookingStatus.completed:
@@ -314,10 +310,14 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         return 'Cancelled';
       case BookingStatus.accepted:
         return 'Accepted';
-      case BookingStatus.assessment: // ← ADD
-        return 'Awaiting Confirm'; // ← ADD
+      case BookingStatus.assessment:
+        return 'Awaiting Confirm';
       case BookingStatus.inProgress:
         return 'In Progress';
+      case BookingStatus.scheduleProposed:
+        return 'Schedule Proposed';
+      case BookingStatus.scheduled:
+        return 'Scheduled';
     }
   }
 
@@ -376,7 +376,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.12),
+                    color: Colors.white.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(Icons.arrow_back_ios_new_rounded,
@@ -396,7 +396,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                             letterSpacing: -0.3)),
                     Text('Track your income and transactions',
                         style: TextStyle(
-                            color: Colors.white.withOpacity(0.6),
+                            color: Colors.white.withValues(alpha: 0.6),
                             fontSize: 13)),
                   ],
                 ),
@@ -474,7 +474,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-              color: const Color(0xFF2A7F6E).withOpacity(0.3),
+              color: const Color(0xFF2A7F6E).withValues(alpha: 0.3),
               blurRadius: 10,
               offset: const Offset(0, 4)),
         ],
@@ -494,8 +494,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
           const SizedBox(height: 4),
           Text(
             'From ${_completed.length} completed job${_completed.length == 1 ? '' : 's'}',
-            style:
-                TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
           ),
           const SizedBox(height: 16),
           Row(
@@ -516,7 +516,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
+                    color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(children: [
@@ -564,7 +564,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
+              color: Colors.grey.withValues(alpha: 0.1),
               blurRadius: 5,
               offset: const Offset(0, 2)),
         ],
@@ -573,7 +573,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-              color: color.withOpacity(0.1), shape: BoxShape.circle),
+              color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
           child: Icon(icon, color: color, size: 18),
         ),
         const SizedBox(height: 8),
@@ -589,7 +589,6 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     );
   }
 
-  // Shows a summary of total earned + unpaid pipeline
   Widget _buildSummaryBalanceCard() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -598,7 +597,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
+              color: Colors.grey.withValues(alpha: 0.1),
               blurRadius: 5,
               offset: const Offset(0, 2)),
         ],
@@ -622,7 +621,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
+                    color: Colors.orange.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -638,7 +637,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-                color: const Color(0xFF2A7F6E).withOpacity(0.1),
+                color: const Color(0xFF2A7F6E).withValues(alpha: 0.1),
                 shape: BoxShape.circle),
             child: const Icon(Icons.account_balance_wallet,
                 color: Color(0xFF2A7F6E), size: 30),
@@ -674,7 +673,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
+              color: Colors.grey.withValues(alpha: 0.1),
               blurRadius: 5,
               offset: const Offset(0, 2)),
         ],
@@ -779,7 +778,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
+              color: Colors.grey.withValues(alpha: 0.1),
               blurRadius: 5,
               offset: const Offset(0, 2)),
         ],
@@ -860,7 +859,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
+              color: Colors.grey.withValues(alpha: 0.1),
               blurRadius: 5,
               offset: const Offset(0, 2)),
         ],
@@ -896,7 +895,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-              color: const Color(0xFF2A7F6E).withOpacity(0.1),
+              color: const Color(0xFF2A7F6E).withValues(alpha: 0.1),
               shape: BoxShape.circle),
           child: const Icon(Icons.handyman_rounded,
               color: Color(0xFF2A7F6E), size: 16),
@@ -925,7 +924,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: _statusColor(b.status).withOpacity(0.1),
+              color: _statusColor(b.status).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(_statusLabel(b.status),
@@ -1050,6 +1049,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
               BookingStatus.pending,
               BookingStatus.accepted,
               BookingStatus.inProgress,
+              BookingStatus.scheduleProposed,
             ].map((s) {
               return FilterChip(
                 label: Text(_statusLabel(s)),
@@ -1058,7 +1058,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   setState(() => _selectedStatusFilter = sel ? s : null);
                   Navigator.pop(context);
                 },
-                selectedColor: _statusColor(s).withOpacity(0.2),
+                selectedColor: _statusColor(s).withValues(alpha: 0.2),
               );
             }).toList(),
           ),
@@ -1159,7 +1159,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                               width: 40,
                               height: 40,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF2A7F6E).withOpacity(0.1),
+                                color: const Color(0xFF2A7F6E)
+                                    .withValues(alpha: 0.1),
                                 shape: BoxShape.circle,
                               ),
                               child: Center(
@@ -1221,14 +1222,15 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withOpacity(0.08),
+              color: Colors.grey.withValues(alpha: 0.08),
               blurRadius: 5,
               offset: const Offset(0, 2)),
         ],
       ),
       child: Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 40, color: AppColors.textLight.withOpacity(0.4)),
+          Icon(icon,
+              size: 40, color: AppColors.textLight.withValues(alpha: 0.4)),
           const SizedBox(height: 10),
           Text(title,
               style: const TextStyle(
@@ -1252,11 +1254,11 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
           Container(
             padding: const EdgeInsets.all(28),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.07),
+              color: AppColors.primary.withValues(alpha: 0.07),
               shape: BoxShape.circle,
             ),
             child: Icon(Icons.receipt_long,
-                size: 52, color: AppColors.primary.withOpacity(0.4)),
+                size: 52, color: AppColors.primary.withValues(alpha: 0.4)),
           ),
           const SizedBox(height: 20),
           Text(title,
@@ -1288,7 +1290,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               blurRadius: 20,
               offset: const Offset(0, -4)),
         ],
@@ -1309,7 +1311,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
                     color: active
-                        ? AppColors.primary.withOpacity(0.1)
+                        ? AppColors.primary.withValues(alpha: 0.1)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(14),
                   ),
@@ -1383,7 +1385,6 @@ class _ExpandableTxnCard extends StatelessWidget {
   final VoidCallback onTap;
   final Color statusColor;
   final String statusLabel;
-  // Pre-computed effective price (assessmentPrice ?? priceEstimate)
   final double effectivePrice;
   final String Function(double) fmt;
   final String Function(DateTime) fmtDateTime;
@@ -1413,15 +1414,15 @@ class _ExpandableTxnCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: expanded
-                ? AppColors.primary.withOpacity(0.3)
+                ? AppColors.primary.withValues(alpha: 0.3)
                 : Colors.transparent,
             width: 2,
           ),
           boxShadow: [
             BoxShadow(
               color: expanded
-                  ? AppColors.primary.withOpacity(0.1)
-                  : Colors.black.withOpacity(0.06),
+                  ? AppColors.primary.withValues(alpha: 0.1)
+                  : Colors.black.withValues(alpha: 0.06),
               blurRadius: expanded ? 16 : 12,
               offset: const Offset(0, 4),
             ),
@@ -1437,7 +1438,7 @@ class _ExpandableTxnCard extends StatelessWidget {
                   width: 46,
                   height: 46,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF2A7F6E).withOpacity(0.1),
+                    color: const Color(0xFF2A7F6E).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(13),
                   ),
                   child: const Icon(Icons.handyman_rounded,
@@ -1473,7 +1474,7 @@ class _ExpandableTxnCard extends StatelessWidget {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
+                      color: statusColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(statusLabel,

@@ -93,19 +93,21 @@ class ProfessionalEntity extends Equatable {
 // BOOKING
 // ─────────────────────────────────────────
 
-// CHANGE: Added `assessment` between `accepted` and `inProgress`.
-//
 // Full lifecycle:
-//   pending    → Handyman not yet responded
-//   accepted   → Handyman accepted; can now set a price
-//   assessment → Handyman has set a price; awaiting customer confirmation
-//   inProgress → Customer confirmed the price; Handyman can now start the job
-//   completed  → Handyman marked the job done
-//   cancelled  → Either side cancelled
+//   pending          → Open request, no pro assigned yet
+//   accepted         → Pro claimed the booking; must now propose a schedule
+//   scheduleProposed → Pro has proposed a start date/time; customer reviewing
+//   scheduled        → Customer accepted the proposed schedule; waiting for arrival
+//   assessment       → Pro arrived, set a price; customer must confirm
+//   inProgress       → Customer confirmed price; job underway
+//   completed        → Pro marked job done
+//   cancelled        → Either side cancelled at any point
 enum BookingStatus {
   pending,
   accepted,
-  assessment, // NEW — price set by handyman, awaiting customer confirmation
+  scheduleProposed, // NEW — handyman proposed date/time
+  scheduled, // NEW — customer accepted the proposed schedule
+  assessment,
   inProgress,
   completed,
   cancelled,
@@ -130,9 +132,16 @@ class BookingEntity extends Equatable {
   final double? latitude;
   final double? longitude;
 
-  /// Price set by the handyman after accepting the booking.
-  /// Moving to `assessment` status means this is non-null.
+  /// Price set by the handyman during the assessment phase.
   final double? assessmentPrice;
+
+  /// Date/time proposed by the handyman for the job start.
+  /// Set when status transitions to scheduleProposed.
+  final DateTime? scheduledTime;
+
+  /// Reason provided by the handyman when proposing a reschedule
+  /// (i.e. they are running late / still on another job).
+  final String? rescheduleReason;
 
   const BookingEntity({
     required this.id,
@@ -151,6 +160,8 @@ class BookingEntity extends Equatable {
     this.latitude,
     this.longitude,
     this.assessmentPrice,
+    this.scheduledTime,
+    this.rescheduleReason,
   });
 
   @override

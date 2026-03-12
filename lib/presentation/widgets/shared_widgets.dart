@@ -41,7 +41,7 @@ class GlassCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(borderRadius),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 20,
               offset: const Offset(0, 4),
             ),
@@ -54,11 +54,11 @@ class GlassCard extends StatelessWidget {
             child: Container(
               padding: padding,
               decoration: BoxDecoration(
-                color: backgroundColor ?? Colors.white.withOpacity(0.85),
+                color: backgroundColor ?? Colors.white.withValues(alpha: 0.85),
                 borderRadius: BorderRadius.circular(borderRadius),
                 border: border ??
                     Border.all(
-                      color: Colors.white.withOpacity(0.6),
+                      color: Colors.white.withValues(alpha: 0.6),
                       width: 1,
                     ),
               ),
@@ -94,10 +94,10 @@ class PrimaryGlassCard extends StatelessWidget {
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.9),
+            color: AppColors.primary.withValues(alpha: 0.9),
             borderRadius: BorderRadius.circular(borderRadius),
             border: Border.all(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               width: 1,
             ),
           ),
@@ -135,7 +135,7 @@ class VerifiedBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.success.withOpacity(0.3),
+            color: AppColors.success.withValues(alpha: 0.3),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -176,10 +176,10 @@ class StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: config['color'].withOpacity(0.12),
+        color: (config['color'] as Color).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: config['color'].withOpacity(0.3),
+          color: (config['color'] as Color).withValues(alpha: 0.3),
           width: 1,
         ),
       ),
@@ -190,15 +190,15 @@ class StatusBadge extends StatelessWidget {
             width: 6,
             height: 6,
             decoration: BoxDecoration(
-              color: config['color'],
+              color: config['color'] as Color,
               shape: BoxShape.circle,
             ),
           ),
           const SizedBox(width: 6),
           Text(
-            config['label'],
+            config['label'] as String,
             style: TextStyle(
-              color: config['color'],
+              color: config['color'] as Color,
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
@@ -208,23 +208,40 @@ class StatusBadge extends StatelessWidget {
     );
   }
 
+  // FIX: BookingStatus.scheduleProposed added to make switch exhaustive.
   Map<String, dynamic> _getStatusConfig(BookingStatus status) {
     switch (status) {
       case BookingStatus.pending:
         return {'color': AppColors.statusPending, 'label': 'Pending'};
       case BookingStatus.accepted:
         return {'color': AppColors.statusAccepted, 'label': 'Accepted'};
-      case BookingStatus.assessment: // ← ADD
+      case BookingStatus.assessment:
         return {
           'color': const Color(0xFFFF9500),
-          'label': 'Awaiting Confirm'
-        }; // ← ADD
+          'label': 'Awaiting Confirm',
+        };
       case BookingStatus.inProgress:
-        return {'color': AppColors.statusInProgress, 'label': 'In Progress'};
+        return {
+          'color': AppColors.statusInProgress,
+          'label': 'In Progress',
+        };
       case BookingStatus.completed:
-        return {'color': AppColors.statusCompleted, 'label': 'Completed'};
+        return {
+          'color': AppColors.statusCompleted,
+          'label': 'Completed',
+        };
       case BookingStatus.cancelled:
         return {'color': AppColors.error, 'label': 'Cancelled'};
+      case BookingStatus.scheduleProposed:
+        return {
+          'color': const Color(0xFF9C27B0), // purple — schedule pending review
+          'label': 'Schedule Proposed',
+        };
+      case BookingStatus.scheduled:
+        return {
+          'color': const Color(0xFF007AFF), // blue — confirmed schedule
+          'label': 'Scheduled',
+        };
     }
   }
 }
@@ -286,9 +303,7 @@ class ProfessionalCard extends StatelessWidget {
     required this.onTap,
   });
 
-  /// Launches the device's native phone dialer pre-filled with [phone].
   Future<void> _callPhone(BuildContext context, String phone) async {
-    // Strip spaces/dashes so the URI is clean, e.g. "tel:+639171234567"
     final cleaned = phone.replaceAll(RegExp(r'[\s\-()]'), '');
     final uri = Uri(scheme: 'tel', path: cleaned);
     if (await canLaunchUrl(uri)) {
@@ -328,7 +343,7 @@ class ProfessionalCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(18),
                   gradient: LinearGradient(
                     colors: [
-                      AppColors.primary.withOpacity(0.8),
+                      AppColors.primary.withValues(alpha: 0.8),
                       AppColors.primaryLight,
                     ],
                     begin: Alignment.topLeft,
@@ -395,7 +410,7 @@ class ProfessionalCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.08),
+                        color: AppColors.primary.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -454,13 +469,11 @@ class ProfessionalCard extends StatelessWidget {
                     ),
                   ),
 
-                // ── Phone row — only shown when a number is available ─────
+                // ── Phone row ────────────────────────────────────────────
                 if (hasPhone)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: GestureDetector(
-                      // Stop propagation so the card tap (view profile) is
-                      // not triggered when the user taps the phone button.
                       onTap: () => _callPhone(context, professional.phone!),
                       behavior: HitTestBehavior.opaque,
                       child: Row(
@@ -469,7 +482,8 @@ class ProfessionalCard extends StatelessWidget {
                           Container(
                             padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF34C759).withOpacity(0.12),
+                              color: const Color(0xFF34C759)
+                                  .withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: const Icon(
@@ -551,8 +565,8 @@ class ServiceCategoryChip extends StatelessWidget {
           boxShadow: [
             BoxShadow(
               color: selected
-                  ? AppColors.primary.withOpacity(0.3)
-                  : Colors.black.withOpacity(0.05),
+                  ? AppColors.primary.withValues(alpha: 0.3)
+                  : Colors.black.withValues(alpha: 0.05),
               blurRadius: selected ? 12 : 6,
               offset: const Offset(0, 3),
             ),
@@ -619,7 +633,7 @@ class SectionHeader extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.08),
+                color: AppColors.primary.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
@@ -675,7 +689,7 @@ class FixifyBottomNav extends StatelessWidget {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 20,
             offset: const Offset(0, -4),
           ),
@@ -698,7 +712,7 @@ class FixifyBottomNav extends StatelessWidget {
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? AppColors.primary.withOpacity(0.1)
+                        ? AppColors.primary.withValues(alpha: 0.1)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(14),
                   ),
@@ -824,7 +838,7 @@ class LoadingOverlay extends StatelessWidget {
         child,
         if (isLoading)
           Container(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             child: Center(
               child: GlassCard(
                 padding: const EdgeInsets.all(30),

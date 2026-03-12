@@ -1,171 +1,483 @@
 // lib/presentation/screens/customer/booking_status_screen.dart
 //
-// BookingStatusScreen — 5-step status timeline for a customer booking.
-//
-// CHANGE: Added `Assessment` step between `Accepted` and `In Progress`.
-//
-//   Pending → Accepted → Assessment → In Progress → Completed
-//
-// Assessment CTA behaviour:
-//   • Status = accepted   → Handyman accepted but hasn't set a price yet.
-//                           CTA shows "Awaiting Assessment" (orange, disabled confirm).
-//   • Status = assessment → Handyman set a price. CTA shows price + "Confirm & Start"
-//                           (green, enabled). Customer must confirm before job starts.
-//   • Status = inProgress → Customer confirmed; job is underway. CTA hidden.
-//
-// Validation:
-//   • Customer CANNOT confirm if no assessmentPrice is set (guarded in
-//     AssessmentScreen._handleConfirm, but also reflected in this CTA state).
+// SCHEDULING UPDATE:
+//   • Timeline now shows 7 steps:
+//       Pending → Accepted → Schedule Proposed → Scheduled →
+//       Assessment → In Progress → Completed
+//   • When status == scheduleProposed: shows a pulsing "Review Schedule" CTA
+//     that routes to ScheduleReviewScreen via onReviewSchedule().
+//     The CTA now also shows the customer's original preferred date so they
+//     can compare against the handyman's proposed time at a glance.
+//   • AssessmentCTA is now only shown for status == assessment (not accepted).
+//   • _statusLabel / _statusMessage updated for new statuses.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
+import 'package:intl/intl.dart';
 
 class BookingStatusScreen extends StatelessWidget {
   final BookingEntity booking;
   final VoidCallback? onBack;
-  final VoidCallback? onWriteReview;
-  final VoidCallback? onCancelBooking;
-
-  /// Called when customer taps the Assessment CTA → navigates to AssessmentScreen.
   final VoidCallback? onViewAssessment;
 
-  /// Called when customer taps "Book Again" on a past professional.
-  final Function(ProfessionalEntity)? onBookAgain;
+  /// Called when the customer taps "Review Schedule".
+  /// Parent navigates to ScheduleReviewScreen.
+  final VoidCallback? onReviewSchedule;
 
   const BookingStatusScreen({
     super.key,
     required this.booking,
     this.onBack,
-    this.onWriteReview,
-    this.onCancelBooking,
     this.onViewAssessment,
-    this.onBookAgain,
+    this.onReviewSchedule,
   });
 
-  // ── Status helpers ─────────────────────────────────────────────────────────
+  // ── Step helpers ───────────────────────────────────────────────────────────
 
-  // CHANGE: 5-step index (0-4). Assessment = 2.
-  int get _statusStep {
-    switch (booking.status) {
+  static const List<BookingStatus> _steps = [
+    BookingStatus.pending,
+    BookingStatus.accepted,
+    BookingStatus.scheduleProposed,
+    BookingStatus.scheduled,
+    BookingStatus.assessment,
+    BookingStatus.inProgress,
+    BookingStatus.completed,
+  ];
+
+  int get _currentStepIndex {
+    if (booking.status == BookingStatus.cancelled) return -1;
+    return _steps.indexOf(booking.status);
+  }
+
+  String _stepLabel(BookingStatus s) {
+    switch (s) {
       case BookingStatus.pending:
-        return 0;
+        return 'Pending';
       case BookingStatus.accepted:
-        return 1;
+        return 'Accepted';
+      case BookingStatus.scheduleProposed:
+        return 'Schedule\nProposed';
+      case BookingStatus.scheduled:
+        return 'Scheduled';
       case BookingStatus.assessment:
-        return 2;
+        return 'Assessment';
       case BookingStatus.inProgress:
-        return 3;
+        return 'In Progress';
       case BookingStatus.completed:
-        return 4;
+        return 'Completed';
       default:
-        return 0;
+        return '';
     }
   }
 
-  bool get _isCancelled => booking.status == BookingStatus.cancelled;
-  bool get _isAccepted => booking.status == BookingStatus.accepted;
-  bool get _isAssessment => booking.status == BookingStatus.assessment;
-  bool get _isInProgress => booking.status == BookingStatus.inProgress;
-  bool get _isCompleted => booking.status == BookingStatus.completed;
+  // ── Status display helpers ─────────────────────────────────────────────────
 
-  bool get _showProfessional =>
-      booking.professional != null &&
-      booking.status != BookingStatus.pending &&
-      !_isCancelled;
+  String get _statusLabel {
+    switch (booking.status) {
+      case BookingStatus.pending:
+        return 'Finding Handyman';
+      case BookingStatus.accepted:
+        return 'Handyman Assigned';
+      case BookingStatus.scheduleProposed:
+        return 'Schedule Proposed';
+      case BookingStatus.scheduled:
+        return 'Job Scheduled';
+      case BookingStatus.assessment:
+        return 'Assessment Ready';
+      case BookingStatus.inProgress:
+        return 'In Progress';
+      case BookingStatus.completed:
+        return 'Completed';
+      case BookingStatus.cancelled:
+        return 'Cancelled';
+    }
+  }
 
-  // CHANGE: Show Assessment CTA for `accepted` (awaiting price) and
-  // `assessment` (price set, ready to confirm). Hide once `inProgress`.
-  bool get _showAssessmentCTA =>
-      (_isAccepted || _isAssessment) && onViewAssessment != null;
+  String get _statusMessage {
+    switch (booking.status) {
+      case BookingStatus.pending:
+        return 'We\'re matching you with an available handyman. This usually takes just a few minutes.';
+      case BookingStatus.accepted:
+        return 'A handyman has accepted your request and is setting up a schedule for your job.';
+      case BookingStatus.scheduleProposed:
+        return 'Your handyman has proposed a start time. Please review and confirm the schedule below.';
+      case BookingStatus.scheduled:
+        return 'You\'ve confirmed the schedule. Your handyman will arrive at the agreed time.';
+      case BookingStatus.assessment:
+        return 'Your handyman has assessed the job and set a price. Please review and confirm to get started.';
+      case BookingStatus.inProgress:
+        return 'Your handyman is currently working on the job.';
+      case BookingStatus.completed:
+        return 'Your job has been completed. Thank you for using AYO!';
+      case BookingStatus.cancelled:
+        return 'This booking has been cancelled.';
+    }
+  }
 
-  bool get _priceSet => booking.assessmentPrice != null;
-
-  // ── Build ──────────────────────────────────────────────────────────────────
+  Color get _statusColor {
+    switch (booking.status) {
+      case BookingStatus.pending:
+        return const Color(0xFFFF9500);
+      case BookingStatus.accepted:
+        return const Color(0xFF007AFF);
+      case BookingStatus.scheduleProposed:
+        return const Color(0xFFFF9500);
+      case BookingStatus.scheduled:
+        return const Color(0xFF007AFF);
+      case BookingStatus.assessment:
+        return const Color(0xFF5856D6);
+      case BookingStatus.inProgress:
+        return const Color(0xFF34C759);
+      case BookingStatus.completed:
+        return AppColors.primary;
+      case BookingStatus.cancelled:
+        return const Color(0xFFFF3B30);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0F3D2E),
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              color: Colors.white, size: 20),
-          onPressed: onBack,
-        ),
-        title: const Text('Booking Status',
-            style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 17)),
-        centerTitle: true,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) onBack?.call();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.backgroundLight,
+        body: Column(
           children: [
-            _buildStatusCard(),
-            const SizedBox(height: 20),
-            if (booking.status == BookingStatus.pending) ...[
-              _buildPendingNotice(),
-              const SizedBox(height: 20),
-            ],
-            if (_showAssessmentCTA) ...[
-              _buildAssessmentCTA(context),
-              const SizedBox(height: 20),
-            ],
-            _buildDetailsCard(),
-            const SizedBox(height: 20),
-            if (_showProfessional) ...[
-              _buildProfessionalCard(context),
-              const SizedBox(height: 20),
-            ],
+            _buildHeader(),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildStatusCard()
+                        .animate()
+                        .fadeIn(delay: 80.ms)
+                        .slideY(begin: 0.06, end: 0),
+                    const SizedBox(height: 16),
+
+                    _buildTimeline()
+                        .animate()
+                        .fadeIn(delay: 150.ms)
+                        .slideY(begin: 0.06, end: 0),
+                    const SizedBox(height: 16),
+
+                    // ── Schedule Review CTA ──────────────────────────────
+                    if (booking.status == BookingStatus.scheduleProposed) ...[
+                      _buildScheduleCTA()
+                          .animate(onPlay: (c) => c.repeat(reverse: true))
+                          .shimmer(
+                              duration: 2000.ms,
+                              color: Colors.white.withOpacity(0.3)),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // ── Assessment CTA ───────────────────────────────────
+                    if (booking.status == BookingStatus.assessment) ...[
+                      AssessmentCTA(
+                        booking: booking,
+                        onViewAssessment: onViewAssessment,
+                      ).animate().fadeIn(delay: 220.ms),
+                      const SizedBox(height: 16),
+                    ],
+
+                    _buildBookingInfo()
+                        .animate()
+                        .fadeIn(delay: 280.ms)
+                        .slideY(begin: 0.06, end: 0),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
-      bottomNavigationBar: _buildBottomBar(context),
     );
   }
 
-  // ── Assessment CTA ────────────────────────────────────────────────────────
-  //
-  // CHANGE: Reflects two distinct states:
-  //   • accepted   → Handyman hasn't set a price yet (orange, informational)
-  //   • assessment → Price is set; customer needs to confirm (green, actionable)
+  // ── Header ─────────────────────────────────────────────────────────────────
 
-  Widget _buildAssessmentCTA(BuildContext context) {
-    // In `assessment` status the price is guaranteed set (the datasource
-    // advances to `assessment` only when setting the price). In `accepted`
-    // we fall back to checking assessmentPrice directly.
-    final bool priceReady = _isAssessment || _priceSet;
-    final String title =
-        priceReady ? 'Price Ready — Tap to Review' : 'Awaiting Assessment';
-    final String subtitle = priceReady
-        ? '₱${booking.assessmentPrice!.toStringAsFixed(2)} — Confirm to start the job'
-        : 'The handyman is reviewing your request and will set a price shortly.';
-    final Color statusColor =
-        priceReady ? const Color(0xFF34C759) : const Color(0xFFFF9500);
+  Widget _buildHeader() => Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF082218), Color(0xFF0F3D2E)],
+          ),
+          borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Row(children: [
+              GestureDetector(
+                onTap: onBack,
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white, size: 18),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Booking Status',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.3)),
+                      Text(booking.serviceType,
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.6),
+                              fontSize: 13)),
+                    ]),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _statusColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(_statusLabel,
+                    style: TextStyle(
+                        color: _statusColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700)),
+              ),
+            ]),
+          ),
+        ),
+      );
+
+  // ── Status Card ────────────────────────────────────────────────────────────
+
+  Widget _buildStatusCard() {
+    if (booking.status == BookingStatus.cancelled) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF3B30).withOpacity(0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFFF3B30).withOpacity(0.25)),
+        ),
+        child: Row(children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF3B30).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.cancel_rounded,
+                color: Color(0xFFFF3B30), size: 26),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Booking Cancelled',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFFFF3B30))),
+              const SizedBox(height: 4),
+              Text(_statusMessage,
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.textMedium)),
+            ]),
+          ),
+        ]),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            _statusColor.withOpacity(0.1),
+            _statusColor.withOpacity(0.04),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _statusColor.withOpacity(0.2)),
+      ),
+      child: Row(children: [
+        Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: _statusColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(15),
+          ),
+          child: Icon(_statusIcon, color: _statusColor, size: 26),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(_statusLabel,
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: _statusColor)),
+            const SizedBox(height: 4),
+            Text(_statusMessage,
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textMedium, height: 1.4)),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  IconData get _statusIcon {
+    switch (booking.status) {
+      case BookingStatus.pending:
+        return Icons.search_rounded;
+      case BookingStatus.accepted:
+        return Icons.person_rounded;
+      case BookingStatus.scheduleProposed:
+        return Icons.schedule_rounded;
+      case BookingStatus.scheduled:
+        return Icons.event_available_rounded;
+      case BookingStatus.assessment:
+        return Icons.receipt_long_rounded;
+      case BookingStatus.inProgress:
+        return Icons.handyman_rounded;
+      case BookingStatus.completed:
+        return Icons.check_circle_rounded;
+      case BookingStatus.cancelled:
+        return Icons.cancel_rounded;
+    }
+  }
+
+  // ── Timeline ───────────────────────────────────────────────────────────────
+
+  Widget _buildTimeline() {
+    final currentIdx = _currentStepIndex;
+    final isCancelled = booking.status == BookingStatus.cancelled;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 4))
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Progress',
+            style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textDark)),
+        const SizedBox(height: 20),
+        if (isCancelled)
+          _cancelledTimeline()
+        else
+          ..._steps.asMap().entries.map((entry) {
+            final i = entry.key;
+            final step = entry.value;
+            final isDone = i < currentIdx;
+            final isActive = i == currentIdx;
+            final isLast = i == _steps.length - 1;
+
+            return _TimelineStep(
+              label: _stepLabel(step),
+              isDone: isDone,
+              isActive: isActive,
+              isLast: isLast,
+              activeColor: _colorForStep(step),
+            );
+          }),
+      ]),
+    );
+  }
+
+  Widget _cancelledTimeline() => Row(children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFF3B30).withOpacity(0.12),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.close_rounded,
+              color: Color(0xFFFF3B30), size: 18),
+        ),
+        const SizedBox(width: 12),
+        const Text('This booking was cancelled.',
+            style: TextStyle(fontSize: 13, color: AppColors.textMedium)),
+      ]);
+
+  Color _colorForStep(BookingStatus s) {
+    switch (s) {
+      case BookingStatus.scheduleProposed:
+        return const Color(0xFFFF9500);
+      case BookingStatus.assessment:
+        return const Color(0xFF5856D6);
+      case BookingStatus.inProgress:
+        return const Color(0xFF34C759);
+      case BookingStatus.completed:
+        return AppColors.primary;
+      default:
+        return AppColors.primary;
+    }
+  }
+
+  // ── Schedule CTA ───────────────────────────────────────────────────────────
+  // Shows the handyman's proposed time prominently.
+  // Also shows the customer's original preferred date so they can compare.
+
+  Widget _buildScheduleCTA() {
+    final proposedTime = booking.scheduledTime;
+    final proposedStr = proposedTime != null
+        ? DateFormat('MMM d · h:mm a').format(proposedTime.toLocal())
+        : null;
+
+    // Customer's original preferred date (what they asked for when booking)
+    final preferredStr =
+        DateFormat('MMM d, yyyy').format(booking.scheduledDate.toLocal());
 
     return GestureDetector(
-      onTap: onViewAssessment,
+      onTap: onReviewSchedule,
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
-            colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
+            colors: [Color(0xFFFF9500), Color(0xFFFFB340)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-                color: AppColors.primary.withOpacity(0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4))
+                color: const Color(0xFFFF9500).withOpacity(0.35),
+                blurRadius: 16,
+                offset: const Offset(0, 6))
           ],
         ),
         child: Row(children: [
@@ -173,971 +485,281 @@ class BookingStatusScreen extends StatelessWidget {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
+              color: Colors.white.withOpacity(0.2),
               borderRadius: BorderRadius.circular(13),
             ),
-            child: Icon(
-              priceReady
-                  ? Icons.price_check_rounded
-                  : Icons.hourglass_top_rounded,
-              color: Colors.white,
-              size: 22,
-            ),
+            child: const Icon(Icons.event_available_rounded,
+                color: Colors.white, size: 24),
           ),
           const SizedBox(width: 14),
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(
-                title,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 14),
-              ),
+              const Text('Schedule Proposed!',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800)),
               const SizedBox(height: 3),
-              Row(children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration:
-                      BoxDecoration(color: statusColor, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    subtitle,
-                    style: TextStyle(
-                        color: statusColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ]),
-            ]),
-          ),
-          const SizedBox(width: 8),
-          const Icon(Icons.chevron_right_rounded,
-              color: Colors.white70, size: 22),
-        ]),
-      ),
-    ).animate().fadeIn(delay: 100.ms, duration: 300.ms).slideY(begin: -0.05);
-  }
-
-  // ── Pending Notice ─────────────────────────────────────────────────────────
-
-  Widget _buildPendingNotice() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFF9500).withOpacity(0.08),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFF9500).withOpacity(0.28)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          Padding(
-            padding: EdgeInsets.only(top: 1),
-            child:
-                Icon(Icons.search_rounded, color: Color(0xFFFF9500), size: 20),
-          ),
-          SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+              if (proposedStr != null)
                 Text(
-                  'Looking for a handyman…',
-                  style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFFFF9500),
-                      fontSize: 13),
+                  'Proposed: $proposedStr',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700),
                 ),
-                SizedBox(height: 3),
-                Text(
-                  'Your request is being reviewed by available professionals. '
-                  'A handyman will be assigned once someone accepts.',
-                  style: TextStyle(
-                      color: AppColors.textLight, fontSize: 12, height: 1.4),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ).animate().fadeIn(delay: 150.ms, duration: 300.ms);
-  }
-
-  // ── Status Timeline Card ───────────────────────────────────────────────────
-  //
-  // CHANGE: 5-step timeline — added Assessment between Accepted and In Progress.
-
-  Widget _buildStatusCard() {
-    final steps = [
-      _StepInfo(
-          label: 'Pending',
-          sub: 'Waiting for professional to accept',
-          icon: Icons.schedule_rounded),
-      _StepInfo(
-          label: 'Accepted',
-          sub: 'Professional accepted the booking',
-          icon: Icons.thumb_up_rounded),
-      _StepInfo(
-          label: 'Assessment',
-          sub: 'Price agreed by both parties',
-          icon: Icons.price_check_rounded),
-      _StepInfo(
-          label: 'In Progress',
-          sub: 'Service is underway',
-          icon: Icons.build_rounded),
-      _StepInfo(
-          label: 'Completed',
-          sub: 'Service finished',
-          icon: Icons.check_circle_rounded),
-    ];
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4))
-        ],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.track_changes_rounded,
-              size: 18, color: AppColors.primary),
-          const SizedBox(width: 8),
-          Text(
-            _isCancelled ? 'Booking Cancelled' : 'Booking Progress',
-            style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textDark),
-          ),
-        ]),
-        const SizedBox(height: 20),
-        if (_isCancelled)
-          _cancelledBanner()
-        else
-          Column(
-              children: List.generate(
-                  steps.length, (i) => _buildStep(steps[i], i, steps.length))),
-      ]),
-    ).animate().fadeIn(duration: 300.ms);
-  }
-
-  Widget _cancelledBanner() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFF3B30).withOpacity(0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFF3B30).withOpacity(0.25)),
-      ),
-      child: const Row(children: [
-        Icon(Icons.cancel_rounded, color: Color(0xFFFF3B30), size: 22),
-        SizedBox(width: 10),
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Booking Cancelled',
-                style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFFFF3B30),
-                    fontSize: 14)),
-            SizedBox(height: 2),
-            Text('This booking has been cancelled.',
-                style: TextStyle(color: AppColors.textLight, fontSize: 12)),
-          ]),
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildStep(_StepInfo step, int index, int total) {
-    final isActive = index <= _statusStep;
-    final isCurrent = index == _statusStep;
-    final isLast = index == total - 1;
-    final activeColor = AppColors.primary;
-    final inactiveColor = Colors.grey.shade300;
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 32,
-          child: Column(children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: isActive ? activeColor : inactiveColor,
-                boxShadow: isCurrent
-                    ? [
-                        BoxShadow(
-                            color: activeColor.withOpacity(0.3),
-                            blurRadius: 8,
-                            spreadRadius: 2)
-                      ]
-                    : null,
-              ),
-              child: Icon(step.icon,
-                  size: 16,
-                  color: isActive ? Colors.white : Colors.grey.shade500),
-            ),
-            if (!isLast)
-              Container(
-                  width: 2,
-                  height: 40,
-                  color: index < _statusStep ? activeColor : inactiveColor),
-          ]),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 5, bottom: 20),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(step.label,
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color:
-                          isActive ? AppColors.textDark : AppColors.textLight)),
               const SizedBox(height: 2),
-              Text(step.sub,
-                  style: TextStyle(
-                      fontSize: 12,
-                      color:
-                          isCurrent ? AppColors.primary : AppColors.textLight,
-                      fontWeight:
-                          isCurrent ? FontWeight.w500 : FontWeight.w400)),
+              Text(
+                'Your request: $preferredStr  •  Tap to review',
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.75), fontSize: 11),
+              ),
             ]),
           ),
-        ),
-        if (isCurrent)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                        shape: BoxShape.circle, color: activeColor))
-                .animate(onPlay: (c) => c.repeat())
-                .scale(
-                    begin: const Offset(1, 1),
-                    end: const Offset(1.6, 1.6),
-                    duration: 700.ms,
-                    curve: Curves.easeInOut)
-                .then()
-                .scale(
-                    begin: const Offset(1.6, 1.6),
-                    end: const Offset(1, 1),
-                    duration: 700.ms,
-                    curve: Curves.easeInOut),
-          ),
-      ],
-    );
-  }
-
-  // ── Booking Details Card ───────────────────────────────────────────────────
-
-  Widget _buildDetailsCard() {
-    final dateStr = _formatDate(booking.scheduledDate);
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4))
-        ],
+          const Icon(Icons.arrow_forward_ios_rounded,
+              color: Colors.white, size: 16),
+        ]),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Booking Details',
-            style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textDark)),
-        const SizedBox(height: 16),
-        _detailRow(Icons.build_circle_rounded, 'Service', booking.serviceType),
-        _detailRow(Icons.calendar_month_rounded, 'Scheduled', dateStr),
-        if (booking.address != null && booking.address!.isNotEmpty)
-          _detailRow(Icons.location_on_rounded, 'Address', booking.address!),
-        if (booking.notes != null && booking.notes!.isNotEmpty)
-          _detailRow(Icons.notes_rounded, 'Notes', booking.notes!),
-        // CHANGE: Show agreed price once assessment is confirmed.
-        if ((_isAssessment || _isInProgress || _isCompleted) &&
-            booking.assessmentPrice != null)
-          _detailRow(Icons.payments_rounded, 'Agreed Price',
-              '₱${booking.assessmentPrice!.toStringAsFixed(2)}'),
-      ]),
-    ).animate().fadeIn(delay: 100.ms, duration: 300.ms);
-  }
-
-  Widget _detailRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(10)),
-          child: Icon(icon, size: 18, color: AppColors.primary),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label,
-                style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textLight,
-                    fontWeight: FontWeight.w500)),
-            const SizedBox(height: 2),
-            Text(value,
-                style: const TextStyle(
-                    fontSize: 13,
-                    color: AppColors.textDark,
-                    fontWeight: FontWeight.w600)),
-          ]),
-        ),
-      ]),
     );
   }
 
-  // ── Professional Card ─────────────────────────────────────────────────────
+  // ── Booking Info ───────────────────────────────────────────────────────────
 
-  Widget _buildProfessionalCard(BuildContext context) {
-    final pro = booking.professional!;
-    final bool isOnline = pro.available;
-
-    return GestureDetector(
-      onTap: () => _showHandymanSheet(context, pro),
-      child: Container(
-        padding: const EdgeInsets.all(16),
+  Widget _buildBookingInfo() => Container(
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.06),
+                color: Colors.black.withOpacity(0.05),
                 blurRadius: 12,
                 offset: const Offset(0, 4))
           ],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Icon(Icons.person_pin_rounded,
-                size: 15, color: AppColors.primary),
-            const SizedBox(width: 6),
-            const Text('Your Handyman',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.primary)),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: isOnline
-                    ? const Color(0xFF34C759).withOpacity(0.10)
-                    : Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isOnline
-                      ? const Color(0xFF34C759).withOpacity(0.30)
-                      : Colors.grey.shade300,
-                ),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isOnline
-                        ? const Color(0xFF34C759)
-                        : Colors.grey.shade400,
-                  ),
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  isOnline ? 'Online' : 'Offline',
-                  style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: isOnline
-                          ? const Color(0xFF34C759)
-                          : Colors.grey.shade500),
-                ),
-              ]),
-            ),
-          ]),
+          const Text('Booking Details',
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark)),
+          const SizedBox(height: 16),
+          _infoRow(Icons.build_rounded, 'Service', booking.serviceType),
+          if (booking.professional != null) ...[
+            const SizedBox(height: 12),
+            _infoRow(
+                Icons.person_rounded, 'Handyman', booking.professional!.name),
+          ],
           const SizedBox(height: 12),
-          Row(children: [
-            _ProAvatar(name: pro.name, avatarUrl: pro.avatarUrl, size: 52),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      Flexible(
-                        child: Text(pro.name,
-                            style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.textDark),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                      ),
-                      if (pro.verified) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 3),
-                          decoration: BoxDecoration(
-                              color: const Color(0xFF34C759).withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(6)),
-                          child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.verified_rounded,
-                                    size: 11, color: Color(0xFF34C759)),
-                                SizedBox(width: 3),
-                                Text('Verified',
-                                    style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF34C759))),
-                              ]),
-                        ),
-                      ],
-                    ]),
-                    const SizedBox(height: 5),
-                    Row(children: [
-                      ...List.generate(
-                          5,
-                          (i) => Icon(
-                                i < pro.rating.round()
-                                    ? Icons.star_rounded
-                                    : Icons.star_outline_rounded,
-                                size: 14,
-                                color: const Color(0xFFFF9F0A),
-                              )),
-                      const SizedBox(width: 5),
-                      Text(pro.rating.toStringAsFixed(1),
-                          style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textMedium,
-                              fontWeight: FontWeight.w600)),
-                    ]),
-                  ]),
-            ),
-            const Icon(Icons.chevron_right_rounded,
-                color: AppColors.textLight, size: 20),
-          ]),
-          if (_isCompleted || _isCancelled) ...[
-            const SizedBox(height: 14),
-            const Divider(height: 1),
-            const SizedBox(height: 14),
-            _BookAgainButton(
-              pro: pro,
-              isOnline: isOnline,
-              onBookAgain: onBookAgain != null ? () => onBookAgain!(pro) : null,
+          _infoRow(
+            Icons.calendar_today_rounded,
+            'Requested Date',
+            DateFormat('MMM d, yyyy').format(booking.scheduledDate),
+          ),
+          if (booking.scheduledTime != null) ...[
+            const SizedBox(height: 12),
+            _infoRow(
+              Icons.schedule_rounded,
+              'Confirmed Start',
+              DateFormat('MMM d, yyyy · h:mm a')
+                  .format(booking.scheduledTime!.toLocal()),
             ),
           ],
+          if (booking.address != null && booking.address!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _infoRow(Icons.location_on_rounded, 'Location', booking.address!),
+          ],
+          if (booking.assessmentPrice != null) ...[
+            const SizedBox(height: 12),
+            _infoRow(Icons.payments_rounded, 'Agreed Price',
+                '₱${booking.assessmentPrice!.toStringAsFixed(0)}'),
+          ],
+          if (booking.description != null &&
+              booking.description!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _infoRow(Icons.notes_rounded, 'Notes', booking.description!),
+          ],
         ]),
-      ),
-    ).animate().fadeIn(delay: 200.ms, duration: 300.ms);
-  }
+      );
 
-  void _showHandymanSheet(BuildContext context, ProfessionalEntity pro) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _HandymanProfileSheet(
-        pro: pro,
-        onViewAssessment: onViewAssessment,
-        isAccepted: _isAccepted || _isAssessment,
-        priceSet: _priceSet || _isAssessment,
-        assessmentPrice: booking.assessmentPrice,
-        onBookAgain: (_isCompleted || _isCancelled) && onBookAgain != null
-            ? () {
-                Navigator.pop(context);
-                onBookAgain!(pro);
-              }
-            : null,
-      ),
-    );
-  }
-
-  // ── Bottom Bar ─────────────────────────────────────────────────────────────
-
-  Widget? _buildBottomBar(BuildContext context) {
-    if (onCancelBooking == null && onWriteReview == null) return null;
-
-    return Container(
-      padding: EdgeInsets.fromLTRB(
-          20, 12, 20, MediaQuery.of(context).padding.bottom + 12),
-      decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: Colors.grey.shade200))),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        if (onWriteReview != null)
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.rate_review_rounded, size: 18),
-              label: const Text('Write a Review'),
-              onPressed: onWriteReview,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-                textStyle:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-              ),
-            ),
-          ),
-        if (onWriteReview != null && onCancelBooking != null)
-          const SizedBox(height: 10),
-        if (onCancelBooking != null)
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.cancel_outlined, size: 18),
-              label: const Text('Cancel Booking'),
-              onPressed: () => _confirmCancel(context),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFFFF3B30),
-                side: const BorderSide(color: Color(0xFFFF3B30)),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-                textStyle:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-              ),
-            ),
-          ),
-      ]),
-    );
-  }
-
-  void _confirmCancel(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Cancel Booking',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-        content: const Text(
-            'Are you sure you want to cancel this booking? This cannot be undone.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Keep')),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              onCancelBooking?.call();
-            },
-            style:
-                TextButton.styleFrom(foregroundColor: const Color(0xFFFF3B30)),
-            child: const Text('Yes, Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatDate(DateTime d) {
-    const months = [
-      '',
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ];
-    final h = d.hour.toString().padLeft(2, '0');
-    final m = d.minute.toString().padLeft(2, '0');
-    return '${months[d.month]} ${d.day}, ${d.year} at $h:$m';
-  }
-}
-
-// ── Book Again Button ─────────────────────────────────────────────────────────
-
-class _BookAgainButton extends StatelessWidget {
-  final ProfessionalEntity pro;
-  final bool isOnline;
-  final VoidCallback? onBookAgain;
-
-  const _BookAgainButton({
-    required this.pro,
-    required this.isOnline,
-    this.onBookAgain,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: isOnline ? onBookAgain : null,
-        icon: Icon(
-          isOnline ? Icons.repeat_rounded : Icons.wifi_off_rounded,
-          size: 17,
-        ),
-        label: Text(isOnline ? 'Book Again' : 'Currently Offline'),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isOnline ? AppColors.primary : Colors.grey.shade300,
-          foregroundColor: isOnline ? Colors.white : Colors.grey.shade500,
-          disabledBackgroundColor: Colors.grey.shade200,
-          disabledForegroundColor: Colors.grey.shade400,
-          padding: const EdgeInsets.symmetric(vertical: 13),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-          elevation: 0,
-        ),
-      ),
-    );
-  }
-}
-
-// ── Handyman Profile Bottom Sheet ─────────────────────────────────────────────
-
-class _HandymanProfileSheet extends StatelessWidget {
-  final ProfessionalEntity pro;
-  final VoidCallback? onViewAssessment;
-  final bool isAccepted;
-  final bool priceSet;
-  final double? assessmentPrice;
-  final VoidCallback? onBookAgain;
-
-  const _HandymanProfileSheet({
-    required this.pro,
-    this.onViewAssessment,
-    required this.isAccepted,
-    required this.priceSet,
-    this.assessmentPrice,
-    this.onBookAgain,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bool isOnline = pro.available;
-
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const SizedBox(height: 12),
-        Container(
-            width: 40,
-            height: 4,
+  Widget _infoRow(IconData icon, String label, String value) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
-                color: const Color(0xFFDDDDDD),
-                borderRadius: BorderRadius.circular(2))),
-        const SizedBox(height: 20),
-        Flexible(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
+              color: AppColors.primary.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 16, color: AppColors.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                _ProAvatar(name: pro.name, avatarUrl: pro.avatarUrl, size: 64),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          Flexible(
-                            child: Text(pro.name,
-                                style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w800,
-                                    color: AppColors.textDark),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                          if (pro.verified) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                  color:
-                                      const Color(0xFF34C759).withOpacity(0.12),
-                                  borderRadius: BorderRadius.circular(7)),
-                              child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.verified_rounded,
-                                        size: 12, color: Color(0xFF34C759)),
-                                    SizedBox(width: 3),
-                                    Text('Verified',
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w700,
-                                            color: Color(0xFF34C759))),
-                                  ]),
-                            ),
-                          ],
-                        ]),
-                        const SizedBox(height: 4),
-                        Row(children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: isOnline
-                                  ? const Color(0xFF34C759)
-                                  : Colors.grey.shade400,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            isOnline ? 'Online' : 'Offline',
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: isOnline
-                                    ? const Color(0xFF34C759)
-                                    : Colors.grey.shade500),
-                          ),
-                        ]),
-                        const SizedBox(height: 4),
-                        Row(children: [
-                          ...List.generate(
-                              5,
-                              (i) => Icon(
-                                    i < pro.rating.round()
-                                        ? Icons.star_rounded
-                                        : Icons.star_outline_rounded,
-                                    size: 16,
-                                    color: const Color(0xFFFF9F0A),
-                                  )),
-                          const SizedBox(width: 6),
-                          Text(
-                              '${pro.rating.toStringAsFixed(1)} · ${pro.reviewCount} reviews',
-                              style: const TextStyle(
-                                  fontSize: 13,
-                                  color: AppColors.textMedium,
-                                  fontWeight: FontWeight.w500)),
-                        ]),
-                      ]),
-                ),
-              ]),
-              const SizedBox(height: 20),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                if (pro.yearsExperience > 0)
-                  _pill(Icons.work_history_rounded,
-                      '${pro.yearsExperience} yr${pro.yearsExperience == 1 ? '' : 's'} exp'),
-                if (pro.city != null && pro.city!.isNotEmpty)
-                  _pill(Icons.location_on_rounded, pro.city!),
-                if (pro.priceMin != null)
-                  _pill(Icons.payments_rounded,
-                      'From ₱${pro.priceMin!.toStringAsFixed(0)}'),
-                if (pro.skills.isNotEmpty)
-                  ...pro.skills.map((s) => _pill(Icons.build_rounded,
-                      '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')),
-              ]),
-              if (pro.bio != null && pro.bio!.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                const Text('About',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textDark)),
-                const SizedBox(height: 6),
-                Text(pro.bio!,
-                    style: const TextStyle(
-                        fontSize: 13, color: AppColors.textLight, height: 1.5)),
-              ],
-              const SizedBox(height: 24),
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textLight)),
+              const SizedBox(height: 2),
+              Text(value,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textDark)),
             ]),
           ),
-        ),
-        Padding(
-          padding: EdgeInsets.fromLTRB(
-              24, 0, 24, MediaQuery.of(context).padding.bottom + 16),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            if (isAccepted && onViewAssessment != null) ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: Icon(
-                    priceSet
-                        ? Icons.price_check_rounded
-                        : Icons.hourglass_top_rounded,
-                    size: 18,
-                  ),
-                  label: Text(priceSet
-                      ? 'Review Price  ·  ₱${assessmentPrice!.toStringAsFixed(2)}'
-                      : 'View Assessment (Price Pending)'),
-                  onPressed: () {
-                    Navigator.pop(context);
-                    onViewAssessment?.call();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        priceSet ? AppColors.primary : const Color(0xFFFF9500),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16)),
-                    textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 15),
-                    elevation: 0,
-                  ),
-                ),
-              ),
-            ],
-            if (onBookAgain != null) ...[
-              if (isAccepted && onViewAssessment != null)
-                const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: isOnline ? onBookAgain : null,
-                  icon: Icon(
-                    isOnline ? Icons.repeat_rounded : Icons.wifi_off_rounded,
-                    size: 18,
-                  ),
-                  label: Text(isOnline ? 'Book Again' : 'Currently Offline'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        isOnline ? AppColors.primary : Colors.grey.shade300,
-                    foregroundColor:
-                        isOnline ? Colors.white : Colors.grey.shade500,
-                    disabledBackgroundColor: Colors.grey.shade200,
-                    disabledForegroundColor: Colors.grey.shade400,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16)),
-                    textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 15),
-                    elevation: 0,
-                  ),
-                ),
-              ),
-              if (!isOnline) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'This handyman is currently offline. Check back later to book them.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      fontSize: 11, color: Colors.grey.shade500, height: 1.4),
-                ),
-              ],
-            ],
-          ]),
-        ),
-      ]),
-    );
-  }
-
-  Widget _pill(IconData icon, String label) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.07),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.primary.withOpacity(0.15)),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 12, color: AppColors.primary),
-          const SizedBox(width: 5),
-          Text(label,
-              style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.primary)),
-        ]),
+        ],
       );
 }
 
-// ── Reusable avatar ───────────────────────────────────────────────────────────
+// ── Timeline Step Widget ───────────────────────────────────────────────────────
 
-class _ProAvatar extends StatelessWidget {
-  final String name;
-  final String? avatarUrl;
-  final double size;
+class _TimelineStep extends StatelessWidget {
+  final String label;
+  final bool isDone;
+  final bool isActive;
+  final bool isLast;
+  final Color activeColor;
 
-  const _ProAvatar(
-      {required this.name, required this.avatarUrl, this.size = 52});
+  const _TimelineStep({
+    required this.label,
+    required this.isDone,
+    required this.isActive,
+    required this.isLast,
+    required this.activeColor,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'H';
-    if (avatarUrl != null && avatarUrl!.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(size * 0.27),
-        child: Image.network(
-          avatarUrl!,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          loadingBuilder: (_, child, prog) =>
-              prog == null ? child : _placeholder(initial),
-          errorBuilder: (_, __, ___) => _placeholder(initial),
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(
+        width: 24,
+        child: Column(children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              color: isDone
+                  ? activeColor
+                  : isActive
+                      ? activeColor.withOpacity(0.15)
+                      : Colors.grey.shade200,
+              shape: BoxShape.circle,
+              border:
+                  isActive ? Border.all(color: activeColor, width: 2) : null,
+            ),
+            child: isDone
+                ? const Icon(Icons.check_rounded, color: Colors.white, size: 13)
+                : isActive
+                    ? Center(
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                              color: activeColor, shape: BoxShape.circle),
+                        ),
+                      )
+                    : null,
+          ),
+          if (!isLast)
+            Container(
+              width: 2,
+              height: 36,
+              color:
+                  isDone ? activeColor.withOpacity(0.4) : Colors.grey.shade200,
+            ),
+        ]),
+      ),
+      const SizedBox(width: 14),
+      Expanded(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 18),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+              color: isActive
+                  ? activeColor
+                  : isDone
+                      ? AppColors.textDark
+                      : AppColors.textLight,
+            ),
+          ),
         ),
-      );
-    }
-    return _placeholder(initial);
+      ),
+    ]);
   }
-
-  Widget _placeholder(String letter) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(size * 0.27),
-        ),
-        child: Center(
-          child: Text(letter,
-              style: TextStyle(
-                  fontSize: size * 0.4,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primary)),
-        ),
-      );
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// ── Assessment CTA ─────────────────────────────────────────────────────────────
 
-class _StepInfo {
-  final String label, sub;
-  final IconData icon;
-  const _StepInfo({required this.label, required this.sub, required this.icon});
+class AssessmentCTA extends StatelessWidget {
+  final BookingEntity booking;
+  final VoidCallback? onViewAssessment;
+
+  const AssessmentCTA({
+    super.key,
+    required this.booking,
+    this.onViewAssessment,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onViewAssessment,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF5856D6), Color(0xFF7B79E8)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: const Color(0xFF5856D6).withOpacity(0.35),
+                blurRadius: 16,
+                offset: const Offset(0, 6))
+          ],
+        ),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: const Icon(Icons.receipt_long_rounded,
+                color: Colors.white, size: 24),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Assessment Ready',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800)),
+              const SizedBox(height: 3),
+              Text(
+                booking.assessmentPrice != null
+                    ? 'Your handyman set a price of ₱${booking.assessmentPrice!.toStringAsFixed(0)}. Tap to review.'
+                    : 'Your handyman has assessed the job. Tap to review.',
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.85), fontSize: 12),
+              ),
+            ]),
+          ),
+          const Icon(Icons.arrow_forward_ios_rounded,
+              color: Colors.white, size: 16),
+        ]),
+      ),
+    );
+  }
 }

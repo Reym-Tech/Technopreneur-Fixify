@@ -1,20 +1,12 @@
 ﻿// lib/presentation/screens/customer/requestservice_customer.dart
 //
-// Changes vs previous version:
-//   • [targetProfessionalId] prop added.
-//       - When NULL  → Broadcast mode: all verified+available pros whose
-//         skills match the selected service type are collected into
-//         [RequestServiceResult.matchedPros]. main.dart creates one booking
-//         per pro so every matching handyman receives the request.
-//       - When set   → Direct mode (Book Again): only that specific pro is
-//         included in matchedPros (if they are still available), so the
-//         request goes exclusively to them.
-//   • [RequestServiceResult] now carries [matchedPros] (List<ProfessionalModel>)
-//     instead of the old single [matchedPro] field.  main.dart iterates the
-//     list to create bookings.  All other fields are unchanged.
-//   • _matchedPros getter replaces the old _matchedPro getter.
-//   • Step 4 confirm card no longer shows a matched-pro name (the list may
-//     contain multiple pros; showing one would be misleading).
+// SCHEDULING UPDATE:
+//   • RequestServiceResult now carries preferredDate (DateTime) — the
+//     customer's preferred start date/time, picked in Step 4.
+//   • Step 4 (Confirm) now shows a date/time picker card ABOVE the summary
+//     rows. The customer must pick a date and optionally a time.
+//     Defaults to now (today at current time).
+//   • The confirm-summary row now shows the selected date/time.
 
 import 'dart:async';
 import 'dart:io';
@@ -24,6 +16,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/data/models/models.dart';
 
@@ -43,10 +36,11 @@ class RequestServiceResult {
   final String? priceRange;
 
   /// All professionals that will receive this request.
-  ///
-  /// • Broadcast mode  → every verified+available pro with the matching skill.
-  /// • Direct mode     → exactly one pro (the one from Book Again).
   final List<ProfessionalModel> matchedPros;
+
+  /// Customer's preferred service date/time.
+  /// Replaces the old hardcoded DateTime.now().add(days:1) in main.dart.
+  final DateTime preferredDate;
 
   const RequestServiceResult({
     required this.serviceType,
@@ -59,6 +53,7 @@ class RequestServiceResult {
     this.photoPath,
     this.priceRange,
     required this.matchedPros,
+    required this.preferredDate,
   });
 }
 
@@ -76,15 +71,8 @@ class RequestServiceScreen extends StatefulWidget {
   final List<ProfessionalModel> professionals;
   final Function(RequestServiceResult)? onSubmit;
   final VoidCallback? onBack;
-
-  /// Pre-selects the service category and jumps straight to Step 2 (Describe).
   final String? initialServiceType;
-
-  /// Pre-fills the Problem Title field in Step 2.
   final String? initialProblemTitle;
-
-  /// When set, the request is sent ONLY to this professional (Book Again mode).
-  /// When null, all verified+available pros with the matching skill receive it.
   final String? targetProfessionalId;
 
   const RequestServiceScreen({
@@ -136,6 +124,15 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   // Step 4
   bool _submitting = false;
 
+  // ── Preferred date/time ───────────────────────────────────
+  // Defaults to right now so the customer can book for today.
+  DateTime _preferredDate = DateTime.now();
+
+  String get _formattedPreferredDate =>
+      DateFormat('EEEE, MMMM d, yyyy').format(_preferredDate);
+  String get _formattedPreferredTime =>
+      DateFormat('h:mm a').format(_preferredDate);
+
   // ── Catalogue ──────────────────────────────────────────────
   static const _catalogue = [
     {
@@ -184,7 +181,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     ],
     'Electrical': [
       _OfferDef(title: 'Wiring Repair', priceRange: '₱600 – ₱3,000'),
-      _OfferDef(title: 'Outlet Installation', priceRange: '₱400 – ₱1,500 per outlet'),
+      _OfferDef(
+          title: 'Outlet Installation', priceRange: '₱400 – ₱1,500 per outlet'),
     ],
     'Appliances': [
       _OfferDef(title: 'Washer Repair', priceRange: '₱500 – ₱3,500'),
@@ -196,13 +194,13 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     ],
     'Painting': [
       _OfferDef(title: 'Wall Painting', priceRange: '₱1,000 – ₱6,000 per room'),
-      _OfferDef(title: 'Ceiling Painting', priceRange: '₱800 – ₱4,000 per room'),
+      _OfferDef(
+          title: 'Ceiling Painting', priceRange: '₱800 – ₱4,000 per room'),
     ],
   };
-  // ── Which service types have at least one available, verified pro ──
+
   Set<String> get _availableTypes {
     if (widget.targetProfessionalId != null) {
-      // Direct mode: only enable the service type the target pro can handle.
       final target = widget.professionals
           .firstWhereOrNull((p) => p.id == widget.targetProfessionalId);
       if (target == null) return {};
@@ -210,7 +208,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           .map((s) => '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')
           .toSet();
     }
-    // Broadcast mode: any skill covered by at least one verified+available pro.
     return widget.professionals
         .where((p) => p.verified && p.available)
         .expand((p) => p.skills)
@@ -231,15 +228,11 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     if (_serviceType == null) return const [];
     return _offersForType(_serviceType!);
   }
-  // ── Collect all pros that should receive the request ──────
-  //
-  // Broadcast mode → all verified+available pros whose skills match.
-  // Direct mode    → just the target pro (if still available).
+
   List<ProfessionalModel> get _matchedPros {
     if (_serviceType == null) return [];
 
     if (widget.targetProfessionalId != null) {
-      // Direct / Book Again mode.
       final target = widget.professionals.firstWhereOrNull(
         (p) =>
             p.id == widget.targetProfessionalId &&
@@ -249,7 +242,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       return target != null ? [target] : [];
     }
 
-    // Broadcast mode: every verified+available pro with the matching skill.
     return widget.professionals
         .where((p) =>
             p.verified &&
@@ -357,6 +349,59 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       widget.onBack?.call();
     else
       setState(() => _step--);
+  }
+
+  // ── Preferred date/time picker ────────────────────────────
+  // firstDate is today so the customer can book for right now or later today.
+
+  Future<void> _pickPreferredDateTime() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _preferredDate.isBefore(today) ? today : _preferredDate,
+      firstDate: today,
+      lastDate: now.add(const Duration(days: 60)),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: ColorScheme.light(
+            primary: AppColors.primary,
+            onPrimary: Colors.white,
+            surface: Colors.white,
+            onSurface: AppColors.textDark,
+          ),
+          dialogBackgroundColor: Colors.white,
+        ),
+        child: child!,
+      ),
+    );
+    if (date == null || !mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_preferredDate),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: ColorScheme.light(
+            primary: AppColors.primary,
+            onPrimary: Colors.white,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (!mounted) return;
+
+    setState(() {
+      _preferredDate = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time?.hour ?? now.hour,
+        time?.minute ?? now.minute,
+      );
+    });
   }
 
   // ── Location permission & GPS ──────────────────────────────
@@ -613,6 +658,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       photoPath: _photoPath,
       priceRange: _priceRange,
       matchedPros: pros,
+      preferredDate: _preferredDate,
     ));
     if (mounted) setState(() => _submitting = false);
   }
@@ -778,14 +824,14 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         final color = svc['color'] as Color;
         return GestureDetector(
           onTap: isAvail
-          ? () => setState(() {
-                if (_serviceType != type) {
-                  _serviceType = type;
-                  _problemTitle = null;
-                  _priceRange = null;
-                }
-              })
-          : null,
+              ? () => setState(() {
+                    if (_serviceType != type) {
+                      _serviceType = type;
+                      _problemTitle = null;
+                      _priceRange = null;
+                    }
+                  })
+              : null,
           child: AnimatedContainer(
             duration: 200.ms,
             margin: const EdgeInsets.only(bottom: 12),
@@ -1535,6 +1581,12 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         'label': 'Service Location',
         'value': _fullAddress.isEmpty ? 'No address entered' : _fullAddress
       },
+      // ── Preferred schedule summary row ────────────────────
+      {
+        'icon': Icons.event_rounded,
+        'label': 'Preferred Schedule',
+        'value': '$_formattedPreferredDate at $_formattedPreferredTime',
+      },
       // ── Broadcast vs Direct mode summary row ──────────────
       if (widget.targetProfessionalId != null && pros.isNotEmpty)
         {
@@ -1566,9 +1618,14 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               color: AppColors.textDark,
               letterSpacing: -0.3)),
       const SizedBox(height: 4),
-      const Text('Please review the details before submitting',
+      const Text('Set your preferred schedule and review before submitting',
           style: TextStyle(fontSize: 13, color: AppColors.textLight)),
       const SizedBox(height: 24),
+
+      // ── Date/time picker card ─────────────────────────────
+      _buildDateTimePickerCard(),
+      const SizedBox(height: 16),
+
       ...rows.asMap().entries.map((e) {
         final row = e.value;
         return Container(
@@ -1682,6 +1739,112 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       const SizedBox(height: 20),
     ]).animate().fadeIn(duration: 200.ms);
   }
+
+  // ── Date/time picker card ─────────────────────────────────
+
+  Widget _buildDateTimePickerCard() => Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+                color: AppColors.primary.withOpacity(0.3),
+                blurRadius: 16,
+                offset: const Offset(0, 6))
+          ],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Icon(Icons.event_available_rounded,
+                  color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Preferred Schedule',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800)),
+                    Text('When would you like the handyman to arrive?',
+                        style: TextStyle(color: Colors.white60, fontSize: 11)),
+                  ]),
+            ),
+          ]),
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Date',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    Text(_formattedPreferredDate,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700)),
+                  ]),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Time',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 4),
+                    Text(_formattedPreferredTime,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700)),
+                  ]),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _pickPreferredDateTime,
+              icon: const Icon(Icons.edit_calendar_rounded,
+                  size: 16, color: Colors.white),
+              label: const Text('Change Date & Time',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13)),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: Colors.white.withOpacity(0.4)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+              ),
+            ),
+          ),
+        ]),
+      );
 
   // ── FOOTER ────────────────────────────────────────────────
 
@@ -1800,9 +1963,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       icon: const Icon(Icons.expand_more_rounded, color: AppColors.textLight),
       dropdownColor: Colors.white,
       style: const TextStyle(
-          fontSize: 14,
-          color: AppColors.textDark,
-          fontWeight: FontWeight.w600),
+          fontSize: 14, color: AppColors.textDark, fontWeight: FontWeight.w600),
     );
   }
 
@@ -1937,5 +2098,3 @@ class _SatellitePainter extends CustomPainter {
   @override
   bool shouldRepaint(_) => false;
 }
-
-

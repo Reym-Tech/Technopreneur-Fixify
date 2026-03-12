@@ -19,10 +19,33 @@
 //     ever one booking per request now.
 //   • _subscribeToBooking() retained for customer-side realtime status updates.
 //   • _deduped() retained as a safety net.
+//
+// SCHEDULING UPDATE PATCH (applied):
+//   • ScheduleReviewScreen imported.
+//   • BookingStatusScreen gets onReviewSchedule callback.
+//   • New 'schedule_review' case in _customerFlow().
+//   • ProBookingDetailScreen gets onProposeSchedule and onProposeReschedule.
+//   • _updateBookingInList() helper added.
+
+// ── MVC SEPARATION NOTES ──────────────────────────────────────────────────
+// MODEL  : BookingModel, UserModel, ProfessionalModel, etc. live in
+//          data/models/ and domain/entities/. Data source calls (_ds, _appDs,
+//          _notifDs) are the Model layer — they own DB interactions.
+// VIEW   : All Screen widgets under presentation/screens/ are the View layer.
+//          They receive data via constructor params and fire callbacks.
+// CONTROLLER: _MainAppState is the Controller. It:
+//             • Handles navigation (_screen, _navIndex) — request routing.
+//             • Validates pre-conditions (null guards before routing).
+//             • Orchestrates Model calls (_ds.*, _appDs.*, _notifDs.*).
+//             • Updates View state via setState().
+//             • Thin helper methods (_handleAcceptSchedule,
+//               _handleDeclineSchedule, _handleProposeSchedule,
+//               _handleProposeReschedule) keep each callback focused.
 
 import 'package:fixify/presentation/screens/admin/superadmin_analytics.dart';
 import 'package:fixify/presentation/screens/professional/earnings.dart';
 import 'package:fixify/presentation/screens/professional/pro_booking_detail_screen.dart';
+import 'package:fixify/presentation/screens/customer/schedule_review_screen.dart'; // PATCH §1
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -118,7 +141,6 @@ class _AppNavigatorState extends State<AppNavigator> {
     });
   }
 
-
   @override
   Widget build(BuildContext context) {
     if (!_initialCheckDone) {
@@ -153,7 +175,6 @@ class _AuthFlowState extends State<AuthFlow> {
       if (mounted) setState(() => _showSplash = false);
     });
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -230,14 +251,19 @@ class MainApp extends StatefulWidget {
 }
 
 class _MainAppState extends State<MainApp> {
+  // ── MODEL layer references ────────────────────────────────────────────────
+  // These data sources encapsulate all DB/API interactions (Model layer).
   late final SupabaseDataSource _ds;
   late final ApplicationDataSource _appDs;
   late final NotificationDataSource _notifDs;
 
+  // ── Controller state ──────────────────────────────────────────────────────
+  // Navigation and screen routing managed by the Controller (_MainAppState).
   DateTime? _lastBackPress;
-
   String? _preselectedServiceType;
   String? _preselectedProblemTitle;
+
+  // ── Model state (data held by Controller for View consumption) ────────────
   UserModel? _user;
   ProfessionalModel? _pro;
   List<ProfessionalModel> _professionals = [];
@@ -258,7 +284,6 @@ class _MainAppState extends State<MainApp> {
 
   final Set<String> _reviewedBookingIds = {};
   BookingModel? _selectedBooking;
-
   BookingEntity? _selectedProBooking;
 
   bool _loading = true;
@@ -268,9 +293,14 @@ class _MainAppState extends State<MainApp> {
   // Realtime channel for open booking requests (pro side).
   RealtimeChannel? _openRequestsChannel;
   RealtimeChannel? _selectedProBookingChannel;
+  RealtimeChannel? _proActiveBookingChannel;
   String? _selectedProBookingId;
 
-  // ── Deduplication helper ──────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // MODEL HELPERS — deduplication & realtime subscriptions
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Deduplication helper — safety net for list integrity (Model concern).
   List<BookingModel> _deduped(List<BookingModel> list) {
     final seen = <String>{};
     final result = <BookingModel>[];
@@ -280,7 +310,18 @@ class _MainAppState extends State<MainApp> {
     return result.reversed.toList();
   }
 
-  // ── Customer-side realtime subscription for a single booking ─────────────
+  // Replaces a booking in _bookings by id (Model state mutation).
+  // PATCH §6 — used by schedule accept/decline/propose callbacks.
+  void _updateBookingInList(BookingModel updated) {
+    final idx = _bookings.indexWhere((b) => b.id == updated.id);
+    if (idx != -1) {
+      final list = List<BookingModel>.from(_bookings);
+      list[idx] = updated;
+      _bookings = list;
+    }
+  }
+
+  // Customer-side realtime subscription for a single booking.
   // Keeps the customer's booking status in sync as the pro updates it.
   void _subscribeToBooking(BookingModel booking) {
     _ds.subscribeToBookingUpdates(
@@ -297,6 +338,7 @@ class _MainAppState extends State<MainApp> {
       },
     );
   }
+
   // Professional-side realtime subscription for a single booking (detail view).
   // Keeps the handyman's booking detail in sync as the customer confirms price.
   void _subscribeToProBooking(BookingEntity booking) {
@@ -315,9 +357,7 @@ class _MainAppState extends State<MainApp> {
         setState(() {
           final hasBooking = _bookings.any((b) => b.id == updated.id);
           final updatedList = hasBooking
-              ? _bookings
-                  .map((b) => b.id == updated.id ? updated : b)
-                  .toList()
+              ? _bookings.map((b) => b.id == updated.id ? updated : b).toList()
               : [updated, ..._bookings];
           _bookings = _deduped(updatedList);
           if (_selectedProBooking?.id == updated.id) {
@@ -328,7 +368,172 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
+  // When entering pro_booking_detail, subscribe:
+  void _subscribeToProActiveBooking(String bookingId) {
+    if (_proActiveBookingChannel != null) {
+      _ds.unsubscribeChannel(_proActiveBookingChannel!);
+      _proActiveBookingChannel = null;
+    }
+    _proActiveBookingChannel = _ds.subscribeToProfessionalActiveBooking(
+      bookingId: bookingId,
+      onUpdate: (updated) {
+        if (mounted) {
+          setState(() {
+            _selectedProBooking = updated.toEntity();
+            _updateBookingInList(updated);
+          });
+        }
+      },
+    );
+  }
 
+  // Cancel when leaving the detail screen:
+  void _unsubscribeFromProActiveBooking() {
+    if (_proActiveBookingChannel != null) {
+      _ds.unsubscribeChannel(_proActiveBookingChannel!);
+      _proActiveBookingChannel = null;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CONTROLLER — schedule action handlers (PATCH §4 & §5)
+  // Extracted into named helpers so the build methods stay thin.
+  // Each method: validates → calls Model (_ds) → updates View (setState).
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Customer accepts the professional's proposed schedule.
+  Future<void> _handleAcceptSchedule() async {
+    if (_selectedBooking == null) return;
+    try {
+      // Model: persist the acceptance decision.
+      final updated = await _ds.respondToSchedule(
+        bookingId: _selectedBooking!.id,
+        accepted: true,
+      );
+      // Model: keep local list consistent.
+      _updateBookingInList(updated);
+      // View: navigate back to booking status.
+      setState(() {
+        _selectedBooking = updated;
+        _screen = 'booking_status';
+      });
+      // Model: notify the professional.
+      final proUserId = updated.professional?.userId;
+      if (proUserId != null) {
+        await _notifDs.pushToUser(
+          targetUserId: proUserId,
+          role: 'professional',
+          type: NotificationTypeStrings.bookingAccepted,
+          title: 'Schedule Confirmed!',
+          message:
+              '${_user?.name ?? 'The customer'} has confirmed your proposed schedule.',
+          referenceId: updated.id,
+          referenceType: 'booking',
+        );
+      }
+    } catch (e) {
+      _notify('Failed to confirm schedule: $e');
+    }
+  }
+
+  /// Customer declines the professional's proposed schedule.
+  Future<void> _handleDeclineSchedule() async {
+    if (_selectedBooking == null) return;
+    try {
+      // Model: persist the decline decision.
+      final updated = await _ds.respondToSchedule(
+        bookingId: _selectedBooking!.id,
+        accepted: false,
+      );
+      // Model: keep local list consistent.
+      _updateBookingInList(updated);
+      // View: navigate back to booking status.
+      setState(() {
+        _selectedBooking = updated;
+        _screen = 'booking_status';
+      });
+      // Model: notify the professional.
+      final proUserId = updated.professional?.userId;
+      if (proUserId != null) {
+        await _notifDs.pushToUser(
+          targetUserId: proUserId,
+          role: 'professional',
+          type: NotificationTypeStrings.bookingCancelled,
+          title: 'Schedule Declined',
+          message:
+              '${_user?.name ?? 'The customer'} has declined your proposed schedule.',
+          referenceId: updated.id,
+          referenceType: 'booking',
+        );
+      }
+    } catch (e) {
+      _notify('Failed to decline schedule: $e');
+    }
+  }
+
+  /// Professional proposes an initial schedule for a booking.
+  Future<void> _handleProposeSchedule(DateTime proposedTime) async {
+    if (_selectedProBooking == null) return;
+    try {
+      // Model: persist proposed time.
+      final updated = await _ds.proposeSchedule(
+        bookingId: _selectedProBooking!.id,
+        proposedTime: proposedTime,
+      );
+      // Model: keep local lists consistent.
+      _updateBookingInList(updated);
+      // View: reflect updated booking in detail screen.
+      setState(() => _selectedProBooking = updated.toEntity());
+      // Model: notify the customer.
+      await _notifDs.pushToUser(
+        targetUserId: updated.customerId,
+        role: 'customer',
+        type: NotificationTypeStrings.bookingRequest,
+        title: 'Schedule Proposed',
+        message:
+            '${_pro?.name ?? 'Your handyman'} has proposed a start time for your ${updated.serviceType} booking.',
+        referenceId: updated.id,
+        referenceType: 'booking',
+      );
+    } catch (e) {
+      _notify('Failed to propose schedule: $e');
+    }
+  }
+
+  /// Professional proposes a reschedule with an optional reason.
+  Future<void> _handleProposeReschedule(
+      DateTime newTime, String? reason) async {
+    if (_selectedProBooking == null) return;
+    try {
+      // Model: persist reschedule proposal.
+      final updated = await _ds.proposeReschedule(
+        bookingId: _selectedProBooking!.id,
+        newProposedTime: newTime,
+        reason: reason,
+      );
+      // Model: keep local lists consistent.
+      _updateBookingInList(updated);
+      // View: reflect updated booking in detail screen.
+      setState(() => _selectedProBooking = updated.toEntity());
+      // Model: notify the customer.
+      await _notifDs.pushToUser(
+        targetUserId: updated.customerId,
+        role: 'customer',
+        type: NotificationTypeStrings.bookingRequest,
+        title: 'Reschedule Request',
+        message:
+            '${_pro?.name ?? 'Your handyman'} has requested a new time for your booking.',
+        referenceId: updated.id,
+        referenceType: 'booking',
+      );
+    } catch (e) {
+      _notify('Failed to propose reschedule: $e');
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // LIFECYCLE
+  // ══════════════════════════════════════════════════════════════════════════
 
   @override
   void initState() {
@@ -338,7 +543,6 @@ class _MainAppState extends State<MainApp> {
     _notifDs = NotificationDataSource(Supabase.instance.client);
     _init();
   }
-
 
   @override
   void dispose() {
@@ -353,6 +557,10 @@ class _MainAppState extends State<MainApp> {
     }
     super.dispose();
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CONTROLLER — initialisation (orchestrates Model fetches on startup)
+  // ══════════════════════════════════════════════════════════════════════════
 
   Future<void> _init() async {
     try {
@@ -398,7 +606,6 @@ class _MainAppState extends State<MainApp> {
               skills: _pro!.skills,
               onNewRequest: (newRequest) {
                 if (!mounted) return;
-                // Only add if not already in the list
                 if (!_openRequests.any((r) => r.id == newRequest.id)) {
                   setState(
                       () => _openRequests = [newRequest, ..._openRequests]);
@@ -414,7 +621,6 @@ class _MainAppState extends State<MainApp> {
               onNewBooking: (claimed) {
                 if (!mounted) return;
                 setState(() {
-                  // Move from open requests to assigned bookings
                   _openRequests.removeWhere((r) => r.id == claimed.id);
                   _bookings = _deduped([claimed, ..._bookings]);
                 });
@@ -495,6 +701,10 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // CONTROLLER — refresh helpers (Model re-fetch → View setState)
+  // ══════════════════════════════════════════════════════════════════════════
+
   Future<void> _refreshBookings() async {
     try {
       if (_user == null) return;
@@ -568,6 +778,7 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  // ── VIEW helper — snackbar notification ──────────────────────────────────
   void _notify(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -582,6 +793,9 @@ class _MainAppState extends State<MainApp> {
     ));
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // CONTROLLER — build / routing
+  // ══════════════════════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {
@@ -635,13 +849,17 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
+  // Route to the correct role-based flow (Controller routing decision).
   Widget _buildContent() {
     if (_user!.role == 'admin') return _adminFlow();
     if (_user!.isProfessional) return _professionalFlow();
     return _customerFlow();
   }
 
-  // ── ADMIN FLOW ────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // VIEW — ADMIN FLOW
+  // Controller selects the View (screen widget) based on _navIndex.
+  // ══════════════════════════════════════════════════════════════════════════
 
   Widget _adminFlow() {
     final u = _user!.toEntity();
@@ -755,11 +973,15 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
-  // ── PROFESSIONAL FLOW ─────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // VIEW — PROFESSIONAL FLOW
   //
   // _screen checks come FIRST, before _navIndex checks.
   // _openRequests feeds BookingRequestsScreen (unassigned pending jobs).
   // _bookings feeds history/dashboard (assigned jobs).
+  // PATCH §5: ProBookingDetailScreen now receives onProposeSchedule and
+  //           onProposeReschedule, both delegated to Controller helpers.
+  // ══════════════════════════════════════════════════════════════════════════
 
   Widget _professionalFlow() {
     final u = _user!.toEntity();
@@ -775,7 +997,8 @@ class _MainAppState extends State<MainApp> {
       return ProBookingDetailScreen(
         booking: _selectedProBooking!,
         onBack: () => setState(() => _screen = 'booking_history'),
-        onSetPrice: (price) async {
+        // Controller orchestrates: Model update → local refresh → View update.
+        onSetAssessmentPrice: (price) async {
           try {
             await _ds.updateBookingAssessmentPrice(
               bookingId: _selectedProBooking!.id,
@@ -792,27 +1015,25 @@ class _MainAppState extends State<MainApp> {
             rethrow;
           }
         },
-        onUpdateStatus: (newStatus) async {
+        onMarkComplete: () async {
           try {
-            if (newStatus == BookingStatus.inProgress) {
-              _notify('Waiting for the customer to confirm the price first.');
-              return;
-            }
-            await _ds.updateBookingStatus(_selectedProBooking!.id, newStatus);
+            await _ds.updateBookingStatus(
+                _selectedProBooking!.id, BookingStatus.completed);
             await _refreshBookings();
             final updated = _bookings
                 .firstWhereOrNull((b) => b.id == _selectedProBooking!.id);
             if (mounted && updated != null) {
               setState(() => _selectedProBooking = updated.toEntity());
             }
-            if (newStatus == BookingStatus.completed) {
-              _notify('Job marked as complete! Great work. ✅');
-            }
+            _notify('Job marked as complete! Great work. ✅');
           } catch (e) {
             _notify('Error updating status: $e');
             rethrow;
           }
         },
+        // PATCH §5 — delegate to Controller schedule helpers.
+        onProposeSchedule: _handleProposeSchedule,
+        onProposeReschedule: _handleProposeReschedule,
       );
     }
 
@@ -967,17 +1188,14 @@ class _MainAppState extends State<MainApp> {
               professionalId: _pro!.id,
             );
             setState(() {
-              // Remove from open requests and add to assigned bookings
               _openRequests.removeWhere((r) => r.id == claimed.id);
               _bookings = _deduped([claimed, ..._bookings]);
-              // Jump straight to the booking detail for the accepted job
               _selectedProBooking = claimed.toEntity();
               _screen = 'pro_booking_detail';
             });
             _subscribeToProBooking(_selectedProBooking!);
             _notify('Booking accepted! Customer has been notified. ✅');
           } on BookingAlreadyClaimedException catch (e) {
-            // Remove the stale entry from the local list so the UI updates
             setState(
                 () => _openRequests.removeWhere((r) => r.id == booking.id));
             _notify(e.message);
@@ -1150,7 +1368,13 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
-  // ── CUSTOMER FLOW ─────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // VIEW — CUSTOMER FLOW
+  //
+  // PATCH §3: 'booking_status' case adds onReviewSchedule callback.
+  // PATCH §4: new 'schedule_review' case renders ScheduleReviewScreen;
+  //           accept/decline are delegated to Controller helpers.
+  // ══════════════════════════════════════════════════════════════════════════
 
   Widget _customerFlow() {
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
@@ -1234,11 +1458,12 @@ class _MainAppState extends State<MainApp> {
                       .reduce((a, b) => a < b ? a : b)
                   : null;
 
+              // Model: create booking (single, no professional yet).
               final booking = await _ds.createBooking(
                 customerId: _user!.id,
                 professionalId: null,
                 serviceType: result.serviceType,
-                scheduledDate: DateTime.now().add(const Duration(days: 1)),
+                scheduledDate: result.preferredDate,
                 notes: notesText,
                 address: result.address,
                 priceEstimate: lowestPrice,
@@ -1249,21 +1474,16 @@ class _MainAppState extends State<MainApp> {
               _subscribeToBooking(booking);
               await _refreshBookings();
 
-              // ── ADD THIS BLOCK ─────────────────────────────────────────
-              // Insert a notification row for every matched professional.
-              // Their bell badge and notifications screen update in real time
-              // via subscribeToNotifications() which listens to INSERT events.
+              // Model: notify every matched professional.
               final priceSnippet =
-                  (result.priceRange != null &&
-                          result.priceRange!.isNotEmpty)
+                  (result.priceRange != null && result.priceRange!.isNotEmpty)
                       ? ' Estimated range: ${result.priceRange}.'
                       : '';
 
               for (final pro in result.matchedPros) {
                 try {
                   await _notifDs.pushToUser(
-                    targetUserId:
-                        pro.userId, // professionals.user_id FK → users.id
+                    targetUserId: pro.userId,
                     role: 'professional',
                     type: NotificationTypeStrings.bookingRequest,
                     title: 'New Booking Request',
@@ -1273,17 +1493,15 @@ class _MainAppState extends State<MainApp> {
                     referenceType: 'booking',
                   );
                 } catch (e) {
-                  // Log but do not rethrow — a notification failure must never
-                  // block the booking from being created successfully.
                   debugPrint('[Notify] Could not notify pro ${pro.id}: $e');
                 }
               }
-              // ── END BLOCK ──────────────────────────────────────────────
 
               final created =
                   _bookings.firstWhereOrNull((b) => b.id == booking.id) ??
                       booking;
 
+              // View: navigate to booking status.
               if (mounted) {
                 setState(() {
                   _selectedBooking = created;
@@ -1321,52 +1539,66 @@ class _MainAppState extends State<MainApp> {
           onConfirmBooking: _createBooking,
         );
 
+      // booking_status — BookingStatusScreen only exposes 4 params:
+      //   booking, onBack, onViewAssessment, onReviewSchedule.
+      // Review, cancel, and rebook are handled internally by the widget.
       case 'booking_status':
         if (_selectedBooking == null) return _home();
         return BookingStatusScreen(
           booking: _selectedBooking!.toEntity(),
           onBack: () => setState(() => _screen = 'home'),
-          onViewAssessment:
-              (_selectedBooking!.status == BookingStatus.accepted ||
-                      _selectedBooking!.status == BookingStatus.assessment)
-                  ? () => setState(() => _screen = 'assessment')
-                  : null,
-          onWriteReview: _selectedBooking!.status == BookingStatus.completed &&
-                  !_reviewedBookingIds.contains(_selectedBooking!.id)
-              ? () => setState(() => _screen = 'review')
+          // Controller: only pass assessment CTA when status == assessment
+          // (the widget itself only renders AssessmentCTA for that status).
+          onViewAssessment: _selectedBooking!.status == BookingStatus.assessment
+              ? () => setState(() => _screen = 'assessment')
               : null,
-          onCancelBooking: (_selectedBooking!.status == BookingStatus.pending ||
-                  _selectedBooking!.status == BookingStatus.accepted)
-              ? () async {
-                  try {
-                    await _ds.updateBookingStatus(
-                        _selectedBooking!.id, BookingStatus.cancelled);
-                    await _refreshBookings();
-                    final updated = _bookings.firstWhere(
-                        (b) => b.id == _selectedBooking!.id,
-                        orElse: () => _selectedBooking!);
-                    setState(() => _selectedBooking = updated);
-                  } catch (e) {
-                    _notify('Error: $e');
-                  }
-                }
-              : null,
-          onBookAgain: (_selectedBooking!.status == BookingStatus.completed ||
-                  _selectedBooking!.status == BookingStatus.cancelled)
-              ? (pro) {
-                  final liveModel =
-                      _professionals.firstWhereOrNull((p) => p.id == pro.id);
-                  if (liveModel == null || !liveModel.available) {
-                    _notify('This handyman is currently offline.');
-                    return;
-                  }
-                  setState(() {
-                    _selectedPro = liveModel;
-                    _preselectedServiceType = _selectedBooking!.serviceType;
-                    _screen = 'request_service';
-                  });
-                }
-              : null,
+          // PATCH §3 — navigate to schedule review screen when pro proposes.
+          onReviewSchedule: () => setState(() => _screen = 'schedule_review'),
+        );
+
+      // PATCH §4 — NEW case: customer reviews the proposed schedule and
+      // either confirms or declines. Logic is in Controller helpers above.
+      case 'schedule_review':
+        if (_selectedBooking == null) return _home();
+        return ScheduleReviewScreen(
+          booking: _selectedBooking!.toEntity(),
+          onBack: () => setState(() => _screen = 'booking_status'),
+          onAccept: _handleAcceptSchedule,
+          onDecline: _handleDeclineSchedule,
+          // ✅ Wire the customer counter-proposal to the same DS method the pro uses
+          onProposeAlternative: (DateTime newTime) async {
+            if (_selectedBooking == null) return;
+            try {
+              final updated = await _ds.proposeReschedule(
+                bookingId: _selectedBooking!.id,
+                newProposedTime: newTime,
+                reason:
+                    null, // customer counter-proposals carry no reason field
+              );
+              _updateBookingInList(updated);
+              setState(() {
+                _selectedBooking = updated;
+                _screen = 'booking_status';
+              });
+              // Notify the professional that the customer suggested a different time
+              final proUserId = updated.professional?.userId;
+              if (proUserId != null) {
+                await _notifDs.pushToUser(
+                  targetUserId: proUserId,
+                  role: 'professional',
+                  type: NotificationTypeStrings.bookingRequest,
+                  title: 'Customer Suggested a New Time',
+                  message:
+                      '${_user?.name ?? 'The customer'} has proposed a different '
+                      'start time for the ${updated.serviceType} booking.',
+                  referenceId: updated.id,
+                  referenceType: 'booking',
+                );
+              }
+            } catch (e) {
+              _notify('Failed to send your suggestion: $e');
+            }
+          },
         );
 
       case 'assessment':
@@ -1469,6 +1701,7 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  // ── VIEW — customer dashboard (default screen) ────────────────────────────
   Widget _home() => CustomerDashboardScreen(
         user: _user?.toEntity(),
         professionals: _professionals.map((p) => p.toEntity()).toList(),
@@ -1544,6 +1777,10 @@ class _MainAppState extends State<MainApp> {
         onNotificationsViewed: () => setState(() => _unreadNotifCount = 0),
       );
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // CONTROLLER — booking creation & review submission
+  // ══════════════════════════════════════════════════════════════════════════
+
   // Direct booking (from professional profile → Book Now flow).
   // professionalId is required here since the customer explicitly chose a pro.
   Future<void> _createBooking(
@@ -1551,9 +1788,10 @@ class _MainAppState extends State<MainApp> {
       {double? latitude, double? longitude}) async {
     if (_user == null || _selectedPro == null) return;
     try {
+      // Model: persist the booking.
       final booking = await _ds.createBooking(
         customerId: _user!.id,
-        professionalId: _selectedPro!.id, // direct booking — pro is known
+        professionalId: _selectedPro!.id,
         serviceType: serviceType,
         scheduledDate: date,
         notes: notes,
@@ -1565,6 +1803,7 @@ class _MainAppState extends State<MainApp> {
       await _refreshBookings();
       final refreshed =
           _bookings.firstWhereOrNull((b) => b.id == booking.id) ?? booking;
+      // View: navigate to booking status.
       setState(() {
         _selectedBooking = refreshed;
         _screen = 'booking_status';
@@ -1580,6 +1819,7 @@ class _MainAppState extends State<MainApp> {
   Future<void> _submitReview(int rating, String? comment) async {
     if (_user == null || _selectedBooking == null) return;
     try {
+      // Model: persist the review.
       await _ds.createReview(
         bookingId: _selectedBooking!.id,
         customerId: _user!.id,
@@ -1587,6 +1827,7 @@ class _MainAppState extends State<MainApp> {
         rating: rating,
         comment: comment,
       );
+      // View: mark as reviewed and return home.
       setState(() {
         _reviewedBookingIds.add(_selectedBooking!.id);
         _screen = 'home';
@@ -1627,9 +1868,3 @@ extension IterableExtension<T> on Iterable<T> {
     return null;
   }
 }
-
-
-
-
-
-

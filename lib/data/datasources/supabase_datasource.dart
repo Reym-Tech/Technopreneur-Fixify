@@ -1,28 +1,16 @@
 // lib/data/datasources/supabase_datasource.dart
 //
-// OPEN-BOOKING MODEL (replaces broadcast-per-pro model):
+// SCHEDULING UPDATE:
+//   proposeSchedule()    — Handyman sets a start date/time after accepting.
+//                          Sets status = 'schedule_proposed' and writes
+//                          scheduled_time to the bookings row.
+//   respondToSchedule()  — Customer accepts (→ 'scheduled') or rejects
+//                          (→ 'cancelled') the proposed schedule.
+//   proposeReschedule()  — Handyman is running late and proposes a new time.
+//                          Sets status = 'schedule_proposed' again and writes
+//                          the new scheduled_time + reschedule_reason.
 //
-//   OLD: createBooking() was called once per matched pro → N bookings created,
-//        all pending, causing duplicate entries on the customer side.
-//
-//   NEW: createBooking() creates ONE booking with professional_id = NULL.
-//        All pros whose skills match the service_type see it as an open
-//        request via getOpenBookingRequests() / subscribeToOpenBookingRequests().
-//        The first pro to tap Accept calls claimBooking(), which atomically sets
-//        professional_id = their id and status = 'accepted' only if the booking
-//        is still unassigned (professional_id IS NULL). Any concurrent claim
-//        attempt by another pro will find professional_id already set and fail
-//        gracefully with BookingAlreadyClaimedException.
-//
-// CHANGED public signatures:
-//   createBooking()                  — professionalId is now optional (nullable)
-//   claimBooking()                   — NEW: atomically assigns a pro to a booking
-//   getOpenBookingRequests()         — NEW: fetches unassigned pending bookings by skill
-//   subscribeToOpenBookingRequests() — NEW: realtime feed of open requests for a pro
-//
-// UNCHANGED signatures:
-//   getProfessionalBookings(), updateBookingStatus(), confirmAssessment(),
-//   updateBookingAssessmentPrice(), subscribeToBookingUpdates(), and all others.
+// All other public methods are unchanged.
 
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -67,7 +55,6 @@ class SupabaseDataSource {
           'available': true,
           'years_experience': 0,
         });
-        debugPrint('✅ professionals row created for new user ${res.user!.id}');
       } catch (e) {
         debugPrint('⚠️ Could not create professionals row during signUp: $e');
       }
@@ -101,14 +88,12 @@ class SupabaseDataSource {
 
   Future<UserModel?> getCurrentUser() async {
     final user = _client.auth.currentUser;
-    debugPrint('🔑 Auth UID: ${user?.id}');
     if (user == null) return null;
     final data = await _client
         .from(AppConfig.usersTable)
         .select()
         .eq('id', user.id)
         .single();
-    debugPrint('👤 User row: $data');
     return UserModel.fromJson(data);
   }
 
@@ -176,7 +161,6 @@ class SupabaseDataSource {
         longitude: (data['longitude'] as num?)?.toDouble(),
       );
     } catch (e) {
-      debugPrint('[getProfessionalLocation] error: $e');
       return (latitude: null, longitude: null);
     }
   }
@@ -237,10 +221,7 @@ class SupabaseDataSource {
           table: AppConfig.professionalsTable,
           callback: (payload) {
             final id = payload.newRecord['id']?.toString();
-            if (id != null && id.isNotEmpty) {
-              debugPrint('[Realtime] professionals row updated: $id');
-              onUpdate(id);
-            }
+            if (id != null && id.isNotEmpty) onUpdate(id);
           },
         )
         .subscribe();
@@ -249,7 +230,7 @@ class SupabaseDataSource {
   RealtimeChannel subscribeToReviewsInserts({
     required void Function(Map<String, dynamic> payload) onInsert,
   }) {
-    final channel = _client
+    return _client
         .channel('reviews_inserts_${DateTime.now().millisecondsSinceEpoch}')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
@@ -258,22 +239,13 @@ class SupabaseDataSource {
           callback: (payload) => onInsert(payload.newRecord),
         )
         .subscribe();
-    return channel;
   }
 
   // ── BOOKINGS ──────────────────────────────────────────────
 
-  /// Creates a single booking for a service request.
-  ///
-  /// NEW MODEL: [professionalId] is now nullable. When null, the booking is
-  /// "open" — visible to all matching professionals as an available request.
-  /// The first pro to call [claimBooking] will be assigned to it.
-  ///
-  /// The old broadcast model (one booking per pro) is fully removed.
-  /// This method is called exactly once per customer service request.
   Future<BookingModel> createBooking({
     required String customerId,
-    String? professionalId, // nullable — null = open/unassigned
+    String? professionalId,
     required String serviceType,
     required DateTime scheduledDate,
     String? description,
@@ -297,13 +269,11 @@ class SupabaseDataSource {
       if (longitude != null) 'longitude': longitude,
     };
     try {
-      debugPrint('[Supabase] createBooking payload: $payload');
       final data = await _client
           .from(AppConfig.bookingsTable)
           .insert(payload)
           .select()
           .single();
-      debugPrint('[Supabase] createBooking result: $data');
       return BookingModel.fromJson(data);
     } catch (e, st) {
       debugPrint('[Supabase] createBooking error: $e\n$st');
@@ -311,14 +281,6 @@ class SupabaseDataSource {
     }
   }
 
-  /// Atomically claims an open booking for a professional (first-accept-wins).
-  ///
-  /// Sets professional_id = [professionalId] and status = 'accepted' only
-  /// if the booking is still unassigned (professional_id IS NULL AND
-  /// status = 'pending').
-  ///
-  /// Throws [BookingAlreadyClaimedException] if another pro already accepted.
-  /// Returns the updated [BookingModel] with full joins on success.
   Future<BookingModel> claimBooking({
     required String bookingId,
     required String professionalId,
@@ -326,7 +288,6 @@ class SupabaseDataSource {
     debugPrint(
         '[Supabase] claimBooking: booking=$bookingId pro=$professionalId');
 
-    // Pre-check: verify the booking is still open before attempting the update.
     final current = await _client
         .from(AppConfig.bookingsTable)
         .select('professional_id, status')
@@ -342,9 +303,6 @@ class SupabaseDataSource {
           'This request is no longer available.');
     }
 
-    // Atomically assign this pro and advance status to 'accepted'.
-    // The double filter (.eq status + .isFilter professional_id null) ensures
-    // that if two pros submit at the exact same millisecond, only one wins.
     await _client
         .from(AppConfig.bookingsTable)
         .update({
@@ -355,17 +313,9 @@ class SupabaseDataSource {
         .eq('status', 'pending')
         .isFilter('professional_id', null);
 
-    // Re-fetch with full joins for a complete BookingModel.
     final data = await _client
         .from(AppConfig.bookingsTable)
-        .select(
-          '*, '
-          'users!customer_id(id, name, avatar_url, phone), '
-          'professionals!professional_id(id, user_id, skills, verified, '
-          'rating, review_count, price_range, price_min, price_max, city, '
-          'bio, years_experience, available, latitude, longitude, '
-          'users(id, name, avatar_url, phone))',
-        )
+        .select(_fullBookingSelect)
         .eq('id', bookingId)
         .single();
 
@@ -373,23 +323,97 @@ class SupabaseDataSource {
     return BookingModel.fromJson(data);
   }
 
-  /// Fetches all open (unassigned, pending) bookings whose service_type
-  /// matches one of the professional's [skills].
-  ///
-  /// Called on init and pull-to-refresh for the pro's Booking Requests screen.
+  // ── SCHEDULING ────────────────────────────────────────────
+
+  /// Called by the handyman after accepting a booking.
+  /// Sets status = 'schedule_proposed' and stores the proposed start time.
+  /// The customer will see a CTA to review the proposed schedule.
+  Future<BookingModel> proposeSchedule({
+    required String bookingId,
+    required DateTime proposedTime,
+  }) async {
+    debugPrint('[Supabase] proposeSchedule: id=$bookingId time=$proposedTime');
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': 'schedule_proposed',
+      'scheduled_time': proposedTime.toUtc().toIso8601String(),
+      'reschedule_reason': null, // clear any previous reason
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] proposeSchedule: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  /// Called when the customer responds to a proposed schedule.
+  /// [accepted] = true  → status becomes 'scheduled'
+  /// [accepted] = false → status becomes 'cancelled'
+  Future<BookingModel> respondToSchedule({
+    required String bookingId,
+    required bool accepted,
+  }) async {
+    final newStatus = accepted ? 'scheduled' : 'cancelled';
+    debugPrint(
+        '[Supabase] respondToSchedule: id=$bookingId accepted=$accepted');
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': newStatus,
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] respondToSchedule: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  /// Called when the handyman needs to reschedule (running late, prior job
+  /// still in progress, etc.). Sets status back to 'schedule_proposed' with
+  /// the new proposed time and an optional reason.
+  Future<BookingModel> proposeReschedule({
+    required String bookingId,
+    required DateTime newProposedTime,
+    String? reason,
+  }) async {
+    debugPrint(
+        '[Supabase] proposeReschedule: id=$bookingId time=$newProposedTime reason=$reason');
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': 'schedule_proposed',
+      'scheduled_time': newProposedTime.toUtc().toIso8601String(),
+      'reschedule_reason': reason,
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] proposeReschedule: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  // ── Shared join string ─────────────────────────────────────
+  static const String _fullBookingSelect = '*, '
+      'users!customer_id(id, name, avatar_url, phone), '
+      'professionals!professional_id(id, user_id, skills, verified, '
+      'rating, review_count, price_range, price_min, price_max, city, '
+      'bio, years_experience, available, latitude, longitude, '
+      'users(id, name, avatar_url, phone))';
+
+  // ── BOOKING QUERIES ───────────────────────────────────────
+
   Future<List<BookingModel>> getOpenBookingRequests({
     required List<String> skills,
   }) async {
     if (skills.isEmpty) return [];
 
-    // Fetch all open bookings, then filter by skill in Dart.
-    // This keeps the query simple and avoids needing a DB function at MVP scale.
     final response = await _client
         .from(AppConfig.bookingsTable)
-        .select(
-          '*, '
-          'users!customer_id(id, name, avatar_url, phone)',
-        )
+        .select('*, users!customer_id(id, name, avatar_url, phone)')
         .eq('status', 'pending')
         .isFilter('professional_id', null)
         .order('created_at', ascending: false);
@@ -417,20 +441,11 @@ class SupabaseDataSource {
         .toList();
   }
 
-  /// Returns bookings assigned to [professionalId] (claimed/active/history).
-  /// Open/unassigned bookings are fetched separately via [getOpenBookingRequests].
   Future<List<BookingModel>> getProfessionalBookings(
       String professionalId) async {
     final response = await _client
         .from(AppConfig.bookingsTable)
-        .select(
-          '*, '
-          'users!customer_id(id, name, avatar_url, phone), '
-          'professionals!professional_id(id, user_id, skills, verified, rating, '
-          'review_count, price_range, price_min, price_max, city, bio, '
-          'years_experience, available, latitude, longitude, '
-          'users(id, name, avatar_url, phone))',
-        )
+        .select(_fullBookingSelect)
         .eq('professional_id', professionalId)
         .order('created_at', ascending: false);
 
@@ -488,19 +503,9 @@ class SupabaseDataSource {
             try {
               final data = await _client
                   .from(AppConfig.bookingsTable)
-                  .select(
-                    '*, '
-                    'users!customer_id(id, name, avatar_url, phone), '
-                    'professionals!professional_id(id, user_id, skills, verified, '
-                    'rating, review_count, price_range, price_min, price_max, city, '
-                    'bio, years_experience, available, latitude, longitude, '
-                    'users(id, name, avatar_url, phone))',
-                  )
+                  .select(_fullBookingSelect)
                   .eq('id', bookingId)
                   .single();
-              debugPrint('[Realtime] booking $bookingId updated → '
-                  'status: ${data['status']}, '
-                  'assessment_price: ${data['assessment_price']}');
               onUpdate(BookingModel.fromJson(data));
             } catch (e) {
               debugPrint(
@@ -512,11 +517,6 @@ class SupabaseDataSource {
         .subscribe();
   }
 
-  /// Listens for new open bookings that match the pro's [skills].
-  ///
-  /// Supabase Realtime does not support IS NULL column filters, so we
-  /// subscribe to ALL inserts and filter in the callback. The channel name
-  /// is timestamped to avoid collision when multiple pros are online.
   RealtimeChannel subscribeToOpenBookingRequests({
     required List<String> skills,
     required Function(BookingModel) onNewRequest,
@@ -531,7 +531,6 @@ class SupabaseDataSource {
           table: AppConfig.bookingsTable,
           callback: (payload) async {
             final record = payload.newRecord;
-            // Skip if already assigned to someone
             if (record['professional_id'] != null) return;
             final serviceType =
                 (record['service_type'] as String?)?.toLowerCase() ?? '';
@@ -553,8 +552,6 @@ class SupabaseDataSource {
         .subscribe();
   }
 
-  /// Kept for backward compatibility. In the new model this fires when a
-  /// booking is claimed by this pro (professional_id set via claimBooking).
   RealtimeChannel subscribeToProfessionalBookings({
     required String professionalId,
     required Function(BookingModel) onNewBooking,
@@ -573,19 +570,11 @@ class SupabaseDataSource {
           callback: (payload) async {
             final newStatus = payload.newRecord['status'] as String?;
             final oldProId = payload.oldRecord['professional_id'] as String?;
-            // Only fire for the initial claim transition (null → accepted)
             if (newStatus == 'accepted' && oldProId == null) {
               try {
                 final data = await _client
                     .from(AppConfig.bookingsTable)
-                    .select(
-                      '*, '
-                      'users!customer_id(id, name, avatar_url, phone), '
-                      'professionals!professional_id(id, user_id, skills, verified, '
-                      'rating, review_count, price_range, price_min, price_max, city, '
-                      'bio, years_experience, available, latitude, longitude, '
-                      'users(id, name, avatar_url, phone))',
-                    )
+                    .select(_fullBookingSelect)
                     .eq('id', payload.newRecord['id'])
                     .single();
                 onNewBooking(BookingModel.fromJson(data));
@@ -601,6 +590,40 @@ class SupabaseDataSource {
 
   void unsubscribeChannel(RealtimeChannel channel) =>
       _client.removeChannel(channel);
+
+  /// Listens for ANY update to a specific booking the pro is working on.
+  /// Use this on ProBookingDetailScreen so status changes (e.g. customer
+  /// confirms schedule) reflect immediately without a hot restart.
+  RealtimeChannel subscribeToProfessionalActiveBooking({
+    required String bookingId,
+    required Function(BookingModel) onUpdate,
+  }) {
+    return _client
+        .channel('pro_active_booking_$bookingId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: AppConfig.bookingsTable,
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'id',
+            value: bookingId,
+          ),
+          callback: (payload) async {
+            try {
+              final data = await _client
+                  .from(AppConfig.bookingsTable)
+                  .select(_fullBookingSelect)
+                  .eq('id', bookingId)
+                  .single();
+              onUpdate(BookingModel.fromJson(data));
+            } catch (e) {
+              debugPrint('[Realtime] pro active booking re-fetch failed: $e');
+            }
+          },
+        )
+        .subscribe();
+  }
 
   // ── REVIEWS ───────────────────────────────────────────────
 
@@ -643,9 +666,6 @@ class SupabaseDataSource {
         })
         .select('*, users!customer_id(name, avatar_url)')
         .single();
-
-    debugPrint('[Review] Inserted review for professional $professionalId — '
-        'DB trigger will update rating and review_count.');
 
     return ReviewModel.fromJson(data);
   }
@@ -699,9 +719,7 @@ class SupabaseDataSource {
     if (phone != null) updates['phone'] = phone;
     if (avatarUrl != null) updates['avatar_url'] = avatarUrl;
 
-    if (updates.isEmpty) {
-      return (await getCurrentUser())!;
-    }
+    if (updates.isEmpty) return (await getCurrentUser())!;
 
     await _client.from(AppConfig.usersTable).update(updates).eq('id', userId);
 
@@ -735,8 +753,6 @@ class SupabaseDataSource {
 
 // ── Custom Exceptions ─────────────────────────────────────
 
-/// Thrown by [claimBooking] when the booking was already accepted by
-/// another professional before this claim was processed.
 class BookingAlreadyClaimedException implements Exception {
   final String message;
   const BookingAlreadyClaimedException(this.message);

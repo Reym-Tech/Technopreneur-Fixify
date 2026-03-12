@@ -1,18 +1,10 @@
 // lib/presentation/screens/professional/booking_history_professional.dart
 //
-// BookingHistoryScreen — Professional's booking history.
+// SCHEDULING UPDATE:
+//   • _filter('Ongoing') now includes scheduleProposed and scheduled statuses.
+//   • _statusColor and _statusLabel handle the two new statuses.
 //
-// Tabs: All / Ongoing / Completed / Cancelled
-// Cards are now TAPPABLE → opens ProBookingDetailScreen via onViewDetail.
-//
-// Props:
-//   bookings        → List<BookingEntity>
-//   onUpdateStatus  → Function(BookingEntity, BookingStatus)?
-//   onViewDetail    → Function(BookingEntity)?   ← NEW: tap card to view detail
-//   onBack          → VoidCallback?
-//   onNavTap        → Function(int)?
-//   currentNavIndex → int
-//   onRefresh       → Future<void> Function()?
+// No structural changes — only additions.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -59,7 +51,6 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
     super.dispose();
   }
 
-  // History = everything that is NOT pending
   List<BookingEntity> get _history =>
       widget.bookings.where((b) => b.status != BookingStatus.pending).toList();
 
@@ -69,7 +60,9 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
         return _history
             .where((b) =>
                 b.status == BookingStatus.accepted ||
-                b.status == BookingStatus.assessment || // ← ADD
+                b.status == BookingStatus.scheduleProposed || // NEW
+                b.status == BookingStatus.scheduled || // NEW
+                b.status == BookingStatus.assessment ||
                 b.status == BookingStatus.inProgress)
             .toList();
       case 'Completed':
@@ -214,8 +207,7 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
           onTap: widget.onViewDetail != null
               ? () => widget.onViewDetail!(list[i])
               : null,
-          onMarkComplete: list[i].status ==
-                  BookingStatus.inProgress // ← only inProgress
+          onMarkComplete: list[i].status == BookingStatus.inProgress
               ? () =>
                   widget.onUpdateStatus?.call(list[i], BookingStatus.completed)
               : null,
@@ -311,13 +303,12 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
   }
 }
 
-// ── History Card ──────────────────────────────────────────────────────────────
+// ── History Card ───────────────────────────────────────────────────────────────
 
 class _HistoryCard extends StatelessWidget {
   final BookingEntity booking;
   final VoidCallback? onTap;
-  final VoidCallback?
-      onMarkComplete; // onMarkInProgress removed — Start Job is now gated behind customer confirmation
+  final VoidCallback? onMarkComplete;
 
   const _HistoryCard({
     required this.booking,
@@ -329,8 +320,7 @@ class _HistoryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = _statusColor(booking.status);
     final label = _statusLabel(booking.status);
-    final bool isActionable =
-        onMarkComplete != null; // ← remove onMarkInProgress
+    final bool isActionable = onMarkComplete != null;
 
     return GestureDetector(
       onTap: onTap,
@@ -393,7 +383,6 @@ class _HistoryCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                         color: color)),
               ),
-              // Chevron hint for tappable cards
               if (onTap != null) ...[
                 const SizedBox(width: 6),
                 Icon(Icons.chevron_right_rounded,
@@ -401,8 +390,6 @@ class _HistoryCard extends StatelessWidget {
               ],
             ]),
           ),
-
-          // Footer
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: const BoxDecoration(
@@ -468,8 +455,12 @@ class _HistoryCard extends StatelessWidget {
     switch (s) {
       case BookingStatus.accepted:
         return const Color(0xFF007AFF);
-      case BookingStatus.assessment: // ← ADD
-        return const Color(0xFFFF9500); // ← ADD
+      case BookingStatus.scheduleProposed: // NEW
+        return const Color(0xFFFF9500);
+      case BookingStatus.scheduled: // NEW
+        return const Color(0xFF007AFF);
+      case BookingStatus.assessment:
+        return const Color(0xFFFF9500);
       case BookingStatus.inProgress:
         return const Color(0xFF5856D6);
       case BookingStatus.completed:
@@ -485,8 +476,12 @@ class _HistoryCard extends StatelessWidget {
     switch (s) {
       case BookingStatus.accepted:
         return 'Accepted';
-      case BookingStatus.assessment: // ← ADD
-        return 'Awaiting Confirm'; // ← ADD
+      case BookingStatus.scheduleProposed: // NEW
+        return 'Sched. Sent';
+      case BookingStatus.scheduled: // NEW
+        return 'Scheduled';
+      case BookingStatus.assessment:
+        return 'Awaiting Confirm';
       case BookingStatus.inProgress:
         return 'In Progress';
       case BookingStatus.completed:

@@ -13,6 +13,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:intl/intl.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 
@@ -418,7 +419,7 @@ class _RequestCard extends StatelessWidget {
                             color: AppColors.textDark)),
                     const SizedBox(height: 2),
                     Text(
-                      'Requested ${_timeAgo(booking.scheduledDate)}',
+                      'Requested ${_timeAgo(booking.createdAt)}',
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.textLight),
                     ),
@@ -448,8 +449,12 @@ class _RequestCard extends StatelessWidget {
                         booking.address!),
                   if (booking.notes != null && booking.notes!.isNotEmpty)
                     _detailRow(Icons.notes_rounded, 'Notes', booking.notes!),
-                  _detailRow(Icons.calendar_today_outlined, 'Scheduled',
-                      '${booking.scheduledDate.day}/${booking.scheduledDate.month}/${booking.scheduledDate.year}'),
+                  // Show date + time; falls back to date-only if time is midnight
+                  _detailRow(
+                    Icons.calendar_today_outlined,
+                    'Preferred Schedule',
+                    _formatSchedule(booking.scheduledDate),
+                  ),
                   if (booking.priceEstimate != null)
                     _detailRow(Icons.payments_outlined, 'Estimated Rate',
                         '₱${booking.priceEstimate!.toStringAsFixed(0)}/hr'),
@@ -558,6 +563,17 @@ class _RequestCard extends StatelessWidget {
           ]),
         ]),
       );
+
+  /// Formats the customer's preferred schedule as date + time.
+  /// If the time is exactly midnight (00:00) it shows date only, since older
+  /// bookings may not carry a meaningful time component.
+  String _formatSchedule(DateTime dt) {
+    final local = dt.toLocal();
+    final datePart = DateFormat('MMM d, yyyy').format(local);
+    if (local.hour == 0 && local.minute == 0) return datePart;
+    final timePart = DateFormat('h:mm a').format(local);
+    return '$datePart · $timePart';
+  }
 
   String _timeAgo(DateTime dt) {
     final diff = DateTime.now().difference(dt).abs();
