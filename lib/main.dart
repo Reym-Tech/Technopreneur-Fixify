@@ -1,4 +1,4 @@
-// lib/main.dart
+﻿// lib/main.dart
 //
 // OPEN-BOOKING MODEL:
 //   Customer creates ONE booking with no professional assigned.
@@ -1222,6 +1222,8 @@ class _MainAppState extends State<MainApp> {
             try {
               final notesText = [
                 result.problemTitle,
+                if (result.priceRange != null && result.priceRange!.isNotEmpty)
+                  'Price Range: ${result.priceRange}',
                 if (result.description.isNotEmpty) result.description,
                 if (result.notes != null) result.notes!,
               ].join('\n');
@@ -1251,6 +1253,12 @@ class _MainAppState extends State<MainApp> {
               // Insert a notification row for every matched professional.
               // Their bell badge and notifications screen update in real time
               // via subscribeToNotifications() which listens to INSERT events.
+              final priceSnippet =
+                  (result.priceRange != null &&
+                          result.priceRange!.isNotEmpty)
+                      ? ' Estimated range: ${result.priceRange}.'
+                      : '';
+
               for (final pro in result.matchedPros) {
                 try {
                   await _notifDs.pushToUser(
@@ -1260,7 +1268,7 @@ class _MainAppState extends State<MainApp> {
                     type: NotificationTypeStrings.bookingRequest,
                     title: 'New Booking Request',
                     message: 'A customer needs ${result.serviceType} service'
-                        ' near ${result.address.split(',').first}.',
+                        ' near ${result.address.split(',').first}.$priceSnippet',
                     referenceId: booking.id,
                     referenceType: 'booking',
                   );
@@ -1619,6 +1627,7 @@ extension IterableExtension<T> on Iterable<T> {
     return null;
   }
 }
+
 
 
 

@@ -128,7 +128,7 @@ class ServiceDetailScreen extends StatelessWidget {
                     scrollDirection: Axis.horizontal,
                     child: Row(children: [
                       _statChip(
-                          Icons.attach_money_rounded, priceRange, accentColor),
+                          Icons.payments_rounded, priceRange, accentColor),
                       const SizedBox(width: 12),
                       _statChip(
                           Icons.schedule_rounded, duration, AppColors.primary),

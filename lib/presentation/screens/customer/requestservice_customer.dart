@@ -1,4 +1,4 @@
-// lib/presentation/screens/customer/requestservice_customer.dart
+﻿// lib/presentation/screens/customer/requestservice_customer.dart
 //
 // Changes vs previous version:
 //   • [targetProfessionalId] prop added.
@@ -40,6 +40,7 @@ class RequestServiceResult {
   final double? longitude;
   final String? notes;
   final String? photoPath;
+  final String? priceRange;
 
   /// All professionals that will receive this request.
   ///
@@ -56,8 +57,15 @@ class RequestServiceResult {
     this.longitude,
     this.notes,
     this.photoPath,
+    this.priceRange,
     required this.matchedPros,
   });
+}
+
+class _OfferDef {
+  final String title;
+  final String priceRange;
+  const _OfferDef({required this.title, required this.priceRange});
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -100,7 +108,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   String? _serviceType;
 
   // Step 2
-  final _titleCtrl = TextEditingController();
+  String? _problemTitle;
+  String? _priceRange;
   final _descCtrl = TextEditingController();
   String? _photoPath;
   bool _pickingPhoto = false;
@@ -167,6 +176,29 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     },
   ];
 
+  // ── Service offers (Problem Title dropdown) ──
+  static const Map<String, List<_OfferDef>> _offerCatalogue = {
+    'Plumbing': [
+      _OfferDef(title: 'Pipe Leak Repair', priceRange: '₱500 – ₱2,500'),
+      _OfferDef(title: 'Drain Cleaning', priceRange: '₱300 – ₱1,800'),
+    ],
+    'Electrical': [
+      _OfferDef(title: 'Wiring Repair', priceRange: '₱600 – ₱3,000'),
+      _OfferDef(title: 'Outlet Installation', priceRange: '₱400 – ₱1,500 per outlet'),
+    ],
+    'Appliances': [
+      _OfferDef(title: 'Washer Repair', priceRange: '₱500 – ₱3,500'),
+      _OfferDef(title: 'Dryer Repair', priceRange: '₱500 – ₱3,000'),
+    ],
+    'Carpentry': [
+      _OfferDef(title: 'Cabinet Installation', priceRange: '₱1,500 – ₱8,000'),
+      _OfferDef(title: 'Door Repair', priceRange: '₱300 – ₱2,000'),
+    ],
+    'Painting': [
+      _OfferDef(title: 'Wall Painting', priceRange: '₱1,000 – ₱6,000 per room'),
+      _OfferDef(title: 'Ceiling Painting', priceRange: '₱800 – ₱4,000 per room'),
+    ],
+  };
   // ── Which service types have at least one available, verified pro ──
   Set<String> get _availableTypes {
     if (widget.targetProfessionalId != null) {
@@ -186,6 +218,19 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         .toSet();
   }
 
+  List<_OfferDef> _offersForType(String type) {
+    if (type.trim().isEmpty) return const [];
+    final offers = _offerCatalogue[type];
+    if (offers != null && offers.isNotEmpty) return offers;
+    return [
+      _OfferDef(title: '$type Service', priceRange: 'Price to be assessed'),
+    ];
+  }
+
+  List<_OfferDef> get _offerOptions {
+    if (_serviceType == null) return const [];
+    return _offersForType(_serviceType!);
+  }
   // ── Collect all pros that should receive the request ──────
   //
   // Broadcast mode → all verified+available pros whose skills match.
@@ -231,14 +276,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     }
     if (widget.initialProblemTitle != null &&
         widget.initialProblemTitle!.isNotEmpty) {
-      _titleCtrl.text = widget.initialProblemTitle!;
+      _problemTitle = widget.initialProblemTitle!;
+      _priceRange = _offerOptions
+          .firstWhereOrNull((o) => o.title == _problemTitle)
+          ?.priceRange;
     }
   }
 
   @override
   void dispose() {
     _scrollCtrl.dispose();
-    _titleCtrl.dispose();
     _descCtrl.dispose();
     _streetCtrl.dispose();
     _barangayCtrl.dispose();
@@ -274,7 +321,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       _snack('Please select a service type');
       return;
     }
-    if (_step == 1 && _titleCtrl.text.trim().isEmpty) {
+    if (_step == 1 &&
+        (_problemTitle == null || _problemTitle!.trim().isEmpty)) {
       _snack('Please enter a problem title');
       return;
     }
@@ -556,13 +604,14 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     setState(() => _submitting = true);
     await widget.onSubmit?.call(RequestServiceResult(
       serviceType: _serviceType!,
-      problemTitle: _titleCtrl.text.trim(),
+      problemTitle: _problemTitle?.trim() ?? '',
       description: _descCtrl.text.trim(),
       address: _fullAddress,
       latitude: _pinned?.latitude,
       longitude: _pinned?.longitude,
       notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       photoPath: _photoPath,
+      priceRange: _priceRange,
       matchedPros: pros,
     ));
     if (mounted) setState(() => _submitting = false);
@@ -728,7 +777,15 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         final selected = _serviceType == type;
         final color = svc['color'] as Color;
         return GestureDetector(
-          onTap: isAvail ? () => setState(() => _serviceType = type) : null,
+          onTap: isAvail
+          ? () => setState(() {
+                if (_serviceType != type) {
+                  _serviceType = type;
+                  _problemTitle = null;
+                  _priceRange = null;
+                }
+              })
+          : null,
           child: AnimatedContainer(
             duration: 200.ms,
             margin: const EdgeInsets.only(bottom: 12),
@@ -837,10 +894,11 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           const Text('Please describe the issue in detail',
               style: TextStyle(fontSize: 13, color: AppColors.textLight)),
           const SizedBox(height: 24),
-          _field(
-              ctrl: _titleCtrl,
-              hint: 'Problem Title',
-              icon: Icons.title_rounded),
+          _problemTitleDropdown(),
+          if (_problemTitle != null && _priceRange != null) ...[
+            const SizedBox(height: 10),
+            _priceRangeInfo(),
+          ],
           const SizedBox(height: 14),
           _field(
               ctrl: _descCtrl,
@@ -1462,10 +1520,16 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       {
         'icon': Icons.article_rounded,
         'label': 'Issue Details',
-        'value': _titleCtrl.text.trim().isEmpty
-            ? 'No title provided'
-            : _titleCtrl.text.trim()
+        'value': (_problemTitle == null || _problemTitle!.trim().isEmpty)
+            ? 'No title selected'
+            : _problemTitle!.trim()
       },
+      if (_priceRange != null && _priceRange!.isNotEmpty)
+        {
+          'icon': Icons.payments_outlined,
+          'label': 'Price Range',
+          'value': _priceRange!
+        },
       {
         'icon': Icons.location_on_rounded,
         'label': 'Service Location',
@@ -1689,6 +1753,82 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           fontWeight: FontWeight.w600,
           color: AppColors.textDark));
 
+  Widget _problemTitleDropdown() {
+    final options = _offerOptions;
+    final hasOptions = options.isNotEmpty;
+    final selected =
+        options.any((o) => o.title == _problemTitle) ? _problemTitle : null;
+
+    return DropdownButtonFormField<String>(
+      value: selected,
+      items: options
+          .map((o) => DropdownMenuItem<String>(
+                value: o.title,
+                child: Text(o.title),
+              ))
+          .toList(),
+      onChanged: hasOptions
+          ? (value) {
+              setState(() {
+                _problemTitle = value;
+                _priceRange = options
+                    .firstWhereOrNull((o) => o.title == value)
+                    ?.priceRange;
+              });
+            }
+          : null,
+      decoration: InputDecoration(
+        hintText:
+            hasOptions ? 'Select a problem title' : 'Select a service type',
+        hintStyle: const TextStyle(color: AppColors.textLight, fontSize: 14),
+        prefixIcon: const Icon(Icons.title_rounded,
+            color: AppColors.textLight, size: 20),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0xFFE0E0E0))),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0xFFE0E0E0))),
+        focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: AppColors.primary, width: 2)),
+      ),
+      icon: const Icon(Icons.expand_more_rounded, color: AppColors.textLight),
+      dropdownColor: Colors.white,
+      style: const TextStyle(
+          fontSize: 14,
+          color: AppColors.textDark,
+          fontWeight: FontWeight.w600),
+    );
+  }
+
+  Widget _priceRangeInfo() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.primary.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.primary.withOpacity(0.15)),
+        ),
+        child: Row(children: [
+          Icon(Icons.payments_outlined,
+              color: AppColors.primary.withOpacity(0.8), size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "Estimated Price Range: ${_priceRange ?? 'Price to be assessed'}",
+              style: const TextStyle(
+                  fontSize: 12.5,
+                  color: AppColors.textMedium,
+                  fontWeight: FontWeight.w600),
+            ),
+          ),
+        ]),
+      );
+
   Widget _field({
     required TextEditingController ctrl,
     required String hint,
@@ -1797,3 +1937,5 @@ class _SatellitePainter extends CustomPainter {
   @override
   bool shouldRepaint(_) => false;
 }
+
+
