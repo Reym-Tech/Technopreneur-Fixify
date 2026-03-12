@@ -4,15 +4,23 @@
 // (booking status = scheduleProposed).
 //
 // The customer can:
-//   • Accept           → onAccept()           → respondToSchedule(accepted:true)
-//   • Propose counter  → onProposeAlternative(DateTime) → proposeReschedule()
-//   • Decline & Cancel → onDecline()          → respondToSchedule(accepted:false)
+//   • Accept           → onAccept()  → respondToSchedule(accepted:true)
+//   • Decline & Cancel → onDecline() → respondToSchedule(accepted:false)
+//
+// CHANGES:
+//   • "Suggest a Different Time" option removed. Customer can only
+//     Accept or Decline & Cancel.
+//   • Added a notice card explaining that the handyman will arrive
+//     approximately 10–30 minutes after the scheduled start time.
+//   • onProposeAlternative parameter retained for API compatibility
+//     but is no longer exposed in the UI.
 //
 // Props:
 //   booking              — BookingEntity with status == scheduleProposed
 //   onAccept             — VoidCallback
 //   onDecline            — VoidCallback
-//   onProposeAlternative — Function(DateTime) — customer counter-proposes a time
+//   onProposeAlternative — Function(DateTime)? — kept for signature compat,
+//                          not used in UI
 //   onBack               — VoidCallback
 
 import 'package:flutter/material.dart';
@@ -26,8 +34,8 @@ class ScheduleReviewScreen extends StatefulWidget {
   final VoidCallback onAccept;
   final VoidCallback onDecline;
 
-  /// Called when the customer picks a counter-proposal time.
-  /// Parent calls supabase.proposeReschedule() with the new time.
+  /// Retained for API compatibility but not exposed in the UI.
+  /// Use onAccept / onDecline instead.
   final Function(DateTime)? onProposeAlternative;
 
   final VoidCallback? onBack;
@@ -46,11 +54,6 @@ class ScheduleReviewScreen extends StatefulWidget {
 }
 
 class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
-  /// Whether the customer has opened the "propose different time" panel.
-  bool _proposingAlternative = false;
-  DateTime? _alternativeDateTime;
-  bool _isSubmitting = false;
-
   String get _proName => widget.booking.professional?.name ?? 'Your handyman';
 
   String get _formattedDate {
@@ -68,62 +71,6 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
   bool get _isReschedule =>
       widget.booking.rescheduleReason != null &&
       widget.booking.rescheduleReason!.isNotEmpty;
-
-  // ── Date/time picker ───────────────────────────────────────────────────────
-
-  Future<void> _pickAlternativeTime() async {
-    final now = DateTime.now();
-    final initial = _alternativeDateTime ?? now;
-
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initial.isBefore(now) ? now : initial,
-      firstDate: now,
-      lastDate: now.add(const Duration(days: 60)),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: ColorScheme.light(
-            primary: AppColors.primary,
-            onPrimary: Colors.white,
-            surface: Colors.white,
-            onSurface: AppColors.textDark,
-          ),
-        ),
-        child: child!,
-      ),
-    );
-    if (date == null || !mounted) return;
-
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: ColorScheme.light(
-            primary: AppColors.primary,
-            onPrimary: Colors.white,
-          ),
-        ),
-        child: child!,
-      ),
-    );
-    if (time == null || !mounted) return;
-
-    setState(() {
-      _alternativeDateTime =
-          DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    });
-  }
-
-  Future<void> _submitAlternative() async {
-    if (_alternativeDateTime == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please pick a date and time first.')),
-      );
-      return;
-    }
-    _confirmProposeAlternative(context);
-  }
 
   // ── Build ──────────────────────────────────────────────────────────────────
 
@@ -164,13 +111,18 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
                           .slideY(begin: 0.06, end: 0),
                       const SizedBox(height: 16),
                     ],
-                    _buildNotice()
+                    // ── 10–30 min arrival notice ───────────────────────
+                    _buildArrivalNotice()
                         .animate()
                         .fadeIn(delay: _isReschedule ? 360.ms : 290.ms),
+                    const SizedBox(height: 12),
+                    _buildNotice()
+                        .animate()
+                        .fadeIn(delay: _isReschedule ? 430.ms : 360.ms),
                     const SizedBox(height: 32),
                     _buildActions(context)
                         .animate()
-                        .fadeIn(delay: _isReschedule ? 430.ms : 360.ms)
+                        .fadeIn(delay: _isReschedule ? 500.ms : 430.ms)
                         .slideY(begin: 0.08, end: 0),
                     const SizedBox(height: 32),
                   ],
@@ -309,12 +261,9 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
                         : const Color(0xFF007AFF)),
               ),
               const SizedBox(height: 3),
-              Text(
-                _isReschedule
-                    ? 'Review the new proposed time below.'
-                    : 'Please confirm, suggest a different time, or decline.',
-                style:
-                    const TextStyle(fontSize: 12, color: AppColors.textMedium),
+              const Text(
+                'Please confirm or decline below.',
+                style: TextStyle(fontSize: 12, color: AppColors.textMedium),
               ),
             ]),
           ),
@@ -412,11 +361,10 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
             _infoRow(
                 Icons.location_on_rounded, 'Location', widget.booking.address!),
           ],
-          if (widget.booking.description != null &&
-              widget.booking.description!.isNotEmpty) ...[
+          if (widget.booking.notes != null &&
+              widget.booking.notes!.isNotEmpty) ...[
             const SizedBox(height: 10),
-            _infoRow(Icons.description_rounded, 'Notes',
-                widget.booking.description!),
+            _infoRow(Icons.description_rounded, 'Notes', widget.booking.notes!),
           ],
         ]),
       );
@@ -481,18 +429,43 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ]),
       );
 
-  // ── Notice ─────────────────────────────────────────────────────────────────
+  // ── Arrival Notice (10–30 min window) ─────────────────────────────────────
+
+  Widget _buildArrivalNotice() => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF34C759).withOpacity(0.07),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF34C759).withOpacity(0.25)),
+        ),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.directions_walk_rounded,
+              color: Color(0xFF34C759), size: 18),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Please be available approximately 10–30 minutes '
+              'after the proposed start time — this is the estimated '
+              'window for your handyman to arrive at your location.',
+              style: TextStyle(
+                  fontSize: 12, color: AppColors.textDark, height: 1.5),
+            ),
+          ),
+        ]),
+      );
+
+  // ── General Notice ─────────────────────────────────────────────────────────
 
   Widget _buildNotice() => Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.lightbulb_outline_rounded,
+        children: const [
+          Icon(Icons.lightbulb_outline_rounded,
               size: 16, color: AppColors.textLight),
-          const SizedBox(width: 8),
-          const Expanded(
+          SizedBox(width: 8),
+          Expanded(
             child: Text(
-              'Declining cancels the booking. '
-              'You can suggest a different time instead of declining.',
+              'Declining will cancel the booking. '
+              'You can submit a new request at any time.',
               style: TextStyle(
                   fontSize: 12, color: AppColors.textLight, height: 1.5),
             ),
@@ -522,155 +495,6 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
           ),
         ),
         const SizedBox(height: 12),
-
-        // ── Propose a different time (toggle + picker) ─────────────────────
-        if (widget.onProposeAlternative != null) ...[
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
-            decoration: BoxDecoration(
-              color: _proposingAlternative
-                  ? const Color(0xFF007AFF).withOpacity(0.05)
-                  : Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: _proposingAlternative
-                    ? const Color(0xFF007AFF).withOpacity(0.35)
-                    : Colors.grey.shade200,
-              ),
-            ),
-            child: Column(children: [
-              // Toggle row
-              GestureDetector(
-                onTap: () => setState(
-                    () => _proposingAlternative = !_proposingAlternative),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  child: Row(children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF007AFF).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(Icons.edit_calendar_rounded,
-                          color: Color(0xFF007AFF), size: 18),
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Suggest a Different Time',
-                                style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF007AFF))),
-                            Text(
-                              'Propose your preferred time to the handyman.',
-                              style: TextStyle(
-                                  fontSize: 11, color: AppColors.textLight),
-                            ),
-                          ]),
-                    ),
-                    Icon(
-                      _proposingAlternative
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      color: const Color(0xFF007AFF),
-                      size: 20,
-                    ),
-                  ]),
-                ),
-              ),
-
-              // Expanded picker + send button
-              if (_proposingAlternative) ...[
-                const Divider(height: 1, color: Color(0xFFEEEEEE)),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                  child: Column(children: [
-                    // Date/time picker tap target
-                    GestureDetector(
-                      onTap: _pickAlternativeTime,
-                      child: Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: AppColors.backgroundLight,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: Row(children: [
-                          const Icon(Icons.schedule_rounded,
-                              color: Color(0xFF007AFF), size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _alternativeDateTime != null
-                                ? Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        DateFormat('EEEE, MMMM d, yyyy')
-                                            .format(_alternativeDateTime!),
-                                        style: const TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w700,
-                                            color: AppColors.textDark),
-                                      ),
-                                      Text(
-                                        DateFormat('h:mm a')
-                                            .format(_alternativeDateTime!),
-                                        style: const TextStyle(
-                                            fontSize: 12,
-                                            color: AppColors.textLight),
-                                      ),
-                                    ],
-                                  )
-                                : const Text('Tap to pick your preferred time',
-                                    style: TextStyle(
-                                        fontSize: 13,
-                                        color: AppColors.textLight)),
-                          ),
-                          const Icon(Icons.edit_rounded,
-                              color: Color(0xFF007AFF), size: 16),
-                        ]),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    // Send counter-proposal button
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _isSubmitting ? null : _submitAlternative,
-                        icon: _isSubmitting
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
-                            : const Icon(Icons.send_rounded, size: 16),
-                        label: const Text('Send to Handyman',
-                            style: TextStyle(
-                                fontSize: 14, fontWeight: FontWeight.w700)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF007AFF),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                          elevation: 0,
-                        ),
-                      ),
-                    ),
-                  ]),
-                ),
-              ],
-            ]),
-          ),
-          const SizedBox(height: 12),
-        ],
 
         // ── Decline & Cancel ───────────────────────────────────────────────
         SizedBox(
@@ -702,7 +526,8 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
             style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
         content: Text(
           'You are confirming $_formattedDate at $_formattedTime. '
-          'Your handyman will arrive at this time.',
+          'Your handyman will arrive approximately 10–30 minutes '
+          'after this time.',
           style: const TextStyle(fontSize: 13, color: AppColors.textMedium),
         ),
         actions: [
@@ -762,54 +587,6 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
               elevation: 0,
             ),
             child: const Text('Cancel Booking',
-                style: TextStyle(fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmProposeAlternative(BuildContext context) {
-    final dt = _alternativeDateTime!;
-    final dateStr = DateFormat('EEEE, MMMM d, yyyy').format(dt);
-    final timeStr = DateFormat('h:mm a').format(dt);
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Suggest This Time?',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-        content: Text(
-          'You\'re suggesting $dateStr at $timeStr to your handyman. '
-          'They\'ll be notified to review your proposed time.',
-          style: const TextStyle(
-              fontSize: 13, color: AppColors.textMedium, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Go Back',
-                style: TextStyle(color: AppColors.textLight)),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.of(ctx).pop();
-              setState(() => _isSubmitting = true);
-              try {
-                await widget.onProposeAlternative?.call(dt);
-              } finally {
-                if (mounted) setState(() => _isSubmitting = false);
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF007AFF),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-              elevation: 0,
-            ),
-            child: const Text('Send Suggestion',
                 style: TextStyle(fontWeight: FontWeight.w700)),
           ),
         ],

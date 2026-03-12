@@ -125,8 +125,8 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   bool _submitting = false;
 
   // ── Preferred date/time ───────────────────────────────────
-  // Defaults to right now so the customer can book for today.
-  DateTime _preferredDate = DateTime.now();
+  // Defaults to 10 minutes from now so the customer can't pick an immediate past time.
+  DateTime _preferredDate = DateTime.now().add(const Duration(minutes: 10));
 
   String get _formattedPreferredDate =>
       DateFormat('EEEE, MMMM d, yyyy').format(_preferredDate);
@@ -337,6 +337,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       }
     }
     if (_step == 3) {
+      if (_preferredDate.isBefore(DateTime.now())) {
+        _snack('Preferred schedule cannot be in the past.');
+        return;
+      }
       _submit();
       return;
     }
@@ -393,14 +397,21 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     );
     if (!mounted) return;
 
+    final candidate = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time?.hour ?? now.hour,
+      time?.minute ?? now.minute,
+    );
+
+    if (candidate.isBefore(DateTime.now())) {
+      _snack('Preferred schedule cannot be in the past.');
+      return;
+    }
+
     setState(() {
-      _preferredDate = DateTime(
-        date.year,
-        date.month,
-        date.day,
-        time?.hour ?? now.hour,
-        time?.minute ?? now.minute,
-      );
+      _preferredDate = candidate;
     });
   }
 
@@ -641,6 +652,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   Future<void> _submit() async {
     if (_submitting) return;
+    if (_preferredDate.isBefore(DateTime.now())) {
+      _snack('Preferred schedule cannot be in the past.');
+      return;
+    }
     final pros = _matchedPros;
     if (pros.isEmpty) {
       _snack('No available professional found for $_serviceType right now.');
@@ -1669,6 +1684,41 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           ]),
         ).animate().fadeIn(delay: (e.key * 60).ms);
       }),
+      const SizedBox(height: 12),
+      // Delivery ETA note added per request
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 8,
+                offset: const Offset(0, 3))
+          ],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Estimated Arrival Times',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark)),
+          const SizedBox(height: 8),
+          const Text(
+              'Short Distance (within 2–3 km): Handyman generally arrive within 10–15 minutes.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
+          const SizedBox(height: 6),
+          const Text(
+              'Medium Distance (4–7 km): En Route usually takes 15–25 minutes.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
+          const SizedBox(height: 6),
+          const Text(
+              'Maximum Radius (up to 10 km): For locations on the outskirts of the city, the dispatch phase can extend to 30 minutes or more.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
+        ]),
+      ).animate().fadeIn(delay: 320.ms),
       if (_photoPath != null) ...[
         Container(
           width: double.infinity,
@@ -1718,6 +1768,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         ),
         const SizedBox(height: 12),
       ],
+      const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(

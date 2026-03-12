@@ -1,15 +1,26 @@
 // lib/presentation/screens/customer/booking_status_screen.dart
 //
 // SCHEDULING UPDATE:
-//   • Timeline now shows 7 steps:
+//   • Timeline now shows 8 steps:
 //       Pending → Accepted → Schedule Proposed → Scheduled →
-//       Assessment → In Progress → Completed
-//   • When status == scheduleProposed: shows a pulsing "Review Schedule" CTA
-//     that routes to ScheduleReviewScreen via onReviewSchedule().
-//     The CTA now also shows the customer's original preferred date so they
-//     can compare against the handyman's proposed time at a glance.
-//   • AssessmentCTA is now only shown for status == assessment (not accepted).
-//   • _statusLabel / _statusMessage updated for new statuses.
+//       Assessment → In Progress → Confirm Completion → Completed
+//   • When status == scheduleProposed: shows a pulsing "Review Schedule" CTA.
+//   • AssessmentCTA is only shown for status == assessment.
+//
+// COMPLETION UPDATE:
+//   • When status == pendingCustomerConfirmation: shows ConfirmCompletionCTA
+//     so the customer can confirm the job is done.
+//   • onConfirmCompletion callback added.
+//
+// REVIEW FIX:
+//   • onLeaveReview callback added. BookingStatusScreen now exposes a
+//     "Leave a Review" button when status == completed and the booking
+//     has not yet been reviewed. The parent (main.dart) drives navigation.
+//
+// PROPS ADDED (all optional for backward compat):
+//   onConfirmCompletion — VoidCallback?
+//   onLeaveReview       — VoidCallback?
+//   hasReviewed         — bool (default false)
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -23,8 +34,20 @@ class BookingStatusScreen extends StatelessWidget {
   final VoidCallback? onViewAssessment;
 
   /// Called when the customer taps "Review Schedule".
-  /// Parent navigates to ScheduleReviewScreen.
   final VoidCallback? onReviewSchedule;
+
+  /// Called when the customer confirms the job is complete.
+  final VoidCallback? onConfirmCompletion;
+
+  /// Called when the customer taps "Leave a Review" on a completed booking.
+  final VoidCallback? onLeaveReview;
+
+  /// Called when the customer taps "Cancel Booking".
+  final VoidCallback? onCancel;
+
+  /// Whether the customer has already submitted a review for this booking.
+  /// When true the "Leave a Review" button is hidden.
+  final bool hasReviewed;
 
   const BookingStatusScreen({
     super.key,
@@ -32,6 +55,10 @@ class BookingStatusScreen extends StatelessWidget {
     this.onBack,
     this.onViewAssessment,
     this.onReviewSchedule,
+    this.onConfirmCompletion,
+    this.onLeaveReview,
+    this.onCancel,
+    this.hasReviewed = false,
   });
 
   // ── Step helpers ───────────────────────────────────────────────────────────
@@ -43,6 +70,7 @@ class BookingStatusScreen extends StatelessWidget {
     BookingStatus.scheduled,
     BookingStatus.assessment,
     BookingStatus.inProgress,
+    BookingStatus.pendingCustomerConfirmation,
     BookingStatus.completed,
   ];
 
@@ -65,6 +93,8 @@ class BookingStatusScreen extends StatelessWidget {
         return 'Assessment';
       case BookingStatus.inProgress:
         return 'In Progress';
+      case BookingStatus.pendingCustomerConfirmation:
+        return 'Confirm\nCompletion';
       case BookingStatus.completed:
         return 'Completed';
       default:
@@ -88,6 +118,8 @@ class BookingStatusScreen extends StatelessWidget {
         return 'Assessment Ready';
       case BookingStatus.inProgress:
         return 'In Progress';
+      case BookingStatus.pendingCustomerConfirmation:
+        return 'Job Done — Confirm?';
       case BookingStatus.completed:
         return 'Completed';
       case BookingStatus.cancelled:
@@ -109,8 +141,10 @@ class BookingStatusScreen extends StatelessWidget {
         return 'Your handyman has assessed the job and set a price. Please review and confirm to get started.';
       case BookingStatus.inProgress:
         return 'Your handyman is currently working on the job.';
+      case BookingStatus.pendingCustomerConfirmation:
+        return 'Your handyman has marked the job as done. Please confirm below once you\'re satisfied with the work.';
       case BookingStatus.completed:
-        return 'Your job has been completed. Thank you for using AYO!';
+        return 'Your job has been completed. Thank you for using Fixify!';
       case BookingStatus.cancelled:
         return 'This booking has been cancelled.';
     }
@@ -130,6 +164,8 @@ class BookingStatusScreen extends StatelessWidget {
         return const Color(0xFF5856D6);
       case BookingStatus.inProgress:
         return const Color(0xFF34C759);
+      case BookingStatus.pendingCustomerConfirmation:
+        return const Color(0xFF30B0C7);
       case BookingStatus.completed:
         return AppColors.primary;
       case BookingStatus.cancelled:
@@ -186,7 +222,27 @@ class BookingStatusScreen extends StatelessWidget {
                       const SizedBox(height: 16),
                     ],
 
-                    _buildBookingInfo()
+                    // ── Confirm Completion CTA ───────────────────────────
+                    if (booking.status ==
+                        BookingStatus.pendingCustomerConfirmation) ...[
+                      _ConfirmCompletionCTA(
+                        booking: booking,
+                        onConfirmCompletion: onConfirmCompletion,
+                      ).animate().fadeIn(delay: 220.ms),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // ── Leave a Review CTA (completed, not yet reviewed) ──
+                    if (booking.status == BookingStatus.completed &&
+                        !hasReviewed &&
+                        onLeaveReview != null) ...[
+                      _ReviewCTA(
+                        onLeaveReview: onLeaveReview!,
+                      ).animate().fadeIn(delay: 220.ms),
+                      const SizedBox(height: 16),
+                    ],
+
+                    _buildBookingInfo(context)
                         .animate()
                         .fadeIn(delay: 280.ms)
                         .slideY(begin: 0.06, end: 0),
@@ -363,6 +419,8 @@ class BookingStatusScreen extends StatelessWidget {
         return Icons.receipt_long_rounded;
       case BookingStatus.inProgress:
         return Icons.handyman_rounded;
+      case BookingStatus.pendingCustomerConfirmation:
+        return Icons.task_alt_rounded;
       case BookingStatus.completed:
         return Icons.check_circle_rounded;
       case BookingStatus.cancelled:
@@ -441,6 +499,8 @@ class BookingStatusScreen extends StatelessWidget {
         return const Color(0xFF5856D6);
       case BookingStatus.inProgress:
         return const Color(0xFF34C759);
+      case BookingStatus.pendingCustomerConfirmation:
+        return const Color(0xFF30B0C7);
       case BookingStatus.completed:
         return AppColors.primary;
       default:
@@ -449,8 +509,6 @@ class BookingStatusScreen extends StatelessWidget {
   }
 
   // ── Schedule CTA ───────────────────────────────────────────────────────────
-  // Shows the handyman's proposed time prominently.
-  // Also shows the customer's original preferred date so they can compare.
 
   Widget _buildScheduleCTA() {
     final proposedTime = booking.scheduledTime;
@@ -458,7 +516,6 @@ class BookingStatusScreen extends StatelessWidget {
         ? DateFormat('MMM d · h:mm a').format(proposedTime.toLocal())
         : null;
 
-    // Customer's original preferred date (what they asked for when booking)
     final preferredStr =
         DateFormat('MMM d, yyyy').format(booking.scheduledDate.toLocal());
 
@@ -526,7 +583,7 @@ class BookingStatusScreen extends StatelessWidget {
 
   // ── Booking Info ───────────────────────────────────────────────────────────
 
-  Widget _buildBookingInfo() => Container(
+  Widget _buildBookingInfo(BuildContext context) => Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -555,7 +612,13 @@ class BookingStatusScreen extends StatelessWidget {
           _infoRow(
             Icons.calendar_today_rounded,
             'Requested Date',
-            DateFormat('MMM d, yyyy').format(booking.scheduledDate),
+            DateFormat('MMM d, yyyy').format(booking.scheduledDate.toLocal()),
+          ),
+          const SizedBox(height: 12),
+          _infoRow(
+            Icons.access_time_rounded,
+            'Requested Time',
+            DateFormat('h:mm a').format(booking.scheduledDate.toLocal()),
           ),
           if (booking.scheduledTime != null) ...[
             const SizedBox(height: 12),
@@ -575,13 +638,68 @@ class BookingStatusScreen extends StatelessWidget {
             _infoRow(Icons.payments_rounded, 'Agreed Price',
                 '₱${booking.assessmentPrice!.toStringAsFixed(0)}'),
           ],
-          if (booking.description != null &&
-              booking.description!.isNotEmpty) ...[
+          if (booking.notes != null && booking.notes!.isNotEmpty) ...[
             const SizedBox(height: 12),
-            _infoRow(Icons.notes_rounded, 'Notes', booking.description!),
+            _infoRow(Icons.notes_rounded, 'Notes', booking.notes!),
+          ],
+          // Cancel button (customer) — shown only for early statuses
+          if (onCancel != null &&
+              (booking.status == BookingStatus.pending ||
+                  booking.status == BookingStatus.accepted ||
+                  booking.status == BookingStatus.scheduleProposed ||
+                  booking.status == BookingStatus.scheduled)) ...[
+            const SizedBox(height: 18),
+            Center(
+              child: TextButton.icon(
+                onPressed: () => _confirmCancelDialog(context),
+                icon:
+                    const Icon(Icons.cancel_outlined, color: Color(0xFFFF3B30)),
+                label: const Text('Cancel Booking',
+                    style: TextStyle(
+                        color: Color(0xFFFF3B30), fontWeight: FontWeight.w700)),
+              ),
+            ),
           ],
         ]),
       );
+
+  void _confirmCancelDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Cancel Booking',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        content: const Text(
+          'Are you sure you want to cancel this booking? This action cannot be undone.',
+          style:
+              TextStyle(fontSize: 13, color: AppColors.textMedium, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child:
+                const Text('No', style: TextStyle(color: AppColors.textLight)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              onCancel?.call();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFF3B30),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            child: const Text('Yes, Cancel Booking',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _infoRow(IconData icon, String label, String value) => Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -753,6 +871,172 @@ class AssessmentCTA extends StatelessWidget {
                     : 'Your handyman has assessed the job. Tap to review.',
                 style: TextStyle(
                     color: Colors.white.withOpacity(0.85), fontSize: 12),
+              ),
+            ]),
+          ),
+          const Icon(Icons.arrow_forward_ios_rounded,
+              color: Colors.white, size: 16),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Confirm Completion CTA ─────────────────────────────────────────────────────
+
+class _ConfirmCompletionCTA extends StatelessWidget {
+  final BookingEntity booking;
+  final VoidCallback? onConfirmCompletion;
+
+  const _ConfirmCompletionCTA({
+    required this.booking,
+    this.onConfirmCompletion,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _confirmDialog(context),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF30B0C7), Color(0xFF4ECDE0)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: const Color(0xFF30B0C7).withOpacity(0.35),
+                blurRadius: 16,
+                offset: const Offset(0, 6))
+          ],
+        ),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: const Icon(Icons.task_alt_rounded,
+                color: Colors.white, size: 24),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Job Completed by Handyman',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800)),
+              SizedBox(height: 3),
+              Text(
+                'Satisfied with the work? Tap here to confirm completion.',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ]),
+          ),
+          const Icon(Icons.arrow_forward_ios_rounded,
+              color: Colors.white, size: 16),
+        ]),
+      ),
+    );
+  }
+
+  void _confirmDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Confirm Job Completion',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        content: const Text(
+          'Please only confirm if you are satisfied with the completed work. '
+          'This action cannot be undone.',
+          style:
+              TextStyle(fontSize: 13, color: AppColors.textMedium, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Not Yet',
+                style: TextStyle(color: AppColors.textLight)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              onConfirmCompletion?.call();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF30B0C7),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            child: const Text('Yes, Job is Done',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Review CTA ─────────────────────────────────────────────────────────────────
+
+class _ReviewCTA extends StatelessWidget {
+  final VoidCallback onLeaveReview;
+  const _ReviewCTA({required this.onLeaveReview});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onLeaveReview,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFFF9500), Color(0xFFFFB340)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: const Color(0xFFFF9500).withOpacity(0.30),
+                blurRadius: 16,
+                offset: const Offset(0, 6))
+          ],
+        ),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child:
+                const Icon(Icons.star_rounded, color: Colors.white, size: 26),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Leave a Review',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800)),
+              SizedBox(height: 3),
+              Text(
+                'How was your experience? Let others know!',
+                style: TextStyle(color: Colors.white, fontSize: 12),
               ),
             ]),
           ),

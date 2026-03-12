@@ -402,7 +402,7 @@ class _HistoryCard extends StatelessWidget {
                     size: 13, color: AppColors.textLight),
                 const SizedBox(width: 5),
                 Text(
-                  '${booking.scheduledDate.day}/${booking.scheduledDate.month}/${booking.scheduledDate.year}',
+                  _formatDateTime(booking.scheduledDate),
                   style: const TextStyle(
                       fontSize: 12,
                       color: AppColors.textMedium,
@@ -417,7 +417,7 @@ class _HistoryCard extends StatelessWidget {
                           color: AppColors.primary)),
                 ] else if (booking.priceEstimate != null) ...[
                   const Spacer(),
-                  Text('₱${booking.priceEstimate!.toStringAsFixed(0)}/hr',
+                  Text('₱${booking.priceEstimate!.toStringAsFixed(0)}',
                       style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
@@ -510,5 +510,15 @@ class _HistoryCard extends StatelessWidget {
       default:
         return Icons.build_rounded;
     }
+  }
+
+  String _formatDateTime(DateTime dt) {
+    final day = dt.day.toString().padLeft(2, '0');
+    final month = dt.month.toString().padLeft(2, '0');
+    final year = dt.year.toString();
+    final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$day/$month/$year • $hour12:$minute $ampm';
   }
 }

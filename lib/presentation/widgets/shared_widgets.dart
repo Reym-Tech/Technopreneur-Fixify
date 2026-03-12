@@ -242,6 +242,11 @@ class StatusBadge extends StatelessWidget {
           'color': const Color(0xFF007AFF), // blue — confirmed schedule
           'label': 'Scheduled',
         };
+      case BookingStatus.pendingCustomerConfirmation:
+        return {
+          'color': const Color(0xFFFFA500),
+          'label': 'Pending Confirmation',
+        };
     }
   }
 }

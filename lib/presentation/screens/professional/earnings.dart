@@ -296,10 +296,12 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         return const Color(0xFF9C27B0); // purple — schedule pending review
       case BookingStatus.scheduled:
         return const Color(0xFF007AFF); // blue — confirmed schedule
+      case BookingStatus.pendingCustomerConfirmation:
+        return Colors.amber; // amber — awaiting customer confirmation
     }
   }
 
-  // FIX: scheduleProposed + scheduled added to make switch exhaustive.
+  // FIX: scheduleProposed + scheduled + pendingCustomerConfirmation added to make switch exhaustive.
   String _statusLabel(BookingStatus s) {
     switch (s) {
       case BookingStatus.completed:
@@ -318,6 +320,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         return 'Schedule Proposed';
       case BookingStatus.scheduled:
         return 'Scheduled';
+      case BookingStatus.pendingCustomerConfirmation:
+        return 'Awaiting Customer';
     }
   }
 

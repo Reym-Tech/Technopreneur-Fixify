@@ -4,11 +4,22 @@
 //   proposeSchedule()    — Handyman sets a start date/time after accepting.
 //                          Sets status = 'schedule_proposed' and writes
 //                          scheduled_time to the bookings row.
+//                          ✅ Validates proposedTime is in the future.
 //   respondToSchedule()  — Customer accepts (→ 'scheduled') or rejects
 //                          (→ 'cancelled') the proposed schedule.
 //   proposeReschedule()  — Handyman is running late and proposes a new time.
 //                          Sets status = 'schedule_proposed' again and writes
 //                          the new scheduled_time + reschedule_reason.
+//                          ✅ Validates newProposedTime is in the future.
+//
+// COMPLETION UPDATE:
+//   markJobDoneByPro()          — Pro marks job done → status = 'pending_customer_confirmation'.
+//   customerConfirmCompletion() — Customer confirms job done → status = 'completed'.
+//
+// DATE VALIDATION:
+//   createBooking() ✅ Validates scheduledDate is not in the past (date only,
+//                      time-of-day not enforced since it is a preferred date).
+//   proposeSchedule() / proposeReschedule() ✅ Reject times already in the past.
 //
 // All other public methods are unchanged.
 
@@ -243,6 +254,10 @@ class SupabaseDataSource {
 
   // ── BOOKINGS ──────────────────────────────────────────────
 
+  /// MODEL: Persists a new booking row.
+  /// Validates that scheduledDate is not strictly in the past (date-level check;
+  /// time of day is not enforced because this is a preferred date, not an exact
+  /// arrival time).
   Future<BookingModel> createBooking({
     required String customerId,
     String? professionalId,
@@ -255,6 +270,16 @@ class SupabaseDataSource {
     double? latitude,
     double? longitude,
   }) async {
+    // ── Validation: reject dates in the past ──────────────────────────────
+    final today = DateTime.now();
+    final todayDateOnly = DateTime(today.year, today.month, today.day);
+    final requestedDateOnly =
+        DateTime(scheduledDate.year, scheduledDate.month, scheduledDate.day);
+    if (requestedDateOnly.isBefore(todayDateOnly)) {
+      throw ArgumentError(
+          'Preferred date cannot be in the past. Please choose today or a future date.');
+    }
+
     final payload = {
       'customer_id': customerId,
       if (professionalId != null) 'professional_id': professionalId,
@@ -262,7 +287,8 @@ class SupabaseDataSource {
       'description': description,
       'price_estimate': priceEstimate,
       'status': 'pending',
-      'scheduled_date': scheduledDate.toIso8601String(),
+      // Store dates in UTC so all devices interpret times consistently.
+      'scheduled_date': scheduledDate.toUtc().toIso8601String(),
       'address': address,
       'notes': notes,
       if (latitude != null) 'latitude': latitude,
@@ -328,10 +354,13 @@ class SupabaseDataSource {
   /// Called by the handyman after accepting a booking.
   /// Sets status = 'schedule_proposed' and stores the proposed start time.
   /// The customer will see a CTA to review the proposed schedule.
+  ///
+  /// ✅ Validates that proposedTime is at least 1 minute in the future.
   Future<BookingModel> proposeSchedule({
     required String bookingId,
     required DateTime proposedTime,
   }) async {
+    _assertFutureTime(proposedTime, label: 'Proposed start time');
     debugPrint('[Supabase] proposeSchedule: id=$bookingId time=$proposedTime');
     await _client.from(AppConfig.bookingsTable).update({
       'status': 'schedule_proposed',
@@ -374,11 +403,14 @@ class SupabaseDataSource {
   /// Called when the handyman needs to reschedule (running late, prior job
   /// still in progress, etc.). Sets status back to 'schedule_proposed' with
   /// the new proposed time and an optional reason.
+  ///
+  /// ✅ Validates that newProposedTime is at least 1 minute in the future.
   Future<BookingModel> proposeReschedule({
     required String bookingId,
     required DateTime newProposedTime,
     String? reason,
   }) async {
+    _assertFutureTime(newProposedTime, label: 'Rescheduled time');
     debugPrint(
         '[Supabase] proposeReschedule: id=$bookingId time=$newProposedTime reason=$reason');
     await _client.from(AppConfig.bookingsTable).update({
@@ -394,6 +426,54 @@ class SupabaseDataSource {
         .single();
     debugPrint('[Supabase] proposeReschedule: done ✅');
     return BookingModel.fromJson(data);
+  }
+
+  // ── COMPLETION ────────────────────────────────────────────
+
+  /// Called by the professional when they believe the job is done.
+  /// Sets status = 'pending_customer_confirmation' so the customer can verify.
+  Future<BookingModel> markJobDoneByPro(String bookingId) async {
+    debugPrint('[Supabase] markJobDoneByPro: id=$bookingId');
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': 'pending_customer_confirmation',
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] markJobDoneByPro: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  /// Called by the customer to confirm the job is truly complete.
+  /// Sets status = 'completed'.
+  Future<BookingModel> customerConfirmCompletion(String bookingId) async {
+    debugPrint('[Supabase] customerConfirmCompletion: id=$bookingId');
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': 'completed',
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] customerConfirmCompletion: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  // ── Internal Validation Helper ────────────────────────────
+
+  /// Throws [ArgumentError] if [time] is not at least 1 minute in the future.
+  /// Used by proposeSchedule() and proposeReschedule() to prevent past-time submissions.
+  void _assertFutureTime(DateTime time, {String label = 'Time'}) {
+    final minAllowed = DateTime.now().add(const Duration(minutes: 1));
+    if (time.isBefore(minAllowed)) {
+      throw ArgumentError('$label must be at least 1 minute in the future. '
+          'Please select a valid date and time.');
+    }
   }
 
   // ── Shared join string ─────────────────────────────────────

@@ -8,6 +8,12 @@
 //   • BookingModel now carries scheduledTime (DateTime?) and
 //     rescheduleReason (String?) — mapped from the new DB columns
 //     scheduled_time and reschedule_reason.
+//
+// COMPLETION UPDATE:
+//   • Added BookingStatus.pendingCustomerConfirmation.
+//   • DB value: 'pending_customer_confirmation'.
+//   • Pro marks job done → status = pendingCustomerConfirmation.
+//   • Customer confirms → status = completed.
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
@@ -369,6 +375,9 @@ class BookingModel extends Equatable {
         return BookingStatus.assessment;
       case 'in_progress':
         return BookingStatus.inProgress;
+      // Pro marked done; customer must confirm before status = completed
+      case 'pending_customer_confirmation':
+        return BookingStatus.pendingCustomerConfirmation;
       case 'completed':
         return BookingStatus.completed;
       case 'cancelled':
@@ -390,6 +399,8 @@ class BookingModel extends Equatable {
         return 'assessment';
       case BookingStatus.inProgress:
         return 'in_progress';
+      case BookingStatus.pendingCustomerConfirmation:
+        return 'pending_customer_confirmation';
       case BookingStatus.completed:
         return 'completed';
       case BookingStatus.cancelled:
@@ -469,13 +480,14 @@ class BookingModel extends Equatable {
         'description': description,
         'price_estimate': priceEstimate,
         'status': statusToString(status),
-        'scheduled_date': scheduledDate.toIso8601String(),
+        // Persist scheduled date in UTC so parsing is consistent across devices.
+        'scheduled_date': scheduledDate.toUtc().toIso8601String(),
         'address': address,
         'notes': notes,
         'latitude': latitude,
         'longitude': longitude,
         'assessment_price': assessmentPrice,
-        'scheduled_time': scheduledTime?.toIso8601String(),
+        'scheduled_time': scheduledTime?.toUtc().toIso8601String(),
         'reschedule_reason': rescheduleReason,
       };
 

@@ -28,6 +28,8 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'dart:math' as math;
 
 class ProBookingDetailScreen extends StatefulWidget {
   final BookingEntity booking;
@@ -387,7 +389,7 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         ],
         if (b.address != null && b.address!.isNotEmpty) ...[
           const SizedBox(height: 10),
-          _infoRow(Icons.location_on_rounded, 'Location', b.address!),
+          _locationRow(b),
         ],
         if (b.description != null && b.description!.isNotEmpty) ...[
           const SizedBox(height: 10),
@@ -431,6 +433,44 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
           ),
         ],
       );
+
+  Widget _locationRow(BookingEntity b) {
+    final address = b.address ?? '';
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Expanded(child: _infoRow(Icons.location_on_rounded, 'Location', address)),
+      if ((b.latitude != null && b.longitude != null) || address.isNotEmpty)
+        IconButton(
+          icon: const Icon(Icons.map_rounded, color: AppColors.primary),
+          onPressed: () => _openMaps(b),
+        ),
+    ]);
+  }
+
+  Future<void> _openMaps(BookingEntity b) async {
+    try {
+      if (b.latitude != null && b.longitude != null) {
+        final uri = Uri.parse(
+            'https://www.google.com/maps/dir/?api=1&destination=${b.latitude},${b.longitude}');
+        if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+          _showSnack('Could not open maps.');
+        }
+        return;
+      }
+      final address = b.address ?? '';
+      if (address.isNotEmpty) {
+        final encoded = Uri.encodeComponent(address);
+        final uri = Uri.parse(
+            'https://www.google.com/maps/search/?api=1&query=$encoded');
+        if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+          _showSnack('Could not open maps.');
+        }
+        return;
+      }
+      _showSnack('Location not available.');
+    } catch (e) {
+      _showSnack('Failed to open maps: $e');
+    }
+  }
 
   // ── Status-specific actions ────────────────────────────────────────────────
 
@@ -490,7 +530,7 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
           const Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Confirm Schedule',
+              Text('Schedule',
                   style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
@@ -669,7 +709,7 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
                 : Text(
                     _proposingAlternative
                         ? 'Send Alternative Time to Customer'
-                        : "Confirm Customer's Time",
+                        : 'Confirm',
                     style: const TextStyle(
                         fontSize: 14, fontWeight: FontWeight.w700),
                   ),
