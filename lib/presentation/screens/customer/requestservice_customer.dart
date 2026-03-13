@@ -648,6 +648,80 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     }
   }
 
+  // ── Photo preview ──────────────────────────────────────────
+  // Opens a full-screen modal so the customer can inspect their uploaded
+  // image before submitting. Dismiss by tapping anywhere or the × button.
+  void _showPhotoPreview(BuildContext context, String path) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.88),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // ── Full-screen pinch-to-zoom image ─────────────
+            InteractiveViewer(
+              minScale: 0.8,
+              maxScale: 4.0,
+              child: Image.file(
+                File(path),
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Icon(Icons.broken_image_rounded,
+                      size: 64, color: Colors.white54),
+                ),
+              ),
+            ),
+            // ── Close button ─────────────────────────────────
+            Positioned(
+              top: MediaQuery.of(ctx).padding.top + 12,
+              right: 16,
+              child: GestureDetector(
+                onTap: () => Navigator.of(ctx).pop(),
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.55),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close_rounded,
+                      color: Colors.white, size: 20),
+                ),
+              ),
+            ),
+            // ── Bottom label ─────────────────────────────────
+            Positioned(
+              bottom: MediaQuery.of(ctx).padding.bottom + 24,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.45),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.pinch_rounded, color: Colors.white70, size: 14),
+                    SizedBox(width: 6),
+                    Text('Pinch to zoom',
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── Submit ─────────────────────────────────────────────────
 
   Future<void> _submit() async {
@@ -956,10 +1030,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
               style: TextStyle(fontSize: 13, color: AppColors.textLight)),
           const SizedBox(height: 24),
           _problemTitleDropdown(),
-          if (_problemTitle != null && _priceRange != null) ...[
-            const SizedBox(height: 10),
-            _priceRangeInfo(),
-          ],
           const SizedBox(height: 14),
           _field(
               ctrl: _descCtrl,
@@ -1640,6 +1710,12 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           style: TextStyle(fontSize: 13, color: AppColors.textLight)),
       const SizedBox(height: 24),
 
+      // ── Compact ETA banner ────────────────────────────────
+      // Placed at the top of the review so it is the first thing the
+      // customer reads — sets expectations before they pick a schedule.
+      _buildEtaBanner(),
+      const SizedBox(height: 14),
+
       // ── Date/time picker card ─────────────────────────────
       _buildDateTimePickerCard(),
       const SizedBox(height: 16),
@@ -1689,89 +1765,97 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       }),
       const SizedBox(height: 12),
       if (_photoPath != null) ...[
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.03),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Uploaded Photo',
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textLight)),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(
-                  File(_photoPath!),
-                  height: 150,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
+        GestureDetector(
+          // Tap the card to open a full-screen image preview.
+          onTap: () => _showPhotoPreview(context, _photoPath!),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.03),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Header row ──────────────────────────────────
+                Row(children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.photo_camera_rounded,
+                        color: AppColors.primary, size: 16),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text('Uploaded Photo',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark)),
+                  ),
+                  // Tap-to-preview hint badge
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.zoom_in_rounded,
+                            size: 13, color: AppColors.primary),
+                        SizedBox(width: 4),
+                        Text('Tap to preview',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 10),
+                // ── Thumbnail ────────────────────────────────────
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.file(
+                    File(_photoPath!),
                     height: 150,
                     width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF5F5F5),
-                      borderRadius: BorderRadius.circular(12),
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      height: 150,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF5F5F5),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Center(
+                          child: Icon(Icons.broken_image_rounded,
+                              size: 40, color: Color(0xFFBBBBBB))),
                     ),
-                    child: const Center(
-                        child: Icon(Icons.broken_image_rounded,
-                            size: 40, color: Color(0xFFBBBBBB))),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 12),
       ],
-      const SizedBox(height: 12),
-      // Delivery ETA note added per request
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 8,
-                offset: const Offset(0, 3))
-          ],
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Estimated Arrival Times',
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark)),
-          const SizedBox(height: 8),
-          const Text(
-              'Short Distance (within 2–3 km): Handyman generally arrive within 10–15 minutes.',
-              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
-          const SizedBox(height: 6),
-          const Text(
-              'Medium Distance (4–7 km): En Route usually takes 15–25 minutes.',
-              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
-          const SizedBox(height: 6),
-          const Text(
-              'Maximum Radius (up to 10 km): For locations on the outskirts of the city, the dispatch phase can extend to 30 minutes or more.',
-              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
-        ]),
-      ).animate().fadeIn(delay: 320.ms),
       const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.all(14),
@@ -1793,6 +1877,79 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       ),
       const SizedBox(height: 20),
     ]).animate().fadeIn(duration: 200.ms);
+  }
+
+  // ── ETA banner ────────────────────────────────────────────
+  // Compact three-chip row that communicates arrival time ranges at a
+  // glance without taking up a full card's worth of vertical space.
+  Widget _buildEtaBanner() {
+    const chips = [
+      _EtaChip(
+        icon: Icons.directions_walk_rounded,
+        range: '10–15 min',
+        label: '≤ 3 km',
+        color: Color(0xFF34C759),
+      ),
+      _EtaChip(
+        icon: Icons.directions_bike_rounded,
+        range: '15–25 min',
+        label: '4–7 km',
+        color: Color(0xFF007AFF),
+      ),
+      _EtaChip(
+        icon: Icons.directions_car_rounded,
+        range: '30+ min',
+        label: '≤ 10 km',
+        color: Color(0xFFFF9500),
+      ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 11, 14, 12),
+      decoration: BoxDecoration(
+        // Subtle warm-amber tint — distinct from the green schedule card
+        // below but still on-brand and easy on the eye.
+        color: const Color(0xFFFFF8EE),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFFE0A0), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header ──────────────────────────────────────────
+          Row(children: [
+            const Icon(Icons.access_time_rounded,
+                size: 14, color: Color(0xFFCC8800)),
+            const SizedBox(width: 6),
+            const Text(
+              'Estimated Arrival Times',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFFCC8800),
+                letterSpacing: 0.1,
+              ),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          // ── Three chips in a row ─────────────────────────────
+          Row(
+            children: chips
+                .expand((chip) => [
+                      Expanded(child: chip),
+                      if (chip != chips.last)
+                        Container(
+                          width: 1,
+                          height: 34,
+                          margin: const EdgeInsets.symmetric(horizontal: 8),
+                          color: const Color(0xFFFFD98A),
+                        ),
+                    ])
+                .toList(),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 250.ms);
   }
 
   // ── Date/time picker card ─────────────────────────────────
@@ -1971,54 +2128,140 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           fontWeight: FontWeight.w600,
           color: AppColors.textDark));
 
+  // ── Problem Title — custom tile selector ─────────────────
+  // Matches the card-based design language used in Step 1 (service type)
+  // instead of the out-of-place system DropdownButtonFormField.
   Widget _problemTitleDropdown() {
     final options = _offerOptions;
     final hasOptions = options.isNotEmpty;
-    final selected =
-        options.any((o) => o.title == _problemTitle) ? _problemTitle : null;
 
-    return DropdownButtonFormField<String>(
-      value: selected,
-      items: options
-          .map((o) => DropdownMenuItem<String>(
-                value: o.title,
-                child: Text(o.title),
-              ))
-          .toList(),
-      onChanged: hasOptions
-          ? (value) {
-              setState(() {
-                _problemTitle = value;
-                _priceRange = options
-                    .firstWhereOrNull((o) => o.title == value)
-                    ?.priceRange;
-              });
-            }
-          : null,
-      decoration: InputDecoration(
-        hintText:
-            hasOptions ? 'Select a problem title' : 'Select a service type',
-        hintStyle: const TextStyle(color: AppColors.textLight, fontSize: 14),
-        prefixIcon: const Icon(Icons.title_rounded,
-            color: AppColors.textLight, size: 20),
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0xFFE0E0E0))),
-        enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0xFFE0E0E0))),
-        focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: AppColors.primary, width: 2)),
-      ),
-      icon: const Icon(Icons.expand_more_rounded, color: AppColors.textLight),
-      dropdownColor: Colors.white,
-      style: const TextStyle(
-          fontSize: 14, color: AppColors.textDark, fontWeight: FontWeight.w600),
+    if (!hasOptions) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: const Row(children: [
+          Icon(Icons.title_rounded, color: Color(0xFFBBBBBB), size: 20),
+          SizedBox(width: 12),
+          Text('Select a service type first',
+              style: TextStyle(fontSize: 14, color: Color(0xFFBBBBBB))),
+        ]),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: options.asMap().entries.map((e) {
+        final idx = e.key;
+        final offer = e.value;
+        final isSelected = _problemTitle == offer.title;
+
+        return GestureDetector(
+          onTap: () => setState(() {
+            _problemTitle = offer.title;
+            _priceRange = offer.priceRange;
+          }),
+          child: AnimatedContainer(
+            duration: 200.ms,
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? AppColors.primary.withOpacity(0.06)
+                  : Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: isSelected ? AppColors.primary : const Color(0xFFE8E8E8),
+                width: isSelected ? 2 : 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(children: [
+              // ── Leading icon bubble ──────────────────────────
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? AppColors.primary.withOpacity(0.12)
+                      : const Color(0xFFF0F4F2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.build_circle_rounded,
+                  color:
+                      isSelected ? AppColors.primary : const Color(0xFFAAAAAA),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 14),
+              // ── Title + price range ──────────────────────────
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      offer.title,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color:
+                            isSelected ? AppColors.primary : AppColors.textDark,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      offer.priceRange,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isSelected
+                            ? AppColors.primary.withOpacity(0.75)
+                            : AppColors.textLight,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // ── Selection indicator ──────────────────────────
+              AnimatedSwitcher(
+                duration: 180.ms,
+                child: isSelected
+                    ? Container(
+                        key: const ValueKey('check'),
+                        width: 26,
+                        height: 26,
+                        decoration: const BoxDecoration(
+                          color: AppColors.primary,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.check_rounded,
+                            color: Colors.white, size: 15),
+                      )
+                    : Container(
+                        key: const ValueKey('empty'),
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: const Color(0xFFDDDDDD), width: 1.5),
+                        ),
+                      ),
+              ),
+            ]),
+          ).animate().fadeIn(delay: (idx * 50).ms),
+        );
+      }).toList(),
     );
   }
 
@@ -2095,6 +2338,54 @@ extension _IterableX<T> on Iterable<T> {
       if (test(e)) return e;
     }
     return null;
+  }
+}
+
+// ── ETA chip ──────────────────────────────────────────────────────────────────
+// A single column inside the compact ETA banner: icon, time range (bold),
+// and distance label underneath.
+
+class _EtaChip extends StatelessWidget {
+  final IconData icon;
+  final String range;
+  final String label;
+  final Color color;
+
+  const _EtaChip({
+    required this.icon,
+    required this.range,
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(height: 4),
+        Text(
+          range,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+            color: Color(0xFFAA7700),
+          ),
+        ),
+      ],
+    );
   }
 }
 

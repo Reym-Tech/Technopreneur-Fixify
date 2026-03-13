@@ -28,7 +28,7 @@ import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:intl/intl.dart';
 
-class BookingStatusScreen extends StatelessWidget {
+class BookingStatusScreen extends StatefulWidget {
   final BookingEntity booking;
   final VoidCallback? onBack;
   final VoidCallback? onViewAssessment;
@@ -60,6 +60,21 @@ class BookingStatusScreen extends StatelessWidget {
     this.onCancel,
     this.hasReviewed = false,
   });
+
+  @override
+  State<BookingStatusScreen> createState() => _BookingStatusScreenState();
+}
+
+class _BookingStatusScreenState extends State<BookingStatusScreen> {
+  // Convenience accessors so the rest of the methods read exactly as before.
+  BookingEntity get booking => widget.booking;
+  VoidCallback? get onBack => widget.onBack;
+  VoidCallback? get onViewAssessment => widget.onViewAssessment;
+  VoidCallback? get onReviewSchedule => widget.onReviewSchedule;
+  VoidCallback? get onConfirmCompletion => widget.onConfirmCompletion;
+  VoidCallback? get onLeaveReview => widget.onLeaveReview;
+  VoidCallback? get onCancel => widget.onCancel;
+  bool get hasReviewed => widget.hasReviewed;
 
   // ── Step helpers ───────────────────────────────────────────────────────────
 
@@ -246,6 +261,17 @@ class BookingStatusScreen extends StatelessWidget {
                         .animate()
                         .fadeIn(delay: 280.ms)
                         .slideY(begin: 0.06, end: 0),
+
+                    // ── Issue Photo card (shown when customer uploaded one) ──
+                    if (booking.photoUrl != null &&
+                        booking.photoUrl!.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _buildPhotoCard()
+                          .animate()
+                          .fadeIn(delay: 330.ms)
+                          .slideY(begin: 0.06, end: 0),
+                    ],
+
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -253,6 +279,56 @@ class BookingStatusScreen extends StatelessWidget {
             ),
           ],
         ),
+        bottomNavigationBar: (onCancel != null &&
+                (booking.status == BookingStatus.pending ||
+                    booking.status == BookingStatus.accepted ||
+                    booking.status == BookingStatus.scheduleProposed ||
+                    booking.status == BookingStatus.scheduled))
+            ? Container(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      AppColors.backgroundLight.withOpacity(0),
+                      AppColors.backgroundLight,
+                    ],
+                  ),
+                ),
+                child: Row(children: [
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFFF3B30).withOpacity(0.18),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: () => _confirmCancelDialog(context),
+                        icon: const Icon(Icons.cancel_rounded, size: 18),
+                        label: const Text('Cancel Booking'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF3B30),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          elevation: 6,
+                          shadowColor: const Color(0xFFFF3B30),
+                        ),
+                      ),
+                    ),
+                  ),
+                ]),
+              )
+            : null,
       ),
     );
   }
@@ -662,26 +738,257 @@ class BookingStatusScreen extends StatelessWidget {
               return const SizedBox.shrink();
             }(),
           ],
-          // Cancel button (customer) — shown only for early statuses
-          if (onCancel != null &&
-              (booking.status == BookingStatus.pending ||
-                  booking.status == BookingStatus.accepted ||
-                  booking.status == BookingStatus.scheduleProposed ||
-                  booking.status == BookingStatus.scheduled)) ...[
-            const SizedBox(height: 18),
-            Center(
-              child: TextButton.icon(
-                onPressed: () => _confirmCancelDialog(context),
-                icon:
-                    const Icon(Icons.cancel_outlined, color: Color(0xFFFF3B30)),
-                label: const Text('Cancel Booking',
-                    style: TextStyle(
-                        color: Color(0xFFFF3B30), fontWeight: FontWeight.w700)),
+          // (Removed) in-card Cancel button — replaced by sticky footer button
+        ]),
+      );
+
+  // ── Issue Photo Card ───────────────────────────────────────────────────────
+  // Displayed as its own card beneath Booking Details when the customer
+  // attached a photo during the service request. Tapping the thumbnail
+  // opens a full-screen pinch-to-zoom preview, consistent with the
+  // preview introduced in requestservice_customer.dart (Step 4 confirm).
+
+  Widget _buildPhotoCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Card header ─────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Row(children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.09),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(Icons.photo_camera_rounded,
+                    size: 18, color: AppColors.primary),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Issue Photo',
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark)),
+                    SizedBox(height: 1),
+                    Text('Uploaded by customer',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textLight)),
+                  ],
+                ),
+              ),
+              // Tap-to-expand hint pill
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.zoom_in_rounded,
+                        size: 13, color: AppColors.primary),
+                    SizedBox(width: 4),
+                    Text('Tap to expand',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ]),
+          ),
+
+          // ── Divider ─────────────────────────────────────────────────
+          Container(
+            height: 1,
+            color: const Color(0xFFF0F0F0),
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+          ),
+
+          // ── Thumbnail (tappable) ─────────────────────────────────────
+          GestureDetector(
+            onTap: () => _showPhotoPreview(context),
+            child: ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(bottom: Radius.circular(20)),
+              child: Image.network(
+                booking.photoUrl!,
+                width: double.infinity,
+                height: 200,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  // Shimmer-like placeholder while the image loads
+                  return Container(
+                    height: 200,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          const Color(0xFFF0F4F2),
+                          const Color(0xFFE4EDE8),
+                          const Color(0xFFF0F4F2),
+                        ],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                      ),
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation(
+                                  AppColors.primary.withOpacity(0.6)),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text('Loading photo…',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.primary.withOpacity(0.5))),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+                errorBuilder: (context, error, stackTrace) => Container(
+                  height: 160,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF5F5F5),
+                    borderRadius:
+                        BorderRadius.vertical(bottom: Radius.circular(20)),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.broken_image_rounded,
+                          size: 40, color: Color(0xFFBBBBBB)),
+                      const SizedBox(height: 8),
+                      Text('Could not load photo',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textLight.withOpacity(0.7))),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Full-screen photo preview ──────────────────────────────────────────────
+  // Consistent with the preview in requestservice_customer.dart.
+  // Uses InteractiveViewer so the customer can pinch-to-zoom.
+  void _showPhotoPreview(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.92),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // ── Pinch-to-zoom image ──────────────────────────────────
+            InteractiveViewer(
+              minScale: 0.8,
+              maxScale: 5.0,
+              child: Image.network(
+                booking.photoUrl!,
+                fit: BoxFit.contain,
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return const SizedBox(
+                    height: 200,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white54),
+                    ),
+                  );
+                },
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Icon(Icons.broken_image_rounded,
+                      size: 64, color: Colors.white38),
+                ),
+              ),
+            ),
+
+            // ── Close button ─────────────────────────────────────────
+            Positioned(
+              top: MediaQuery.of(ctx).padding.top + 12,
+              right: 16,
+              child: GestureDetector(
+                onTap: () => Navigator.of(ctx).pop(),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.55),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close_rounded,
+                      color: Colors.white, size: 20),
+                ),
+              ),
+            ),
+
+            // ── Bottom hint ──────────────────────────────────────────
+            Positioned(
+              bottom: MediaQuery.of(ctx).padding.bottom + 28,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.45),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.pinch_rounded, color: Colors.white70, size: 14),
+                    SizedBox(width: 6),
+                    Text('Pinch to zoom',
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500)),
+                  ],
+                ),
               ),
             ),
           ],
-        ]),
-      );
+        ),
+      ),
+    );
+  }
 
   String? _extractPriceRange(String? notes) {
     if (notes == null) return null;

@@ -134,6 +134,11 @@ class BookingEntity extends Equatable {
   final double? latitude;
   final double? longitude;
 
+  /// Public URL of the photo uploaded by the customer during booking creation.
+  /// Stored in Supabase Storage (booking-photos bucket) and persisted in
+  /// the bookings table as photo_url.
+  final String? photoUrl;
+
   /// Price set by the handyman during the assessment phase.
   final double? assessmentPrice;
 
@@ -161,6 +166,7 @@ class BookingEntity extends Equatable {
     this.customer,
     this.latitude,
     this.longitude,
+    this.photoUrl,
     this.assessmentPrice,
     this.scheduledTime,
     this.rescheduleReason,
@@ -168,7 +174,7 @@ class BookingEntity extends Equatable {
 
   @override
   List<Object?> get props =>
-      [id, customerId, professionalId, status, scheduledDate];
+      [id, customerId, professionalId, status, scheduledDate, photoUrl];
 }
 
 // ─────────────────────────────────────────

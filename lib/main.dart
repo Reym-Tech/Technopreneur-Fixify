@@ -1533,6 +1533,9 @@ class _MainAppState extends State<MainApp> {
                 priceEstimate: lowestPrice ?? parsedMinFromRange,
                 latitude: result.latitude,
                 longitude: result.longitude,
+                // Forward the customer's chosen photo so it is uploaded to
+                // Supabase Storage and its public URL saved in bookings.photo_url.
+                photoPath: result.photoPath,
               );
 
               _subscribeToBooking(booking);

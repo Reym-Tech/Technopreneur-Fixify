@@ -263,6 +263,10 @@ class BookingModel extends Equatable {
   final double? longitude;
   final double? assessmentPrice;
 
+  /// Public URL of the customer's uploaded photo — stored in Supabase Storage
+  /// (booking-photos bucket) and written to the bookings.photo_url column.
+  final String? photoUrl;
+
   /// Date/time proposed by the handyman (status = scheduleProposed or scheduled).
   final DateTime? scheduledTime;
 
@@ -286,6 +290,7 @@ class BookingModel extends Equatable {
     this.latitude,
     this.longitude,
     this.assessmentPrice,
+    this.photoUrl,
     this.scheduledTime,
     this.rescheduleReason,
   });
@@ -333,6 +338,9 @@ class BookingModel extends Equatable {
 
       final rescheduleReason = json['reschedule_reason'] as String?;
 
+      // Parse photo_url — set when customer uploads a photo during booking creation.
+      final photoUrl = json['photo_url'] as String?;
+
       return BookingModel(
         id: id,
         customerId: customerId,
@@ -351,6 +359,7 @@ class BookingModel extends Equatable {
         latitude: (json['latitude'] as num?)?.toDouble(),
         longitude: (json['longitude'] as num?)?.toDouble(),
         assessmentPrice: (json['assessment_price'] as num?)?.toDouble(),
+        photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
       );
@@ -426,6 +435,7 @@ class BookingModel extends Equatable {
         customer: customer?.toEntity(),
         latitude: latitude,
         longitude: longitude,
+        photoUrl: photoUrl,
         assessmentPrice: assessmentPrice,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
@@ -448,6 +458,7 @@ class BookingModel extends Equatable {
         latitude: latitude,
         longitude: longitude,
         assessmentPrice: assessmentPrice,
+        photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
       );
@@ -469,6 +480,7 @@ class BookingModel extends Equatable {
         latitude: latitude,
         longitude: longitude,
         assessmentPrice: assessmentPrice,
+        photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
       );

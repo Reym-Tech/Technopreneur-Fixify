@@ -23,11 +23,19 @@
 //
 // All other public methods are unchanged.
 
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/models.dart';
 import '../../core/constants/app_config.dart';
+// NOTE: AppConfig must define:
+//   static const String bookingPhotosBucket = 'booking_photos';
+// Add this alongside avatarsBucket in lib/core/constants/app_config.dart.
+// IMPORTANT: The bucket name must match the Supabase Storage bucket exactly
+// (underscores, not hyphens). The RLS INSERT policy requires the first path
+// segment to equal auth.uid() — so we always use the auth UID, not a
+// database row ID, as the folder name.
 import '../../domain/entities/entities.dart';
 
 class SupabaseDataSource {
@@ -291,6 +299,10 @@ class SupabaseDataSource {
     double? priceEstimate,
     double? latitude,
     double? longitude,
+    // Local file path of the photo selected by the customer in Step 2.
+    // When provided, the file is uploaded to Supabase Storage and the
+    // returned public URL is stored in bookings.photo_url.
+    String? photoPath,
   }) async {
     // ── Validation: reject dates in the past ──────────────────────────────
     final today = DateTime.now();
@@ -300,6 +312,44 @@ class SupabaseDataSource {
     if (requestedDateOnly.isBefore(todayDateOnly)) {
       throw ArgumentError(
           'Preferred date cannot be in the past. Please choose today or a future date.');
+    }
+
+    // ── Upload photo to Storage (if provided) ─────────────────────────────
+    // RLS policy on booking_photos bucket:
+    //   (storage.foldername(name))[1] = auth.uid()::text
+    // This means the first path segment MUST be the authenticated user's UID,
+    // not the professionals/customers table row ID (which can differ).
+    // Path: booking_photos/<authUid>/<timestamp>.jpg
+    String? photoUrl;
+    if (photoPath != null && photoPath.isNotEmpty) {
+      try {
+        final authUid = _client.auth.currentUser?.id;
+        if (authUid == null) throw Exception('No authenticated user');
+
+        final file = File(photoPath);
+        final fileBytes = await file.readAsBytes();
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final storagePath = '$authUid/$timestamp.jpg';
+
+        await _client.storage.from(AppConfig.bookingPhotosBucket).uploadBinary(
+              storagePath,
+              fileBytes,
+              fileOptions: const FileOptions(
+                contentType: 'image/jpeg',
+                upsert: false,
+              ),
+            );
+
+        photoUrl = _client.storage
+            .from(AppConfig.bookingPhotosBucket)
+            .getPublicUrl(storagePath);
+
+        debugPrint('[Supabase] createBooking: photo uploaded ✅ $photoUrl');
+      } catch (e) {
+        // Photo upload failure is non-fatal — booking is still created,
+        // but without a photo. Log the error for debugging.
+        debugPrint('[Supabase] createBooking: photo upload failed: $e');
+      }
     }
 
     final payload = {
@@ -315,13 +365,25 @@ class SupabaseDataSource {
       'notes': notes,
       if (latitude != null) 'latitude': latitude,
       if (longitude != null) 'longitude': longitude,
+      // Only include photo_url when a URL was successfully obtained.
+      if (photoUrl != null) 'photo_url': photoUrl,
     };
     try {
-      final data = await _client
+      // Insert the booking row, then immediately re-fetch with full joins
+      // (_fullBookingSelect) so the returned BookingModel has professional,
+      // customer, and photo_url populated — same as every other fetch method.
+      final inserted = await _client
           .from(AppConfig.bookingsTable)
           .insert(payload)
-          .select()
+          .select('id')
           .single();
+
+      final data = await _client
+          .from(AppConfig.bookingsTable)
+          .select(_fullBookingSelect)
+          .eq('id', inserted['id'] as String)
+          .single();
+
       return BookingModel.fromJson(data);
     } catch (e, st) {
       debugPrint('[Supabase] createBooking error: $e\n$st');
