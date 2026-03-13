@@ -561,3 +561,78 @@ class ReviewModel extends Equatable {
   @override
   List<Object?> get props => [id, bookingId, rating, comment];
 }
+
+// ─────────────────────────────────────────
+// SERVICE OFFER MODEL
+// ─────────────────────────────────────────
+
+class ServiceOfferModel extends Equatable {
+  final String id;
+  final String slug;
+  final String serviceName;
+  final String serviceType;
+  final String? description;
+  final String? imagePath;
+
+  final List<String> includes;
+  final String? priceRange;
+  final String? duration;
+  final String? tips;
+  final DateTime? createdAt;
+
+  const ServiceOfferModel({
+    required this.id,
+    required this.slug,
+    required this.serviceName,
+    required this.serviceType,
+    this.description,
+    this.imagePath,
+    required this.includes,
+    this.priceRange,
+    this.duration,
+    this.tips,
+    this.createdAt,
+  });
+
+  factory ServiceOfferModel.fromJson(Map<String, dynamic> json) {
+    DateTime? created;
+    try {
+      final ca = json['created_at']?.toString();
+      if (ca != null && ca.isNotEmpty) created = DateTime.parse(ca);
+    } catch (_) {}
+
+    return ServiceOfferModel(
+      id: json['id']?.toString() ?? '',
+      slug: json['slug']?.toString() ?? json['service_name']?.toString() ?? '',
+      serviceName: json['service_name']?.toString() ?? '',
+      serviceType: json['service_type']?.toString() ?? '',
+      description: json['description'] as String?,
+      imagePath: json['image_path'] as String?,
+      includes: (json['includes'] as List?)
+              ?.map((e) => e.toString())
+              .toList(growable: false) ??
+          [],
+      priceRange: json['price_range'] as String?,
+      duration: json['duration'] as String?,
+      tips: json['tips'] as String?,
+      createdAt: created,
+    );
+  }
+
+  ServiceOfferEntity toEntity() => ServiceOfferEntity(
+        id: id,
+        slug: slug,
+        serviceName: serviceName,
+        serviceType: serviceType,
+        description: description,
+        imagePath: imagePath,
+        includes: includes,
+        priceRange: priceRange,
+        duration: duration,
+        tips: tips,
+        createdAt: createdAt,
+      );
+
+  @override
+  List<Object?> get props => [id, slug, serviceName, serviceType];
+}

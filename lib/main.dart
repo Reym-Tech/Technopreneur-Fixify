@@ -1506,6 +1506,23 @@ class _MainAppState extends State<MainApp> {
                       .reduce((a, b) => a < b ? a : b)
                   : null;
 
+              // If we don't have a numeric lowestPrice from matched pros,
+              // try to parse the minimum value from the textual priceRange
+              // selected by the customer (e.g. "₱300 – ₱1,800").
+              double? parsedMinFromRange;
+              if ((lowestPrice == null || lowestPrice == 0.0) &&
+                  result.priceRange != null &&
+                  result.priceRange!.isNotEmpty) {
+                try {
+                  final m =
+                      RegExp(r"(\d+[\d,]*)").firstMatch(result.priceRange!);
+                  if (m != null) {
+                    parsedMinFromRange =
+                        double.parse(m.group(1)!.replaceAll(',', ''));
+                  }
+                } catch (_) {}
+              }
+
               final booking = await _ds.createBooking(
                 customerId: _user!.id,
                 professionalId: null,
@@ -1513,7 +1530,7 @@ class _MainAppState extends State<MainApp> {
                 scheduledDate: result.preferredDate,
                 notes: notesText,
                 address: result.address,
-                priceEstimate: lowestPrice,
+                priceEstimate: lowestPrice ?? parsedMinFromRange,
                 latitude: result.latitude,
                 longitude: result.longitude,
               );

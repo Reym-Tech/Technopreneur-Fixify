@@ -201,3 +201,39 @@ class ReviewEntity extends Equatable {
   @override
   List<Object?> get props => [id, bookingId, rating, comment];
 }
+
+// ─────────────────────────────────────────
+// SERVICE OFFER
+// ─────────────────────────────────────────
+
+class ServiceOfferEntity extends Equatable {
+  final String id;
+  final String slug;
+  final String serviceName;
+  final String serviceType;
+  final String? description;
+  final String? imagePath;
+
+  final List<String> includes;
+  final String? priceRange;
+  final String? duration;
+  final String? tips;
+  final DateTime? createdAt;
+
+  const ServiceOfferEntity({
+    required this.id,
+    required this.slug,
+    required this.serviceName,
+    required this.serviceType,
+    this.description,
+    this.imagePath,
+    required this.includes,
+    this.priceRange,
+    this.duration,
+    this.tips,
+    this.createdAt,
+  });
+
+  @override
+  List<Object?> get props => [id, slug, serviceName, serviceType];
+}

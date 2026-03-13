@@ -608,6 +608,12 @@ class BookingStatusScreen extends StatelessWidget {
             _infoRow(
                 Icons.person_rounded, 'Handyman', booking.professional!.name),
           ],
+          if (booking.customer != null &&
+              booking.customer!.phone != null &&
+              booking.customer!.phone!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _infoRow(Icons.phone_rounded, 'Phone', booking.customer!.phone!),
+          ],
           const SizedBox(height: 12),
           _infoRow(
             Icons.calendar_today_rounded,
@@ -633,14 +639,28 @@ class BookingStatusScreen extends StatelessWidget {
             const SizedBox(height: 12),
             _infoRow(Icons.location_on_rounded, 'Location', booking.address!),
           ],
+          // Show estimated textual range (if present in notes) before agreed price.
+          if (_extractPriceRange(booking.notes) != null) ...[
+            const SizedBox(height: 12),
+            _infoRow(Icons.payments_rounded, 'Estimated Range',
+                _extractPriceRange(booking.notes)!),
+          ],
           if (booking.assessmentPrice != null) ...[
             const SizedBox(height: 12),
             _infoRow(Icons.payments_rounded, 'Agreed Price',
                 '₱${booking.assessmentPrice!.toStringAsFixed(0)}'),
           ],
-          if (booking.notes != null && booking.notes!.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _infoRow(Icons.notes_rounded, 'Notes', booking.notes!),
+          if (booking.notes != null) ...[
+            () {
+              final pruned = _pruneNotes(booking.notes!);
+              if (pruned.isNotEmpty) {
+                return Column(children: [
+                  const SizedBox(height: 12),
+                  _infoRow(Icons.notes_rounded, 'Notes', pruned),
+                ]);
+              }
+              return const SizedBox.shrink();
+            }(),
           ],
           // Cancel button (customer) — shown only for early statuses
           if (onCancel != null &&
@@ -662,6 +682,22 @@ class BookingStatusScreen extends StatelessWidget {
           ],
         ]),
       );
+
+  String? _extractPriceRange(String? notes) {
+    if (notes == null) return null;
+
+    // Look for explicit "Price Range: ..." lines first.
+    final explicit = RegExp(r'Price Range:\s*(.+)', caseSensitive: false);
+    final m = explicit.firstMatch(notes);
+    if (m != null) return m.group(1)?.trim();
+
+    // Fallback: try to find a currency range like "₱300 – ₱1,800" anywhere in notes.
+    final fallback = RegExp(r'₱\s?[0-9,]+\s*(?:[–\-]\s*₱?\s?[0-9,]+)?');
+    final m2 = fallback.firstMatch(notes);
+    if (m2 != null) return m2.group(0)?.trim();
+
+    return null;
+  }
 
   void _confirmCancelDialog(BuildContext context) {
     showDialog(
@@ -730,6 +766,22 @@ class BookingStatusScreen extends StatelessWidget {
           ),
         ],
       );
+}
+
+String _pruneNotes(String notes) {
+  var out = notes;
+
+  // Remove explicit 'Price Range: ...' or 'Estimated Price Range: ...' lines.
+  out = out.replaceAll(
+      RegExp(r'^.*Price Range:.*\n?', multiLine: true, caseSensitive: false),
+      '');
+  out = out.replaceAll(
+      RegExp(r'^.*Estimated Price Range:.*\n?',
+          multiLine: true, caseSensitive: false),
+      '');
+
+  // Trim leftover whitespace and return.
+  return out.trim();
 }
 
 // ── Timeline Step Widget ───────────────────────────────────────────────────────
@@ -984,6 +1036,14 @@ class _ConfirmCompletionCTA extends StatelessWidget {
         ],
       ),
     );
+
+    // String? _extractPriceRange(String? notes) {
+    //   if (notes == null) return null;
+    //   final m = RegExp(r'Price Range:\s*(.+)', caseSensitive: false)
+    //       .firstMatch(notes);
+    //   if (m != null) return m.group(1)?.trim();
+    //   return null;
+    // }
   }
 }
 

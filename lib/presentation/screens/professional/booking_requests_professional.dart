@@ -17,6 +17,52 @@ import 'package:intl/intl.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 
+// Local fallback catalog used when a booking does not include a price
+// estimate or textual range. This mirrors the customer-side catalogue and
+// helps display an estimated range for common offers.
+const Map<String, List<Map<String, String>>> _localOfferCatalogue = {
+  'Plumbing': [
+    {'title': 'Pipe Leak Repair', 'price': '₱500 – ₱2,500'},
+    {'title': 'Drain Cleaning', 'price': '₱300 – ₱1,800'},
+  ],
+  'Electrical': [
+    {'title': 'Wiring Repair', 'price': '₱600 – ₱3,000'},
+    {'title': 'Outlet Installation', 'price': '₱400 – ₱1,500 per outlet'},
+  ],
+  'Appliances': [
+    {'title': 'Washer Repair', 'price': '₱500 – ₱3,500'},
+    {'title': 'Dryer Repair', 'price': '₱500 – ₱3,000'},
+  ],
+  'Carpentry': [
+    {'title': 'Cabinet Installation', 'price': '₱1,500 – ₱8,000'},
+    {'title': 'Door Repair', 'price': '₱300 – ₱2,000'},
+  ],
+  'Painting': [
+    {'title': 'Wall Painting', 'price': '₱1,000 – ₱6,000 per room'},
+    {'title': 'Ceiling Painting', 'price': '₱800 – ₱4,000 per room'},
+  ],
+};
+
+String? _findOfferPriceRangeForBooking(BookingEntity booking) {
+  final offers = _localOfferCatalogue[booking.serviceType];
+  if (offers == null || offers.isEmpty) return null;
+
+  final notesLower = (booking.notes ?? '').toLowerCase();
+  final descLower = (booking.description ?? '').toLowerCase();
+
+  // Prefer a specific matching offer title found in notes/description.
+  for (final o in offers) {
+    final title = (o['title'] ?? '').toLowerCase();
+    if (title.isNotEmpty &&
+        (notesLower.contains(title) || descLower.contains(title))) {
+      return o['price'];
+    }
+  }
+
+  // Fallback to the first offer's price range for the service type.
+  return offers.first['price'];
+}
+
 class BookingRequestsScreen extends StatefulWidget {
   final List<BookingEntity> bookings;
   final bool isAvailable;
@@ -368,6 +414,12 @@ class _RequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textualRange = _extractPriceRange(booking.notes);
+    final offerRange = _findOfferPriceRangeForBooking(booking);
+    final displayRange = textualRange ?? offerRange;
+    final hasNumeric =
+        booking.priceEstimate != null && booking.priceEstimate! > 0;
+
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -448,14 +500,30 @@ class _RequestCard extends StatelessWidget {
                     _detailRow(Icons.location_on_outlined, 'Location',
                         booking.address!),
                   if (booking.notes != null && booking.notes!.isNotEmpty)
-                    _detailRow(Icons.notes_rounded, 'Notes', booking.notes!),
+                    // Avoid showing a duplicate "Price Range" line in Notes
+                    // when we already surface the estimated range/rate below.
+                    _detailRow(
+                      Icons.notes_rounded,
+                      'Notes',
+                      _stripPriceRangeFromNotes(
+                        booking.notes!,
+                        // Hide the inline Price Range when we'll show any
+                        // estimated pricing (textual range, offer fallback,
+                        // or numeric rate).
+                        hideIfRangeShown: displayRange != null || hasNumeric,
+                      ),
+                    ),
                   // Show date + time; falls back to date-only if time is midnight
                   _detailRow(
                     Icons.calendar_today_outlined,
                     'Preferred Schedule',
                     _formatSchedule(booking.scheduledDate),
                   ),
-                  if (booking.priceEstimate != null)
+                  // Display estimated pricing: range (textual or offer) or numeric rate.
+                  if (displayRange != null)
+                    _detailRow(Icons.payments_outlined, 'Estimated Range',
+                        displayRange)
+                  else if (hasNumeric)
                     _detailRow(Icons.payments_outlined, 'Estimated Rate',
                         '₱${booking.priceEstimate!.toStringAsFixed(0)}/hr'),
                 ],
@@ -573,6 +641,29 @@ class _RequestCard extends StatelessWidget {
     if (local.hour == 0 && local.minute == 0) return datePart;
     final timePart = DateFormat('h:mm a').format(local);
     return '$datePart · $timePart';
+  }
+
+  String? _extractPriceRange(String? notes) {
+    if (notes == null) return null;
+    final m =
+        RegExp(r'^Price Range:\s*(.+)\$', multiLine: true, caseSensitive: false)
+            .firstMatch(notes);
+    if (m != null) return m.group(1)?.trim();
+    return null;
+  }
+
+  /// Removes an inline "Price Range: ..." line from `notes` when the
+  /// estimated range/rate is shown separately to avoid duplication.
+  String _stripPriceRangeFromNotes(String notes,
+      {required bool hideIfRangeShown}) {
+    if (!hideIfRangeShown) return notes;
+    // Remove any line that contains "Price Range:" (case-insensitive).
+    final cleaned = notes.replaceAll(
+      RegExp(r'^.*Price Range:.*(?:\r?\n)?',
+          multiLine: true, caseSensitive: false),
+      '',
+    );
+    return cleaned.trim();
   }
 
   String _timeAgo(DateTime dt) {

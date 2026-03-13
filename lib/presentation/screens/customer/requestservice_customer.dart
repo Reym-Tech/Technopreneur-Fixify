@@ -501,7 +501,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
                     color: AppColors.textDark)),
             const SizedBox(height: 10),
             const Text(
-              'Fixify requires your location to accurately pin the service address and match you with the nearest available professional.',
+              'AYO requires your location to accurately pin the service address and match you with the nearest available professional.',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 13, color: AppColors.textLight, height: 1.5),
@@ -1172,7 +1172,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Fixify requires location access to accurately pin your service address. Manual address entry is not supported to ensure service quality.',
+              'AYO requires location access to accurately pin your service address. Manual address entry is not supported to ensure service quality.',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 13, color: AppColors.textLight, height: 1.5),
@@ -1583,7 +1583,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         'label': 'Issue Details',
         'value': (_problemTitle == null || _problemTitle!.trim().isEmpty)
             ? 'No title selected'
-            : _problemTitle!.trim()
+            : _problemTitle!.trim() +
+                (_descCtrl.text.trim().isEmpty
+                    ? ''
+                    : '\n${_descCtrl.text.trim()}')
       },
       if (_priceRange != null && _priceRange!.isNotEmpty)
         {
@@ -1612,10 +1615,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       else if (widget.targetProfessionalId == null)
         {
           'icon': Icons.groups_rounded,
-          'label': 'Handymen Notified',
+          'label': 'Request Sent To',
           'value': pros.isEmpty
               ? 'None available right now'
-              : '${pros.length} available handyman${pros.length == 1 ? '' : 's'}',
+              : 'All available ${pros.length == 1 ? 'handyman' : 'handymen'}'
         },
       if (notesVal.isNotEmpty)
         {
@@ -1685,40 +1688,6 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         ).animate().fadeIn(delay: (e.key * 60).ms);
       }),
       const SizedBox(height: 12),
-      // Delivery ETA note added per request
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 8,
-                offset: const Offset(0, 3))
-          ],
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Estimated Arrival Times',
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark)),
-          const SizedBox(height: 8),
-          const Text(
-              'Short Distance (within 2–3 km): Handyman generally arrive within 10–15 minutes.',
-              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
-          const SizedBox(height: 6),
-          const Text(
-              'Medium Distance (4–7 km): En Route usually takes 15–25 minutes.',
-              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
-          const SizedBox(height: 6),
-          const Text(
-              'Maximum Radius (up to 10 km): For locations on the outskirts of the city, the dispatch phase can extend to 30 minutes or more.',
-              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
-        ]),
-      ).animate().fadeIn(delay: 320.ms),
       if (_photoPath != null) ...[
         Container(
           width: double.infinity,
@@ -1768,6 +1737,41 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         ),
         const SizedBox(height: 12),
       ],
+      const SizedBox(height: 12),
+      // Delivery ETA note added per request
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 8,
+                offset: const Offset(0, 3))
+          ],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Estimated Arrival Times',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark)),
+          const SizedBox(height: 8),
+          const Text(
+              'Short Distance (within 2–3 km): Handyman generally arrive within 10–15 minutes.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
+          const SizedBox(height: 6),
+          const Text(
+              'Medium Distance (4–7 km): En Route usually takes 15–25 minutes.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
+          const SizedBox(height: 6),
+          const Text(
+              'Maximum Radius (up to 10 km): For locations on the outskirts of the city, the dispatch phase can extend to 30 minutes or more.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMedium)),
+        ]),
+      ).animate().fadeIn(delay: 320.ms),
       const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.all(14),

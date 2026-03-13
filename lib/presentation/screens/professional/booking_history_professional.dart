@@ -321,6 +321,7 @@ class _HistoryCard extends StatelessWidget {
     final color = _statusColor(booking.status);
     final label = _statusLabel(booking.status);
     final bool isActionable = onMarkComplete != null;
+    final priceRange = _lookupPriceRange(booking);
 
     return GestureDetector(
       onTap: onTap,
@@ -408,9 +409,20 @@ class _HistoryCard extends StatelessWidget {
                       color: AppColors.textMedium,
                       fontWeight: FontWeight.w500),
                 ),
+                // Price display priority:
+                // 1) assessmentPrice (final price set by pro)
+                // 2) service offer price range (from known offers)
+                // 3) numeric priceEstimate (raw estimate)
                 if (booking.assessmentPrice != null) ...[
                   const Spacer(),
                   Text('₱${booking.assessmentPrice!.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary)),
+                ] else if (priceRange != null) ...[
+                  const Spacer(),
+                  Text(priceRange,
                       style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
@@ -513,12 +525,44 @@ class _HistoryCard extends StatelessWidget {
   }
 
   String _formatDateTime(DateTime dt) {
-    final day = dt.day.toString().padLeft(2, '0');
-    final month = dt.month.toString().padLeft(2, '0');
-    final year = dt.year.toString();
-    final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-    final minute = dt.minute.toString().padLeft(2, '0');
-    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    final local = dt.toLocal();
+    final day = local.day.toString().padLeft(2, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final year = local.year.toString();
+    final hour12 = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final ampm = local.hour >= 12 ? 'PM' : 'AM';
     return '$day/$month/$year • $hour12:$minute $ampm';
+  }
+
+  // A small lookup table for service offer price ranges used when bookings
+  // do not carry a numeric estimate. Keep in sync with RequestService screen.
+  static const Map<String, String> _knownPriceRanges = {
+    'Pipe Leak Repair': '₱500 – ₱2,500',
+    'Drain Cleaning': '₱300 – ₱1,800',
+    'Wiring Repair': '₱600 – ₱3,000',
+    'Outlet Installation': '₱400 – ₱1,500 per outlet',
+    'Washer Repair': '₱500 – ₱3,500',
+    'Dryer Repair': '₱500 – ₱3,000',
+    'Cabinet Installation': '₱1,500 – ₱8,000',
+    'Door Repair': '₱300 – ₱2,000',
+    'Wall Painting': '₱1,000 – ₱6,000 per room',
+    'Ceiling Painting': '₱800 – ₱4,000 per room',
+  };
+
+  String? _lookupPriceRange(BookingEntity b) {
+    // Prefer an exact match on serviceType (which stores the selected offer title)
+    final key = b.serviceType;
+    if (key.isNotEmpty && _knownPriceRanges.containsKey(key)) {
+      return _knownPriceRanges[key];
+    }
+    // Fallback: try matching against description or notes text
+    // (customers sometimes select a service category and the specific
+    // problem title is stored in `notes`), so check both fields.
+    final text = '${b.description ?? ''} ${b.notes ?? ''}';
+    for (final e in _knownPriceRanges.entries) {
+      if (text.toLowerCase().contains(e.key.toLowerCase())) return e.value;
+    }
+    return null;
   }
 }

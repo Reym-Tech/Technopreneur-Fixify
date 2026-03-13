@@ -31,6 +31,7 @@ class AppConfig {
   static const String professionalsTable = 'professionals';
   static const String bookingsTable = 'bookings';
   static const String reviewsTable = 'reviews';
+  static const String servicesTable = 'service_offers';
 
   // ── Storage buckets ─────────────────────────────────────
   static const String avatarsBucket = 'avatars';

@@ -219,6 +219,28 @@ class SupabaseDataSource {
         .toList();
   }
 
+  // ── SERVICE OFFERS ─────────────────────────────────────
+
+  Future<List<ServiceOfferModel>> getServiceOffers() async {
+    final data = await _client
+        .from(AppConfig.servicesTable)
+        .select()
+        .order('created_at', ascending: false);
+    return (data as List)
+        .map((j) => ServiceOfferModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<ServiceOfferModel?> getServiceOfferBySlug(String slug) async {
+    final maybe = await _client
+        .from(AppConfig.servicesTable)
+        .select()
+        .eq('slug', slug)
+        .maybeSingle();
+    if (maybe == null) return null;
+    return ServiceOfferModel.fromJson(maybe as Map<String, dynamic>);
+  }
+
   // ── PROFESSIONALS REALTIME ────────────────────────────────
 
   RealtimeChannel subscribeToProfessionalsUpdates({
@@ -509,11 +531,7 @@ class SupabaseDataSource {
   Future<List<BookingModel>> getCustomerBookings(String customerId) async {
     final response = await _client
         .from(AppConfig.bookingsTable)
-        .select(
-          '*, professionals(id, user_id, skills, verified, rating, review_count, '
-          'price_range, price_min, price_max, city, bio, years_experience, '
-          'available, latitude, longitude, users(id, name, avatar_url, phone))',
-        )
+        .select(_fullBookingSelect)
         .eq('customer_id', customerId)
         .order('created_at', ascending: false);
     return (response as List)
