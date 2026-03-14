@@ -176,19 +176,41 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
     final raw = _priceController.text.trim();
     final price = double.tryParse(raw);
     if (price == null || price <= 0) {
-      _showSnack('Please enter a valid price.');
+      _showSnack('Please enter a valid price.',
+          color: const Color(0xFFFF3B30), icon: Icons.error_outline_rounded);
       return;
     }
     setState(() => _isSubmittingPrice = true);
     try {
       await widget.onSetAssessmentPrice?.call(price);
+      // Success feedback — fires at the moment the card swaps out so the
+      // handyman gets an immediate confirmation at eye level.
+      if (mounted) {
+        _showSnack(
+          '₱${price.toStringAsFixed(0)} sent to customer. Waiting for their confirmation.',
+          color: const Color(0xFF5856D6),
+          icon: Icons.check_circle_rounded,
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSubmittingPrice = false);
     }
   }
 
-  void _showSnack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  void _showSnack(String msg, {Color? color, IconData? icon}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Row(children: [
+        if (icon != null) ...[
+          Icon(icon, color: Colors.white, size: 18),
+          const SizedBox(width: 10),
+        ],
+        Expanded(child: Text(msg)),
+      ]),
+      backgroundColor: color ?? AppColors.primary,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      duration: const Duration(seconds: 3),
+    ));
   }
 
   // ── VIEW — build ───────────────────────────────────────────────────────────
@@ -1347,14 +1369,14 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         ),
         const SizedBox(height: 16),
 
-        // ── Price setter ────────────────────────────────────────────────────
-        _buildPriceSetter(),
-
-        // ── Waiting banner (shown only after price has been sent) ───────────
-        if (widget.booking.assessmentPrice != null) ...[
-          const SizedBox(height: 16),
+        // ── Inline swap: price setter → waiting banner ───────────────────────
+        // Once the price is sent (assessmentPrice != null), the input card is
+        // replaced in-place by the waiting banner. The snackbar fired from
+        // _submitPrice() provides the immediate at-button-level confirmation.
+        if (widget.booking.assessmentPrice == null)
+          _buildPriceSetter()
+        else
           _buildWaitingForPriceConfirm(),
-        ],
       ]);
 
   // ── VIEW — Waiting for customer to confirm the price ──────────────────────

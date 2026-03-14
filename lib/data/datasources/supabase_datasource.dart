@@ -632,12 +632,17 @@ class SupabaseDataSource {
   }
 
   // ── Shared join string ─────────────────────────────────────
+  // NOTE: The nested users join inside professionals MUST use the explicit
+  // FK hint `users!user_id` to avoid PostgREST key-name collision with the
+  // top-level `users!customer_id` join. Without the hint, PostgREST may
+  // omit the nested users object (returning null), causing ProfessionalModel
+  // to lose name, avatarUrl, and phone — even though the data exists in DB.
   static const String _fullBookingSelect = '*, '
       'users!customer_id(id, name, avatar_url, phone), '
       'professionals!professional_id(id, user_id, skills, verified, '
       'rating, review_count, price_range, price_min, price_max, city, '
       'bio, years_experience, available, latitude, longitude, '
-      'users(id, name, avatar_url, phone))';
+      'users!user_id(id, name, avatar_url, phone))';
 
   // ── BOOKING QUERIES ───────────────────────────────────────
 

@@ -37,6 +37,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:intl/intl.dart';
@@ -94,6 +95,23 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
   VoidCallback? get onLeaveReview => widget.onLeaveReview;
   VoidCallback? get onCancel => widget.onCancel;
   bool get hasReviewed => widget.hasReviewed;
+
+  // ── VIEW helpers — handyman card visibility ───────────────────────────────
+  // Show the handyman card from 'accepted' through 'completed' (not on
+  // pending or cancelled — no professional assigned yet / anymore).
+  bool get _showHandymanCard {
+    const visibleStatuses = {
+      BookingStatus.accepted,
+      BookingStatus.scheduleProposed,
+      BookingStatus.scheduled,
+      BookingStatus.pendingArrivalConfirmation,
+      BookingStatus.assessment,
+      BookingStatus.inProgress,
+      BookingStatus.pendingCustomerConfirmation,
+      BookingStatus.completed,
+    };
+    return visibleStatuses.contains(booking.status);
+  }
 
   // ── MODEL (View-local) — timeline step definitions ────────────────────────
   // scheduleProposed intentionally removed — customers set their own time;
@@ -254,6 +272,19 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                         .fadeIn(delay: 150.ms)
                         .slideY(begin: 0.06, end: 0),
                     const SizedBox(height: 16),
+
+                    // ── Handyman Info Card ───────────────────────────────
+                    // Shown from 'accepted' onwards whenever a professional
+                    // has been assigned. Tapping opens a detail bottom sheet.
+                    if (_showHandymanCard && booking.professional != null) ...[
+                      _HandymanInfoCard(
+                        professional: booking.professional!,
+                      )
+                          .animate()
+                          .fadeIn(delay: 210.ms)
+                          .slideY(begin: 0.06, end: 0),
+                      const SizedBox(height: 16),
+                    ],
 
                     // ── Confirm Arrival CTA ──────────────────────────────
                     if (booking.status ==
@@ -643,11 +674,8 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                   color: AppColors.textDark)),
           const SizedBox(height: 16),
           _infoRow(Icons.build_rounded, 'Service', booking.serviceType),
-          if (booking.professional != null) ...[
-            const SizedBox(height: 12),
-            _infoRow(
-                Icons.person_rounded, 'Handyman', booking.professional!.name),
-          ],
+          // Handyman name row intentionally removed — handyman details are
+          // shown in the dedicated _HandymanInfoCard above this section.
           if (booking.customer != null &&
               booking.customer!.phone != null &&
               booking.customer!.phone!.isNotEmpty) ...[
@@ -1388,6 +1416,547 @@ class _ConfirmCompletionCTA extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── VIEW — Handyman Info Card (shown from 'accepted' onwards) ─────────────
+// Tapping the card opens _HandymanDetailSheet — a bottom sheet with full
+// professional details (city, bio, skills, ratings, Maps deep-link).
+
+class _HandymanInfoCard extends StatelessWidget {
+  final ProfessionalEntity professional;
+
+  const _HandymanInfoCard({required this.professional});
+
+  @override
+  Widget build(BuildContext context) {
+    final pro = professional;
+    return GestureDetector(
+      onTap: () => _HandymanDetailSheet.show(context, pro),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4))
+          ],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── Section header ─────────────────────────────────────────
+          Row(children: [
+            const Icon(Icons.person_pin_rounded,
+                size: 15, color: AppColors.primary),
+            const SizedBox(width: 6),
+            const Text('Your Handyman',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary)),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.primary.withOpacity(0.18)),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Text('View Details',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary)),
+                SizedBox(width: 4),
+                Icon(Icons.arrow_forward_ios_rounded,
+                    size: 10, color: AppColors.primary),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 12),
+
+          // ── Avatar + name row ──────────────────────────────────────
+          Row(children: [
+            _HICAvatar(name: pro.name, avatarUrl: pro.avatarUrl, size: 52),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Flexible(
+                        child: Text(pro.name,
+                            style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textDark),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                      if (pro.verified) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                              color: const Color(0xFF34C759).withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(6)),
+                          child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.verified_rounded,
+                                    size: 11, color: Color(0xFF34C759)),
+                                SizedBox(width: 3),
+                                Text('Verified',
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF34C759))),
+                              ]),
+                        ),
+                      ],
+                    ]),
+                    const SizedBox(height: 5),
+                    // Star rating row
+                    Row(children: [
+                      ...List.generate(
+                          5,
+                          (i) => Icon(
+                                i < pro.rating.round()
+                                    ? Icons.star_rounded
+                                    : Icons.star_outline_rounded,
+                                size: 14,
+                                color: const Color(0xFFFF9F0A),
+                              )),
+                      const SizedBox(width: 5),
+                      Text(
+                          '${pro.rating.toStringAsFixed(1)} (${pro.reviewCount})',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textMedium,
+                              fontWeight: FontWeight.w500)),
+                    ]),
+                  ]),
+            ),
+          ]),
+
+          // ── Pills row ──────────────────────────────────────────────
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: Color(0xFFF0F0F0)),
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, runSpacing: 6, children: [
+            if (pro.yearsExperience > 0)
+              _HICPill(Icons.work_history_rounded,
+                  '${pro.yearsExperience} yr${pro.yearsExperience == 1 ? '' : 's'} exp'),
+            if (pro.city != null && pro.city!.isNotEmpty)
+              _HICPill(Icons.location_on_rounded, pro.city!),
+            if (pro.skills.isNotEmpty)
+              _HICPill(
+                  Icons.build_rounded,
+                  pro.skills.map(_cap).take(2).join(', ') +
+                      (pro.skills.length > 2 ? '…' : '')),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  static String _cap(String s) =>
+      s.isNotEmpty ? '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}' : s;
+}
+
+// ── VIEW — Handyman Detail Bottom Sheet ──────────────────────────────────────
+
+class _HandymanDetailSheet extends StatelessWidget {
+  final ProfessionalEntity professional;
+
+  const _HandymanDetailSheet({required this.professional});
+
+  static void show(BuildContext context, ProfessionalEntity pro) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _HandymanDetailSheet(professional: pro),
+    );
+  }
+
+  // ── Google Maps deep-link — open professional's city location ────────────
+  Future<void> _openMaps(BuildContext context) async {
+    final pro = professional;
+    Uri uri;
+
+    if (pro.latitude != null && pro.longitude != null) {
+      uri = Uri.parse(
+        'https://www.google.com/maps/search/?api=1'
+        '&query=${pro.latitude},${pro.longitude}',
+      );
+    } else if (pro.city != null && pro.city!.isNotEmpty) {
+      final encoded = Uri.encodeComponent(pro.city!);
+      uri =
+          Uri.parse('https://www.google.com/maps/search/?api=1&query=$encoded');
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('No location available for this handyman.'),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
+      return;
+    }
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Could not open Google Maps.'),
+          backgroundColor: AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ));
+      }
+    }
+  }
+
+  // ── Phone deep-link — open the dialler with the handyman's number ─────────
+  Future<void> _callHandyman(BuildContext context, String phone) async {
+    final uri = Uri(scheme: 'tel', path: phone);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Could not open the dialler.'),
+          backgroundColor: AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pro = professional;
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.backgroundLight,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.fromLTRB(20, 0, 20, bottomPad + 20),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // ── Drag handle ───────────────────────────────────────────────
+        const SizedBox(height: 12),
+        Center(
+          child: Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: const Color(0xFFDDDDDD),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // ── Header ───────────────────────────────────────────────────
+        Row(children: [
+          _HICAvatar(name: pro.name, avatarUrl: pro.avatarUrl, size: 60),
+          const SizedBox(width: 14),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Row(children: [
+                  Flexible(
+                    child: Text(pro.name,
+                        style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.textDark),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                  if (pro.verified) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                          color: const Color(0xFF34C759).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8)),
+                      child:
+                          const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.verified_rounded,
+                            size: 12, color: Color(0xFF34C759)),
+                        SizedBox(width: 4),
+                        Text('Verified',
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF34C759))),
+                      ]),
+                    ),
+                  ],
+                ]),
+                const SizedBox(height: 5),
+                Row(children: [
+                  ...List.generate(
+                      5,
+                      (i) => Icon(
+                            i < pro.rating.round()
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            size: 15,
+                            color: const Color(0xFFFF9F0A),
+                          )),
+                  const SizedBox(width: 6),
+                  Text(
+                      '${pro.rating.toStringAsFixed(1)} · ${pro.reviewCount} reviews',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMedium,
+                          fontWeight: FontWeight.w500)),
+                ]),
+              ])),
+        ]),
+
+        const SizedBox(height: 20),
+        const Divider(height: 1, color: Color(0xFFEEEEEE)),
+        const SizedBox(height: 16),
+
+        // ── Detail rows ───────────────────────────────────────────────
+        _DetailRow(
+          icon: Icons.work_history_rounded,
+          label: 'Experience',
+          value: pro.yearsExperience > 0
+              ? '${pro.yearsExperience} year${pro.yearsExperience == 1 ? '' : 's'}'
+              : 'Not specified',
+        ),
+        if (pro.city != null && pro.city!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _DetailRow(
+            icon: Icons.location_city_rounded,
+            label: 'City',
+            value: pro.city!,
+          ),
+        ],
+        // Phone — sourced from the professional's users row (ProfessionalEntity.phone).
+        // Collected at registration and editable in the Professional Profile screen.
+        if (pro.phone != null && pro.phone!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _DetailRow(
+            icon: Icons.phone_rounded,
+            label: 'Phone',
+            value: pro.phone!,
+          ),
+        ],
+        if (pro.skills.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _DetailRow(
+            icon: Icons.build_rounded,
+            label: 'Skills',
+            value: pro.skills
+                .map((s) => s.isNotEmpty
+                    ? '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}'
+                    : s)
+                .join(', '),
+          ),
+        ],
+        if (pro.bio != null && pro.bio!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _DetailRow(
+            icon: Icons.info_outline_rounded,
+            label: 'About',
+            value: pro.bio!,
+          ),
+        ],
+
+        // ── Action buttons ────────────────────────────────────────────
+        // Show Call and/or Maps buttons when relevant data is available.
+        if ((pro.phone != null && pro.phone!.isNotEmpty) ||
+            pro.latitude != null ||
+            (pro.city != null && pro.city!.isNotEmpty)) ...[
+          const SizedBox(height: 20),
+          Row(children: [
+            // Call button — only shown when phone is available
+            if (pro.phone != null && pro.phone!.isNotEmpty) ...[
+              Expanded(
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.call_rounded, size: 18),
+                  label: const Text('Call'),
+                  onPressed: () => _callHandyman(context, pro.phone!),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF34C759),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 14),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
+            // Spacer between buttons when both are visible
+            if ((pro.phone != null && pro.phone!.isNotEmpty) &&
+                (pro.latitude != null ||
+                    (pro.city != null && pro.city!.isNotEmpty)))
+              const SizedBox(width: 10),
+            // Maps button — only shown when location is available
+            if (pro.latitude != null ||
+                (pro.city != null && pro.city!.isNotEmpty))
+              Expanded(
+                flex: (pro.phone != null && pro.phone!.isNotEmpty) ? 2 : 1,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.map_rounded, size: 18),
+                  label: const Text('View on Maps'),
+                  onPressed: () => _openMaps(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1A73E8),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 14),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+          ]),
+        ],
+      ]),
+    );
+  }
+}
+
+// ── VIEW — Detail Row helper (used inside _HandymanDetailSheet) ─────────────
+
+class _DetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _DetailRow(
+      {required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: AppColors.primary.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, size: 17, color: AppColors.primary),
+      ),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textLight,
+                  fontWeight: FontWeight.w500)),
+          const SizedBox(height: 3),
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textDark,
+                  fontWeight: FontWeight.w600,
+                  height: 1.4)),
+        ]),
+      ),
+    ]);
+  }
+}
+
+// ── VIEW — Reusable avatar widget for handyman info card ─────────────────────
+
+class _HICAvatar extends StatelessWidget {
+  final String name;
+  final String? avatarUrl;
+  final double size;
+
+  const _HICAvatar(
+      {required this.name, required this.avatarUrl, this.size = 52});
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'H';
+    if (avatarUrl != null && avatarUrl!.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(size * 0.28),
+        child: Image.network(
+          avatarUrl!,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          loadingBuilder: (_, child, prog) =>
+              prog == null ? child : _placeholder(initial),
+          errorBuilder: (_, __, ___) => _placeholder(initial),
+        ),
+      );
+    }
+    return _placeholder(initial);
+  }
+
+  Widget _placeholder(String letter) => Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: AppColors.primary.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(size * 0.28),
+        ),
+        child: Center(
+          child: Text(letter,
+              style: TextStyle(
+                  fontSize: size * 0.42,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primary)),
+        ),
+      );
+}
+
+// ── VIEW — Pill chip helper (used inside _HandymanInfoCard) ──────────────────
+
+class _HICPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _HICPill(this.icon, this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primary.withOpacity(0.15)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 12, color: AppColors.primary),
+        const SizedBox(width: 5),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primary)),
+      ]),
     );
   }
 }

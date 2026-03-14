@@ -73,34 +73,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 ),
                 const SizedBox(height: 40),
 
-                // Pro avatar
-                Container(
-                  width: 90,
-                  height: 90,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.primaryLight, AppColors.primary],
-                    ),
-                    borderRadius: BorderRadius.circular(26),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withOpacity(0.3),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Center(
-                    child: Text(
-                      pro?.name.isNotEmpty == true ? pro!.name[0] : 'P',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 36,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ).animate().scale(begin: const Offset(0.8, 0.8)),
+                // Pro avatar — shows network image if available, falls back to initial
+                _ProAvatar(
+                  name: pro?.name ?? '',
+                  avatarUrl: pro?.avatarUrl,
+                ),
                 const SizedBox(height: 16),
                 Text(
                   pro?.name ?? 'Professional',
@@ -235,5 +212,66 @@ class _ReviewScreenState extends State<ReviewScreen> {
       _rating,
       _commentController.text.isEmpty ? null : _commentController.text,
     );
+  }
+}
+
+// ── Avatar widget ─────────────────────────────────────────────────────────────
+// Shows the handyman's network image when avatarUrl is available.
+// Falls back to a gradient tile with the name initial if not.
+
+class _ProAvatar extends StatelessWidget {
+  final String name;
+  final String? avatarUrl;
+
+  const _ProAvatar({required this.name, this.avatarUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'P';
+
+    final Widget placeholder = Container(
+      width: 90,
+      height: 90,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.primaryLight, AppColors.primary],
+        ),
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 36,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+
+    if (avatarUrl == null || avatarUrl!.isEmpty) {
+      return placeholder.animate().scale(begin: const Offset(0.8, 0.8));
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(26),
+      child: Image.network(
+        avatarUrl!,
+        width: 90,
+        height: 90,
+        fit: BoxFit.cover,
+        loadingBuilder: (_, child, progress) =>
+            progress == null ? child : placeholder,
+        errorBuilder: (_, __, ___) => placeholder,
+      ),
+    ).animate().scale(begin: const Offset(0.8, 0.8));
   }
 }

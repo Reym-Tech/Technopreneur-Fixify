@@ -5,9 +5,20 @@
 // Shows a list of all their submitted applications with status chips
 // (Pending / Approved / Rejected + admin note).
 //
+// ONE-SKILL MODEL: each handyman has exactly one skill, so there will be at
+// most one application at any point. The FAB is driven by that single
+// application's status:
+//
+//   no applications → "Apply for Verification"   (add icon)
+//   pending         → FAB hidden (review in progress; no action available)
+//   rejected        → "Re-apply"                 (refresh icon)
+//   approved        → "Update Credentials"        (edit icon)
+//
+// The callback wired to the FAB is always onApplyNew — main.dart unchanged.
+//
 // Key props:
 //   applications  → List<ApplicationModel>  — from ApplicationDataSource
-//   onApplyNew    → VoidCallback?           — "Apply for New Service" button
+//   onApplyNew    → VoidCallback?           — FAB action (apply / re-apply / update)
 //   onBack        → VoidCallback?
 
 import 'package:flutter/material.dart';
@@ -27,8 +38,40 @@ class VerificationStatusScreen extends StatelessWidget {
     this.onBack,
   });
 
+  // ── VIEW helpers — one-skill FAB state machine ───────────────────────────
+  //
+  // Derives FAB label/icon from the single application's status.
+  // Returns null when the FAB should be hidden (pending review).
+
+  _FabConfig? get _fabConfig {
+    if (applications.isEmpty) {
+      return const _FabConfig(
+        label: 'Apply for Verification',
+        icon: Icons.add_rounded,
+      );
+    }
+    // Use the most recent application (list is ordered newest-first).
+    switch (applications.first.status) {
+      case 'approved':
+        return const _FabConfig(
+          label: 'Update Credentials',
+          icon: Icons.edit_rounded,
+        );
+      case 'rejected':
+        return const _FabConfig(
+          label: 'Re-apply',
+          icon: Icons.refresh_rounded,
+        );
+      case 'pending':
+      default:
+        // Application is under review — no action available.
+        return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final fab = _fabConfig;
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       body: Column(children: [
@@ -43,13 +86,16 @@ class VerificationStatusScreen extends StatelessWidget {
                 ),
         ),
       ]),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: onApplyNew,
-        backgroundColor: AppColors.primary,
-        icon: const Icon(Icons.add_rounded, color: Colors.white),
-        label: const Text('Apply for New Service',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-      ),
+      floatingActionButton: fab == null
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: onApplyNew,
+              backgroundColor: AppColors.primary,
+              icon: Icon(fab.icon, color: Colors.white),
+              label: Text(fab.label,
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.w700)),
+            ),
     );
   }
 
@@ -219,6 +265,47 @@ class VerificationStatusScreen extends StatelessWidget {
             ]),
           ),
         ],
+        // ── Submitted documents ──────────────────────────────────────────────
+        // Shown whenever at least one URL is present. Each thumbnail is
+        // tappable and opens a full-screen InteractiveViewer dialog.
+        if (app.credentialUrl != null || app.validIdUrl != null) ...[
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: Color(0xFFEEEEEE)),
+          const SizedBox(height: 12),
+          Row(children: [
+            const Icon(Icons.folder_copy_rounded,
+                size: 13, color: AppColors.textLight),
+            const SizedBox(width: 5),
+            const Text('Submitted Documents',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textLight)),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            if (app.credentialUrl != null)
+              Expanded(
+                child: _CredentialThumbnail(
+                  url: app.credentialUrl!,
+                  label: 'Credential',
+                  icon: Icons.workspace_premium_rounded,
+                  color: const Color(0xFFFF9500),
+                ),
+              ),
+            if (app.credentialUrl != null && app.validIdUrl != null)
+              const SizedBox(width: 10),
+            if (app.validIdUrl != null)
+              Expanded(
+                child: _CredentialThumbnail(
+                  url: app.validIdUrl!,
+                  label: 'Valid ID',
+                  icon: Icons.badge_rounded,
+                  color: const Color(0xFF007AFF),
+                ),
+              ),
+          ]),
+        ],
       ]),
     ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
   }
@@ -297,5 +384,185 @@ class VerificationStatusScreen extends StatelessWidget {
       'Dec'
     ];
     return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+  }
+}
+
+// ── FAB config ────────────────────────────────────────────────────────────────
+// Immutable value object that drives the FAB label and icon.
+// Returned as null by _fabConfig when the FAB should be hidden (pending state).
+
+class _FabConfig {
+  final String label;
+  final IconData icon;
+  const _FabConfig({required this.label, required this.icon});
+}
+
+// ── Credential thumbnail ──────────────────────────────────────────────────────
+// Tappable image tile used in the "Submitted Documents" section.
+// Opens a full-screen InteractiveViewer dialog on tap — pinch-to-zoom supported.
+// Shows a placeholder tile while loading and a broken-image state on error.
+
+class _CredentialThumbnail extends StatelessWidget {
+  final String url;
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  const _CredentialThumbnail({
+    required this.url,
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _showImagePreview(context),
+      child: Container(
+        height: 96,
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.25)),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13),
+          child: Stack(fit: StackFit.expand, children: [
+            // Network image
+            Image.network(
+              url,
+              fit: BoxFit.cover,
+              loadingBuilder: (_, child, progress) =>
+                  progress == null ? child : _placeholder(spinning: true),
+              errorBuilder: (_, __, ___) => _placeholder(error: true),
+            ),
+            // Label overlay at the bottom
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.55),
+                    ],
+                  ),
+                ),
+                child: Row(children: [
+                  Icon(icon, size: 11, color: Colors.white),
+                  const SizedBox(width: 4),
+                  Text(label,
+                      style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                  const Spacer(),
+                  const Icon(Icons.zoom_in_rounded,
+                      size: 12, color: Colors.white70),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholder({bool spinning = false, bool error = false}) => Container(
+        color: Colors.grey.shade100,
+        child: Center(
+          child: spinning
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(color)),
+                )
+              : Icon(
+                  error ? Icons.broken_image_rounded : icon,
+                  size: 28,
+                  color: color.withOpacity(0.4),
+                ),
+        ),
+      );
+
+  void _showImagePreview(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.92),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(alignment: Alignment.center, children: [
+          // Pinch-to-zoom image viewer
+          InteractiveViewer(
+            minScale: 0.8,
+            maxScale: 5.0,
+            child: Image.network(
+              url,
+              fit: BoxFit.contain,
+              loadingBuilder: (_, child, progress) => progress == null
+                  ? child
+                  : const SizedBox(
+                      height: 200,
+                      child: Center(
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white54),
+                      ),
+                    ),
+              errorBuilder: (_, __, ___) => const Center(
+                child: Icon(Icons.broken_image_rounded,
+                    size: 64, color: Colors.white38),
+              ),
+            ),
+          ),
+          // Label chip at the top
+          Positioned(
+            top: MediaQuery.of(ctx).padding.top + 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.55),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(icon, size: 13, color: Colors.white),
+                const SizedBox(width: 6),
+                Text(label,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white)),
+              ]),
+            ),
+          ),
+          // Close button
+          Positioned(
+            top: MediaQuery.of(ctx).padding.top + 12,
+            right: 16,
+            child: GestureDetector(
+              onTap: () => Navigator.of(ctx).pop(),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close_rounded,
+                    color: Colors.white, size: 20),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
   }
 }
