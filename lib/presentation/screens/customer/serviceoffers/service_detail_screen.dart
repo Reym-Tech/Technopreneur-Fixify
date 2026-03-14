@@ -8,7 +8,7 @@
 //   serviceName     → String
 //   serviceType     → String   — matches RequestServiceScreen serviceType (e.g. 'Plumbing')
 //   description     → String
-//   imagePath       → String
+//   imageUrl        → String   — Supabase Storage URL (replaces local imagePath asset)
 //   accentColor     → Color
 //   icon            → IconData
 //   includes        → List<String>  — what the service covers
@@ -16,7 +16,7 @@
 //   duration        → String        — e.g. '1–3 hours'
 //   tips            → String?       — optional tip/note for the customer
 //   onBookNow       → Function(String serviceType, String serviceName)
-//                     ↑ now passes BOTH so the request wizard can pre-fill
+//                     ↑ passes BOTH so the request wizard can pre-fill
 //                       the Problem Title field with the specific service name.
 
 import 'package:flutter/material.dart';
@@ -27,7 +27,15 @@ class ServiceDetailScreen extends StatelessWidget {
   final String serviceName;
   final String serviceType;
   final String description;
-  final String imagePath;
+
+  /// Network URL for the hero image (Supabase Storage).
+  /// Falls back to an icon placeholder if null or if the network request fails.
+  final String? imageUrl;
+  /// Legacy local asset path used by older callers. If provided, it will be
+  /// used as a fallback for `imageUrl` so older callers that pass
+  /// `imagePath:` keep working.
+  final String? imagePath;
+
   final Color accentColor;
   final IconData icon;
   final List<String> includes;
@@ -46,7 +54,8 @@ class ServiceDetailScreen extends StatelessWidget {
     required this.serviceName,
     required this.serviceType,
     required this.description,
-    required this.imagePath,
+    this.imageUrl,
+    this.imagePath,
     required this.accentColor,
     required this.icon,
     required this.includes,
@@ -58,6 +67,12 @@ class ServiceDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final String? _heroSrc = (imageUrl != null && imageUrl!.isNotEmpty)
+        ? imageUrl
+        : (imagePath != null && imagePath!.isNotEmpty)
+            ? imagePath
+            : null;
+
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       body: CustomScrollView(
@@ -90,14 +105,21 @@ class ServiceDetailScreen extends StatelessWidget {
               background: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.asset(
-                    imagePath,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: accentColor.withOpacity(0.2),
-                      child: Icon(icon, size: 80, color: accentColor),
-                    ),
-                  ),
+                  // ── Hero image — prefer network URL, fall back to legacy
+                  // `imagePath` (asset) and finally to icon placeholder.
+                  if (_heroSrc != null && _heroSrc.startsWith('http'))
+                    Image.network(
+                      _heroSrc,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (_, child, progress) =>
+                          progress == null ? child : _heroPlaceholder(),
+                      errorBuilder: (_, __, ___) => _heroPlaceholder(),
+                    )
+                  else if (_heroSrc != null)
+                    Image.asset(_heroSrc, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _heroPlaceholder())
+                  else
+                    _heroPlaceholder(),
                   // Gradient overlay
                   DecoratedBox(
                     decoration: BoxDecoration(
@@ -162,7 +184,7 @@ class ServiceDetailScreen extends StatelessWidget {
                     _tipBox(tips!, accentColor),
                   ],
 
-                  const SizedBox(height: 100), // space for bottom button
+                  const SizedBox(height: 100),
                 ],
               ),
             ),
@@ -172,6 +194,12 @@ class ServiceDetailScreen extends StatelessWidget {
       bottomNavigationBar: _buildBookButton(context),
     );
   }
+
+  /// Placeholder shown while image loads or on error.
+  Widget _heroPlaceholder() => Container(
+        color: accentColor.withOpacity(0.2),
+        child: Center(child: Icon(icon, size: 80, color: accentColor)),
+      );
 
   Widget _statChip(IconData icon, String label, Color color) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -263,7 +291,6 @@ class ServiceDetailScreen extends StatelessWidget {
             child: ElevatedButton(
               onPressed: () {
                 if (onBookNow != null) {
-                  // Pass BOTH serviceType (category) and serviceName (specific)
                   onBookNow!(serviceType, serviceName);
                 } else {
                   Navigator.of(context).pop();

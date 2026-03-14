@@ -1,17 +1,22 @@
 // lib/presentation/screens/admin/approvals_admin.dart
 //
-// ApprovalsScreen — Admin screen to review handyman applications.
+// ApprovalsScreen — Admin screen to review:
+//   1. Handyman verification applications  (ApplicationModel pipeline)
+//   2. Service offer proposals             (ServiceProposalModel pipeline)
 //
-// Shows pending applications with credential + valid ID preview,
-// approve button, and reject button (with optional note).
+// Top-level tabs: "Handyman Apps" | "Service Proposals"
+// Each tab has sub-tabs: Pending / Approved / Rejected
 //
 // Key props:
-//   applications → List<ApplicationModel>                     — from ApplicationDataSource
-//   onApprove    → Function(ApplicationModel)?                — approve tap
-//   onReject     → Function(ApplicationModel, String? note)?  — reject tap
-//   onBack       → VoidCallback?
-//   onNavTap     → Function(int)?                              — bottom navigation tap
-//   currentNavIndex → int                                      — active nav tab
+//   applications  → List<ApplicationModel>
+//   proposals     → List<ServiceProposalModel>
+//   onApprove     → Function(ApplicationModel)?
+//   onReject      → Function(ApplicationModel, String? note)?
+//   onApproveProposal → Function(ServiceProposalModel)?
+//   onRejectProposal  → Function(ServiceProposalModel, String? note)?
+//   onBack        → VoidCallback?
+//   onNavTap      → Function(int)?
+//   currentNavIndex → int
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -20,8 +25,11 @@ import 'package:fixify/data/datasources/application_datasource.dart';
 
 class ApprovalsScreen extends StatefulWidget {
   final List<ApplicationModel> applications;
+  final List<ServiceProposalModel> proposals;
   final Function(ApplicationModel)? onApprove;
   final Function(ApplicationModel, String?)? onReject;
+  final Function(ServiceProposalModel)? onApproveProposal;
+  final Function(ServiceProposalModel, String?)? onRejectProposal;
   final VoidCallback? onBack;
   final Function(int)? onNavTap;
   final int currentNavIndex;
@@ -29,8 +37,11 @@ class ApprovalsScreen extends StatefulWidget {
   const ApprovalsScreen({
     super.key,
     this.applications = const [],
+    this.proposals = const [],
     this.onApprove,
     this.onReject,
+    this.onApproveProposal,
+    this.onRejectProposal,
     this.onBack,
     this.onNavTap,
     this.currentNavIndex = 1,
@@ -41,184 +52,198 @@ class ApprovalsScreen extends StatefulWidget {
 }
 
 class _ApprovalsScreenState extends State<ApprovalsScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabs;
-  String? _processingId; // which card is loading
+    with TickerProviderStateMixin {
+  // Top-level: Handyman Apps vs Service Proposals
+  late TabController _topTabs;
+  // Sub-tabs: Pending / Approved / Rejected — one per top-level tab
+  late TabController _appSubTabs;
+  late TabController _propSubTabs;
+
+  String? _processingId;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _topTabs = TabController(length: 2, vsync: this);
+    _appSubTabs = TabController(length: 3, vsync: this);
+    _propSubTabs = TabController(length: 3, vsync: this);
   }
 
   @override
   void dispose() {
-    _tabs.dispose();
+    _topTabs.dispose();
+    _appSubTabs.dispose();
+    _propSubTabs.dispose();
     super.dispose();
   }
 
-  List<ApplicationModel> _filtered(String status) =>
+  // ── Filtering helpers ──────────────────────────────────────────────────────
+
+  List<ApplicationModel> _filteredApps(String status) =>
       widget.applications.where((a) => a.status == status).toList();
+
+  List<ServiceProposalModel> _filteredProps(String status) =>
+      widget.proposals.where((p) => p.status == status).toList();
+
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final pending = _filtered('pending');
-    final approved = _filtered('approved');
-    final rejected = _filtered('rejected');
+    final pendingApps = _filteredApps('pending');
+    final pendingProps = _filteredProps('pending');
+    final totalPending = pendingApps.length + pendingProps.length;
 
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) widget.onNavTap?.call(0); // back → Dashboard
+        if (!didPop) widget.onNavTap?.call(0);
       },
       child: Scaffold(
         backgroundColor: AppColors.backgroundLight,
-        body: Column(
-          children: [
-            _buildHeader(pending.length),
-            _buildTabs(pending.length, approved.length, rejected.length),
-            Expanded(
-              child: TabBarView(
-                controller: _tabs,
-                children: [
-                  _buildList(pending),
-                  _buildList(approved),
-                  _buildList(rejected),
-                ],
-              ),
+        body: Column(children: [
+          _buildHeader(totalPending),
+          // ── Top-level tab bar: Handyman Apps | Service Proposals ────────
+          Container(
+            color: const Color(0xFF0F3D2E),
+            child: TabBar(
+              controller: _topTabs,
+              indicatorColor: Colors.white,
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white54,
+              labelStyle: const TextStyle(
+                  fontWeight: FontWeight.w700, fontSize: 13),
+              tabs: [
+                Tab(
+                  text: 'Handyman Apps'
+                      '${pendingApps.isNotEmpty ? ' (${pendingApps.length})' : ''}',
+                ),
+                Tab(
+                  text: 'Service Proposals'
+                      '${pendingProps.isNotEmpty ? ' (${pendingProps.length})' : ''}',
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _topTabs,
+              children: [
+                // ── Pipeline 1: Handyman Applications ──────────────────
+                _buildApplicationsPipeline(pendingApps),
+                // ── Pipeline 2: Service Proposals ───────────────────────
+                _buildProposalsPipeline(pendingProps),
+              ],
+            ),
+          ),
+        ]),
         bottomNavigationBar: _buildBottomNav(),
       ),
     );
   }
 
-  Widget _buildHeader(int pendingCount) => Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF082218), Color(0xFF0F3D2E), Color(0xFF1A5C43)],
-          ),
-          borderRadius: BorderRadius.vertical(bottom: Radius.circular(0)),
-        ),
-        child: SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: widget.onBack ?? () => widget.onNavTap?.call(0),
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white,
-                      size: 18,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Handyman Approvals',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Review and verify applicants',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.65),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (pendingCount > 0)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF3B30).withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color: const Color(0xFFFF3B30).withOpacity(0.4)),
-                    ),
-                    child: Text(
-                      '$pendingCount pending',
-                      style: const TextStyle(
-                        color: Color(0xFFFF3B30),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      );
+  // ── Handyman Applications pipeline ────────────────────────────────────────
 
-  Widget _buildTabs(int p, int a, int r) => Container(
-        color: const Color(0xFF0F3D2E),
+  Widget _buildApplicationsPipeline(List<ApplicationModel> pending) {
+    final approved = _filteredApps('approved');
+    final rejected = _filteredApps('rejected');
+    return Column(children: [
+      Container(
+        color: const Color(0xFF082218),
         child: TabBar(
-          controller: _tabs,
-          indicatorColor: Colors.white,
+          controller: _appSubTabs,
+          indicatorColor: const Color(0xFF34C759),
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white54,
           labelStyle:
-              const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
           tabs: [
-            Tab(text: 'Pending${p > 0 ? ' ($p)' : ''}'),
-            Tab(text: 'Approved${a > 0 ? ' ($a)' : ''}'),
-            Tab(text: 'Rejected${r > 0 ? ' ($r)' : ''}'),
+            Tab(text: 'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
+            Tab(text: 'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
+            Tab(text: 'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
           ],
         ),
-      );
-
-  Widget _buildList(List<ApplicationModel> apps) {
-    if (apps.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      ),
+      Expanded(
+        child: TabBarView(
+          controller: _appSubTabs,
           children: [
-            Icon(
-              Icons.check_circle_outline_rounded,
-              size: 52,
-              color: AppColors.textLight.withOpacity(0.3),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Nothing here',
-              style: TextStyle(color: AppColors.textLight, fontSize: 15),
-            ),
+            _buildAppList(pending),
+            _buildAppList(approved),
+            _buildAppList(rejected),
           ],
         ),
-      );
-    }
+      ),
+    ]);
+  }
+
+  Widget _buildAppList(List<ApplicationModel> apps) {
+    if (apps.isEmpty) return _emptyState();
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
       itemCount: apps.length,
-      itemBuilder: (_, i) => _buildCard(apps[i], i),
+      itemBuilder: (_, i) => _buildAppCard(apps[i], i),
     );
   }
 
-  Widget _buildCard(ApplicationModel app, int index) {
+  // ── Service Proposals pipeline ────────────────────────────────────────────
+
+  Widget _buildProposalsPipeline(List<ServiceProposalModel> pending) {
+    final approved = _filteredProps('approved');
+    final rejected = _filteredProps('rejected');
+    return Column(children: [
+      Container(
+        color: const Color(0xFF082218),
+        child: TabBar(
+          controller: _propSubTabs,
+          indicatorColor: const Color(0xFFD4A843),
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white54,
+          labelStyle:
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+          tabs: [
+            Tab(text: 'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
+            Tab(text: 'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
+            Tab(text: 'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
+          ],
+        ),
+      ),
+      Expanded(
+        child: TabBarView(
+          controller: _propSubTabs,
+          children: [
+            _buildPropList(pending),
+            _buildPropList(approved),
+            _buildPropList(rejected),
+          ],
+        ),
+      ),
+    ]);
+  }
+
+  Widget _buildPropList(List<ServiceProposalModel> props) {
+    if (props.isEmpty) return _emptyState();
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+      itemCount: props.length,
+      itemBuilder: (_, i) => _buildProposalCard(props[i], i),
+    );
+  }
+
+  // ── Empty state ────────────────────────────────────────────────────────────
+
+  Widget _emptyState() => Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(Icons.check_circle_outline_rounded,
+              size: 52, color: AppColors.textLight.withOpacity(0.3)),
+          const SizedBox(height: 12),
+          const Text('Nothing here',
+              style: TextStyle(color: AppColors.textLight, fontSize: 15)),
+        ]),
+      );
+
+  // ── Handyman Application card ─────────────────────────────────────────────
+
+  Widget _buildAppCard(ApplicationModel app, int index) {
     final isPending = app.status == 'pending';
     final isLoading = _processingId == app.id;
 
@@ -229,222 +254,414 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
         ],
       ),
-      child: Column(
-        children: [
-          // ── Applicant info ─────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF34C759), Color(0xFF1A5C43)],
-                        ),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: Text(
-                          (app.applicantName?.isNotEmpty == true)
-                              ? app.applicantName![0].toUpperCase()
-                              : '?',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 18,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            app.applicantName ?? 'Unknown',
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textDark,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            app.applicantEmail ?? '',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textLight,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    _statusChip(app.status),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                // Service badge
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              _avatar(app.applicantName),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
-                        Icons.build_rounded,
-                        color: AppColors.primary,
-                        size: 14,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Applying for: ${app.serviceType}',
-                        style: const TextStyle(
-                          fontSize: 13,
+                  Text(app.applicantName ?? 'Unknown',
+                      style: const TextStyle(
+                          fontSize: 15,
                           fontWeight: FontWeight.w700,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // Details row
-                Row(
-                  children: [
-                    _info(Icons.trending_up_rounded,
-                        '${app.yearsExp} yrs experience'),
-                    if (app.priceMin != null) ...[
-                      const SizedBox(width: 16),
-                      _info(Icons.payments_rounded,
-                          '₱${app.priceMin!.toStringAsFixed(0)}/hr'),
-                    ],
-                  ],
-                ),
-                if (app.bio != null && app.bio!.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    app.bio!,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textMedium,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+                          color: AppColors.textDark)),
+                  const SizedBox(height: 2),
+                  Text(app.applicantEmail ?? '',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textLight)),
+                ]),
+              ),
+              _statusChip(app.status),
+            ]),
+            const SizedBox(height: 12),
+            _serviceBadge(app.serviceType, Icons.build_rounded),
+            const SizedBox(height: 10),
+            Row(children: [
+              _info(Icons.trending_up_rounded,
+                  '${app.yearsExp} yrs experience'),
+              if (app.priceMin != null) ...[
+                const SizedBox(width: 16),
+                _info(Icons.payments_rounded,
+                    '₱${app.priceMin!.toStringAsFixed(0)}/hr'),
               ],
-            ),
-          ),
-          // ── Documents preview ──────────────────────────────
-          if (app.credentialUrl != null || app.validIdUrl != null) ...[
-            const Divider(height: 1, color: Color(0xFFF0F0F0)),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-              child: Column(
+            ]),
+            if (app.bio != null && app.bio!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(app.bio!,
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.textMedium),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+            ],
+            if (app.adminNote != null && app.status == 'rejected') ...[
+              const SizedBox(height: 10),
+              _adminNoteChip(app.adminNote!),
+            ],
+          ]),
+        ),
+        if (app.credentialUrl != null || app.validIdUrl != null) ...[
+          const Divider(height: 1, color: Color(0xFFF0F0F0)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+            child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Submitted Documents',
-                    style: TextStyle(
+              const Text('Submitted Documents',
+                  style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: AppColors.textMedium,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      if (app.credentialUrl != null)
-                        _docTile('Credential', app.credentialUrl!,
-                            const Color(0xFFFF9500)),
-                      if (app.credentialUrl != null && app.validIdUrl != null)
-                        const SizedBox(width: 10),
-                      if (app.validIdUrl != null)
-                        _docTile('Valid ID', app.validIdUrl!,
-                            const Color(0xFF007AFF)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-          // ── Action buttons (pending only) ──────────────────
-          if (isPending) ...[
-            const Divider(height: 1, color: Color(0xFFF0F0F0)),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-              child: isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation(AppColors.primary),
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => _confirmReject(app),
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Color(0xFFFF3B30)),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            child: const Text(
-                              'Reject',
-                              style: TextStyle(
-                                color: Color(0xFFFF3B30),
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () => _approve(app),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF34C759),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              elevation: 0,
-                            ),
-                            child: const Text(
-                              'Approve',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ],
+                      letterSpacing: 0.3)),
+              const SizedBox(height: 10),
+              Row(children: [
+                if (app.credentialUrl != null)
+                  _docTile('Credential', app.credentialUrl!,
+                      const Color(0xFFFF9500)),
+                if (app.credentialUrl != null && app.validIdUrl != null)
+                  const SizedBox(width: 10),
+                if (app.validIdUrl != null)
+                  _docTile('Valid ID', app.validIdUrl!,
+                      const Color(0xFF007AFF)),
+              ]),
+            ]),
+          ),
         ],
-      ),
+        if (isPending) ...[
+          const Divider(height: 1, color: Color(0xFFF0F0F0)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            child: isLoading
+                ? const Center(
+                    child: CircularProgressIndicator(
+                        valueColor:
+                            AlwaysStoppedAnimation(AppColors.primary),
+                        strokeWidth: 2))
+                : _approveRejectRow(
+                    onReject: () => _confirmRejectApp(app),
+                    onApprove: () => _approveApp(app),
+                  ),
+          ),
+        ],
+      ]),
     ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
   }
+
+  // ── Service Proposal card ─────────────────────────────────────────────────
+
+  Widget _buildProposalCard(ServiceProposalModel prop, int index) {
+    final isPending = prop.status == 'pending';
+    final isLoading = _processingId == prop.id;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(18),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              _avatar(prop.proposerName,
+                  color: const Color(0xFFD4A843)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(prop.proposerName ?? 'Unknown',
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textDark)),
+                  const SizedBox(height: 2),
+                  Text(
+                      'Submitted ${_formatDate(prop.submittedAt)}',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textLight)),
+                ]),
+              ),
+              _statusChip(prop.status),
+            ]),
+            const SizedBox(height: 12),
+            // Service name + type badges
+            Wrap(spacing: 8, runSpacing: 6, children: [
+              _serviceBadge(prop.serviceName, Icons.storefront_rounded),
+              _serviceBadge(prop.serviceType, Icons.build_rounded,
+                  color: const Color(0xFF5856D6)),
+            ]),
+            // Quick details
+            if (prop.priceRange != null || prop.duration != null) ...[
+              const SizedBox(height: 10),
+              Row(children: [
+                if (prop.priceRange != null)
+                  _info(Icons.payments_rounded, prop.priceRange!),
+                if (prop.priceRange != null && prop.duration != null)
+                  const SizedBox(width: 16),
+                if (prop.duration != null)
+                  _info(Icons.schedule_rounded, prop.duration!),
+              ]),
+            ],
+            if (prop.description != null &&
+                prop.description!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(prop.description!,
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.textMedium),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+            ],
+            if (prop.adminNote != null && prop.status == 'rejected') ...[
+              const SizedBox(height: 10),
+              _adminNoteChip(prop.adminNote!),
+            ],
+          ]),
+        ),
+        // ── Service image preview ──────────────────────────────
+        if (prop.imageUrl != null && prop.imageUrl!.isNotEmpty) ...[
+          const Divider(height: 1, color: Color(0xFFF0F0F0)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              const Text('Service Image',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textMedium,
+                      letterSpacing: 0.3)),
+              const SizedBox(height: 10),
+              Row(children: [
+                _docTile('Service Image', prop.imageUrl!,
+                    const Color(0xFFD4A843)),
+              ]),
+            ]),
+          ),
+        ],
+        // ── Includes preview ───────────────────────────────────
+        if (prop.includes.isNotEmpty) ...[
+          const Divider(height: 1, color: Color(0xFFF0F0F0)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              const Text('What\'s Included',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textMedium)),
+              const SizedBox(height: 8),
+              ...prop.includes.take(3).map((item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      const Icon(Icons.check_rounded,
+                          size: 13, color: Color(0xFF34C759)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(item,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textMedium)),
+                      ),
+                    ]),
+                  )),
+              if (prop.includes.length > 3)
+                Text('+ ${prop.includes.length - 3} more',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.textLight)),
+            ]),
+          ),
+        ],
+        if (isPending) ...[
+          const Divider(height: 1, color: Color(0xFFF0F0F0)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            child: isLoading
+                ? const Center(
+                    child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation(
+                            Color(0xFFD4A843)),
+                        strokeWidth: 2))
+                : _approveRejectRow(
+                    onReject: () => _confirmRejectProposal(prop),
+                    onApprove: () => _approveProposal(prop),
+                    approveColor: const Color(0xFFD4A843),
+                  ),
+          ),
+        ],
+      ]),
+    ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
+  }
+
+  // ── Shared widget helpers ─────────────────────────────────────────────────
+
+  Widget _avatar(String? name,
+          {Color color = const Color(0xFF34C759)}) =>
+      Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+              colors: [color, color.withOpacity(0.6)]),
+          shape: BoxShape.circle,
+        ),
+        child: Center(
+          child: Text(
+            name?.isNotEmpty == true ? name![0].toUpperCase() : '?',
+            style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 18),
+          ),
+        ),
+      );
+
+  Widget _serviceBadge(String label, IconData icon,
+          {Color color = AppColors.primary}) =>
+      Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: color, size: 13),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: color)),
+        ]),
+      );
+
+  Widget _adminNoteChip(String note) => Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF3B30).withOpacity(0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: const Color(0xFFFF3B30).withOpacity(0.2)),
+        ),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.info_outline_rounded,
+              color: Color(0xFFFF3B30), size: 13),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text('Feedback: $note',
+                style: const TextStyle(
+                    fontSize: 11, color: Color(0xFFFF3B30))),
+          ),
+        ]),
+      );
+
+  Widget _approveRejectRow({
+    required VoidCallback onReject,
+    required VoidCallback onApprove,
+    Color approveColor = const Color(0xFF34C759),
+  }) =>
+      Row(children: [
+        Expanded(
+          child: OutlinedButton(
+            onPressed: onReject,
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Color(0xFFFF3B30)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+            child: const Text('Reject',
+                style: TextStyle(
+                    color: Color(0xFFFF3B30),
+                    fontWeight: FontWeight.w700)),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ElevatedButton(
+            onPressed: onApprove,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: approveColor,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              elevation: 0,
+            ),
+            child: const Text('Approve',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ),
+      ]);
+
+  Widget _statusChip(String status) {
+    final info = <String, dynamic>{
+          'pending': {
+            'label': 'Pending',
+            'color': const Color(0xFFFF9500)
+          },
+          'approved': {
+            'label': 'Approved',
+            'color': const Color(0xFF34C759)
+          },
+          'rejected': {
+            'label': 'Rejected',
+            'color': const Color(0xFFFF3B30)
+          },
+        }[status] ??
+        {'label': status, 'color': AppColors.textLight};
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: (info['color'] as Color).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+            color: (info['color'] as Color).withOpacity(0.35)),
+      ),
+      child: Text(info['label'] as String,
+          style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: info['color'] as Color)),
+    );
+  }
+
+  Widget _info(IconData icon, String text) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: AppColors.textLight),
+          const SizedBox(width: 4),
+          Text(text,
+              style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMedium,
+                  fontWeight: FontWeight.w500)),
+        ],
+      );
 
   Widget _docTile(String label, String url, Color color) => Expanded(
         child: GestureDetector(
@@ -458,295 +675,87 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(11),
-              child: Stack(
-                children: [
-                  // Network image preview with loading indicator
-                  Image.network(
-                    url,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: double.infinity,
-                    loadingBuilder: (context, child, progress) {
-                      if (progress == null) return child;
-                      return Container(
-                        color: color.withOpacity(0.05),
-                        child: Center(
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: color.withOpacity(0.6),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                    errorBuilder: (_, __, ___) => Container(
-                      color: color.withOpacity(0.08),
+              child: Stack(children: [
+                Image.network(
+                  url,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: double.infinity,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return Container(
+                      color: color.withOpacity(0.05),
                       child: Center(
-                        child: Icon(
-                          Icons.image_outlined,
-                          color: color.withOpacity(0.5),
-                          size: 28,
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: color.withOpacity(0.6)),
                         ),
                       ),
+                    );
+                  },
+                  errorBuilder: (_, __, ___) => Container(
+                    color: color.withOpacity(0.08),
+                    child: Center(
+                      child: Icon(Icons.image_outlined,
+                          color: color.withOpacity(0.5), size: 28),
                     ),
                   ),
-                  // Label bar at bottom
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      decoration: BoxDecoration(
-                        color: color.withOpacity(0.85),
-                      ),
-                      child: Row(
+                ),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    decoration:
+                        BoxDecoration(color: color.withOpacity(0.85)),
+                    child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(
-                            Icons.zoom_in_rounded,
-                            color: Colors.white,
-                            size: 11,
-                          ),
+                          const Icon(Icons.zoom_in_rounded,
+                              color: Colors.white, size: 11),
                           const SizedBox(width: 3),
-                          Text(
-                            label,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                          Text(label,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700)),
+                        ]),
                   ),
-                ],
-              ),
+                ),
+              ]),
             ),
           ),
         ),
       );
 
-  Widget _statusChip(String status) {
-    final info = <String, dynamic>{
-          'pending': {'label': 'Pending', 'color': const Color(0xFFFF9500)},
-          'approved': {'label': 'Approved', 'color': const Color(0xFF34C759)},
-          'rejected': {'label': 'Rejected', 'color': const Color(0xFFFF3B30)},
-        }[status] ??
-        {'label': status, 'color': AppColors.textLight};
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: (info['color'] as Color).withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: (info['color'] as Color).withOpacity(0.35)),
-      ),
-      child: Text(
-        info['label'] as String,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: info['color'] as Color,
-        ),
-      ),
-    );
+  String _formatDate(DateTime dt) {
+    const m = [
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec'
+    ];
+    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}';
   }
 
-  Widget _info(IconData icon, String text) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: AppColors.textLight),
-          const SizedBox(width: 4),
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppColors.textMedium,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      );
+  // ── Actions — Applications ─────────────────────────────────────────────────
 
-  void _showDocDialog(String label, String url) => showDialog(
-        context: context,
-        builder: (dialogCtx) => Dialog(
-          backgroundColor: Colors.black87,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Header row
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 8, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        label,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.close_rounded,
-                        color: Colors.white60,
-                      ),
-                      onPressed: () => Navigator.of(dialogCtx).pop(),
-                    ),
-                  ],
-                ),
-              ),
-              // Zoomable image
-              ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(bottom: Radius.circular(20)),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 480),
-                  child: InteractiveViewer(
-                    minScale: 0.8,
-                    maxScale: 5.0,
-                    child: Image.network(
-                      url,
-                      fit: BoxFit.contain,
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return SizedBox(
-                          height: 220,
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                CircularProgressIndicator(
-                                  value: progress.expectedTotalBytes != null
-                                      ? progress.cumulativeBytesLoaded /
-                                          progress.expectedTotalBytes!
-                                      : null,
-                                  color: Colors.white,
-                                ),
-                                const SizedBox(height: 12),
-                                const Text(
-                                  'Loading…',
-                                  style: TextStyle(
-                                      color: Colors.white54, fontSize: 12),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                      errorBuilder: (_, __, ___) => Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.broken_image_outlined,
-                              color: Colors.white30,
-                              size: 48,
-                            ),
-                            const SizedBox(height: 10),
-                            const Text(
-                              'Image could not be loaded.',
-                              style: TextStyle(
-                                  color: Colors.white60, fontSize: 13),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 6),
-                            const Text(
-                              'Make sure the Supabase storage bucket is set to Public in your Supabase dashboard.',
-                              style: TextStyle(
-                                  color: Colors.white38, fontSize: 11),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-
-  Future<void> _approve(ApplicationModel app) async {
+  Future<void> _approveApp(ApplicationModel app) async {
     setState(() => _processingId = app.id);
     await widget.onApprove?.call(app);
     if (mounted) setState(() => _processingId = null);
   }
 
-  Future<void> _confirmReject(ApplicationModel app) async {
+  Future<void> _confirmRejectApp(ApplicationModel app) async {
     final noteCtrl = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text(
-          'Reject Application',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Reject ${app.applicantName ?? "this applicant"}\'s application for ${app.serviceType}?',
-              style: const TextStyle(color: AppColors.textMedium),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: noteCtrl,
-              maxLines: 3,
-              decoration: InputDecoration(
-                hintText: 'Reason (optional — shown to applicant)',
-                hintStyle: const TextStyle(fontSize: 13),
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide:
-                      const BorderSide(color: AppColors.primary, width: 2),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: AppColors.textLight),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF3B30),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: const Text(
-              'Reject',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
-      ),
+    final confirmed = await _rejectDialog(
+      ctx: context,
+      title: 'Reject Application',
+      message:
+          'Reject ${app.applicantName ?? "this applicant"}\'s application for ${app.serviceType}?',
+      noteCtrl: noteCtrl,
     );
     if (confirmed == true) {
       setState(() => _processingId = app.id);
@@ -756,7 +765,232 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
     }
   }
 
-  // ── BOTTOM NAV ────────────────────────────────────────────
+  // ── Actions — Proposals ────────────────────────────────────────────────────
+
+  Future<void> _approveProposal(ServiceProposalModel prop) async {
+    setState(() => _processingId = prop.id);
+    await widget.onApproveProposal?.call(prop);
+    if (mounted) setState(() => _processingId = null);
+  }
+
+  Future<void> _confirmRejectProposal(ServiceProposalModel prop) async {
+    final noteCtrl = TextEditingController();
+    final confirmed = await _rejectDialog(
+      ctx: context,
+      title: 'Reject Proposal',
+      message:
+          'Reject ${prop.proposerName ?? "this handyman"}\'s proposal for "${prop.serviceName}"?\n\n'
+          'You can add feedback so they know what to fix.',
+      noteCtrl: noteCtrl,
+    );
+    if (confirmed == true) {
+      setState(() => _processingId = prop.id);
+      await widget.onRejectProposal?.call(
+          prop, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
+      if (mounted) setState(() => _processingId = null);
+    }
+  }
+
+  // ── Shared reject dialog ───────────────────────────────────────────────────
+
+  Future<bool?> _rejectDialog({
+    required BuildContext ctx,
+    required String title,
+    required String message,
+    required TextEditingController noteCtrl,
+  }) =>
+      showDialog<bool>(
+        context: ctx,
+        builder: (dialogCtx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+          title: Text(title,
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(message,
+                style: const TextStyle(color: AppColors.textMedium)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: noteCtrl,
+              maxLines: 3,
+              decoration: InputDecoration(
+                hintText: 'Feedback for the handyman (optional)',
+                hintStyle: const TextStyle(fontSize: 13),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide:
+                      const BorderSide(color: AppColors.primary, width: 2),
+                ),
+              ),
+            ),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('Cancel',
+                  style: TextStyle(color: AppColors.textLight)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFF3B30),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text('Reject',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      );
+
+  void _showDocDialog(String label, String url) => showDialog(
+        context: context,
+        builder: (dialogCtx) => Dialog(
+          backgroundColor: Colors.black87,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 8, 8),
+              child: Row(children: [
+                Expanded(
+                  child: Text(label,
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded,
+                      color: Colors.white60),
+                  onPressed: () => Navigator.of(dialogCtx).pop(),
+                ),
+              ]),
+            ),
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(20)),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 480),
+                child: InteractiveViewer(
+                  minScale: 0.8,
+                  maxScale: 5.0,
+                  child: Image.network(
+                    url,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) return child;
+                      return SizedBox(
+                        height: 220,
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            value: progress.expectedTotalBytes != null
+                                ? progress.cumulativeBytesLoaded /
+                                    progress.expectedTotalBytes!
+                                : null,
+                            color: Colors.white,
+                          ),
+                        ),
+                      );
+                    },
+                    errorBuilder: (_, __, ___) => Padding(
+                      padding:
+                          const EdgeInsets.fromLTRB(24, 8, 24, 28),
+                      child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.broken_image_outlined,
+                                color: Colors.white30, size: 48),
+                            SizedBox(height: 10),
+                            Text('Image could not be loaded.',
+                                style: TextStyle(
+                                    color: Colors.white60,
+                                    fontSize: 13),
+                                textAlign: TextAlign.center),
+                          ]),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      );
+
+  // ── Header ─────────────────────────────────────────────────────────────────
+
+  Widget _buildHeader(int totalPending) => Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF082218),
+              Color(0xFF0F3D2E),
+              Color(0xFF1A5C43)
+            ],
+          ),
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Row(children: [
+              GestureDetector(
+                onTap: widget.onBack ?? () => widget.onNavTap?.call(0),
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white, size: 18),
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text('Approvals',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700)),
+                  SizedBox(height: 2),
+                  Text('Review applications & service proposals',
+                      style:
+                          TextStyle(color: Colors.white70, fontSize: 12)),
+                ]),
+              ),
+              if (totalPending > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF3B30).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: const Color(0xFFFF3B30).withOpacity(0.4)),
+                  ),
+                  child: Text('$totalPending pending',
+                      style: const TextStyle(
+                          color: Color(0xFFFF3B30),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700)),
+                ),
+            ]),
+          ),
+        ),
+      );
+
+  // ── Bottom nav ─────────────────────────────────────────────────────────────
+
   Widget _buildBottomNav() {
     const items = [
       {'icon': Icons.dashboard_rounded, 'label': 'Dashboard'},
@@ -769,10 +1003,9 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
-          ),
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 20,
+              offset: const Offset(0, -4))
         ],
       ),
       child: SafeArea(
@@ -787,35 +1020,31 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                 onTap: () => widget.onNavTap?.call(i),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
                     color: active
                         ? AppColors.primary.withOpacity(0.1)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        items[i]['icon'] as IconData,
-                        color: active ? AppColors.primary : AppColors.textLight,
-                        size: 24,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        items[i]['label'] as String,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(items[i]['icon'] as IconData,
+                        color: active
+                            ? AppColors.primary
+                            : AppColors.textLight,
+                        size: 24),
+                    const SizedBox(height: 4),
+                    Text(items[i]['label'] as String,
                         style: TextStyle(
-                          fontSize: 11,
-                          fontWeight:
-                              active ? FontWeight.w700 : FontWeight.w400,
-                          color:
-                              active ? AppColors.primary : AppColors.textLight,
-                        ),
-                      ),
-                    ],
-                  ),
+                            fontSize: 11,
+                            fontWeight: active
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                            color: active
+                                ? AppColors.primary
+                                : AppColors.textLight)),
+                  ]),
                 ),
               );
             }),

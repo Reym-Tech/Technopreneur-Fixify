@@ -220,7 +220,10 @@ class ServiceOfferEntity extends Equatable {
   final String serviceName;
   final String serviceType;
   final String? description;
-  final String? imagePath;
+
+  /// Network URL (Supabase Storage) for DB-sourced offers;
+  /// null for legacy hardcoded offers that use local assets.
+  final String? imageUrl;
 
   final List<String> includes;
   final String? priceRange;
@@ -228,18 +231,22 @@ class ServiceOfferEntity extends Equatable {
   final String? tips;
   final DateTime? createdAt;
 
+  /// The professional who proposed this service offer (null for admin-created).
+  final String? professionalId;
+
   const ServiceOfferEntity({
     required this.id,
     required this.slug,
     required this.serviceName,
     required this.serviceType,
     this.description,
-    this.imagePath,
+    this.imageUrl,
     required this.includes,
     this.priceRange,
     this.duration,
     this.tips,
     this.createdAt,
+    this.professionalId,
   });
 
   @override

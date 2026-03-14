@@ -1,9 +1,7 @@
 // lib/presentation/screens/professional/verificationstatus_professional.dart
 //
-// VerificationStatusScreen — shows the professional their application history.
-//
-// Shows a list of all their submitted applications with status chips
-// (Pending / Approved / Rejected + admin note).
+// VerificationStatusScreen — shows the professional their application history
+// AND their service proposal history, side by side in two sections.
 //
 // ONE-SKILL MODEL: each handyman has exactly one skill, so there will be at
 // most one application at any point. The FAB is driven by that single
@@ -14,27 +12,81 @@
 //   rejected        → "Re-apply"                 (refresh icon)
 //   approved        → "Update Credentials"        (edit icon)
 //
-// The callback wired to the FAB is always onApplyNew — main.dart unchanged.
+// Service Proposals section shows the handyman's submitted proposals with
+// status chips. A "Propose a Service" FAB (second FAB) or action card is
+// shown when the handyman is verified (approved application).
+//
+// The callback wired to the credentials FAB is always onApplyNew — main.dart unchanged.
+// The callback wired to the proposal action is onProposeService.
 //
 // Key props:
-//   applications  → List<ApplicationModel>  — from ApplicationDataSource
-//   onApplyNew    → VoidCallback?           — FAB action (apply / re-apply / update)
-//   onBack        → VoidCallback?
+//   applications    → List<ApplicationModel>
+//   proposals       → List<ServiceProposalModel>  — handyman's own proposals
+//   onApplyNew      → VoidCallback?               — credentials FAB
+//   onProposeService → VoidCallback?              — propose / resubmit service
+//   onBack          → VoidCallback?
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/data/datasources/application_datasource.dart';
 
+// Small helpers used by the VerificationStatusScreen.
+class _FabConfig {
+  final String label;
+  final IconData icon;
+  const _FabConfig({required this.label, required this.icon});
+}
+
+class _CredentialThumbnail extends StatelessWidget {
+  final String url;
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  const _CredentialThumbnail({
+    required this.url,
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 86,
+        height: 86,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.12)),
+          color: color.withOpacity(0.04),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(11),
+          child: Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) {
+            return Container(
+              color: color.withOpacity(0.06),
+              child: Center(
+                child: Icon(icon, color: color.withOpacity(0.9)),
+              ),
+            );
+          }),
+        ),
+      );
+}
+
 class VerificationStatusScreen extends StatelessWidget {
   final List<ApplicationModel> applications;
+  final List<ServiceProposalModel> proposals;
   final VoidCallback? onApplyNew;
+  final VoidCallback? onProposeService;
   final VoidCallback? onBack;
 
   const VerificationStatusScreen({
     super.key,
     this.applications = const [],
+    this.proposals = const [],
     this.onApplyNew,
+    this.onProposeService,
     this.onBack,
   });
 
@@ -69,32 +121,126 @@ class VerificationStatusScreen extends StatelessWidget {
     }
   }
 
+  // ── Proposal FAB — shown when the handyman is verified and no pending proposal ──
+  // Approved → can propose a new service.
+  // Rejected proposal → shows "Update & Resubmit".
+  // Pending proposal  → hidden (under review).
+  _FabConfig? get _proposalFabConfig {
+    final isVerified =
+        applications.any((a) => a.status == 'approved');
+    if (!isVerified) return null; // must be verified first
+
+    if (proposals.isEmpty) {
+      return const _FabConfig(
+        label: 'Propose a Service',
+        icon: Icons.storefront_rounded,
+      );
+    }
+    switch (proposals.first.status) {
+      case 'rejected':
+        return const _FabConfig(
+          label: 'Update Proposal',
+          icon: Icons.edit_rounded,
+        );
+      case 'approved':
+        // Already have an approved proposal — allow proposing another only
+        // if the system is extended to multi-skill. For now, keep hidden.
+        return null;
+      case 'pending':
+      default:
+        return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final fab = _fabConfig;
+    final credFab = _fabConfig;
+    final propFab = _proposalFabConfig;
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       body: Column(children: [
         _buildHeader(context),
         Expanded(
-          child: applications.isEmpty
-              ? _buildEmpty()
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-                  itemCount: applications.length,
-                  itemBuilder: (_, i) => _buildCard(applications[i], i),
-                ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              // ── Credentials section ───────────────────────────────────
+              const Text('Verification Application',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textLight,
+                      letterSpacing: 0.5)),
+              const SizedBox(height: 12),
+              if (applications.isEmpty)
+                _buildEmpty(
+                  icon: Icons.workspace_premium_outlined,
+                  title: 'No application yet',
+                  subtitle:
+                      'Submit your credentials to get verified and start receiving bookings.',
+                )
+              else
+                ...applications.asMap().entries
+                    .map((e) => _buildCard(e.value, e.key)),
+
+              // ── Service Proposals section ──────────────────────────────
+              const SizedBox(height: 28),
+              const Text('Service Proposals',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textLight,
+                      letterSpacing: 0.5)),
+              const SizedBox(height: 12),
+              if (proposals.isEmpty)
+                _buildEmpty(
+                  icon: Icons.storefront_outlined,
+                  title: 'No proposals yet',
+                  subtitle: applications.any((a) => a.status == 'approved')
+                      ? 'Propose a service to list your offering in the customer marketplace.'
+                      : 'Get verified first, then you can propose services to customers.',
+                )
+              else
+                ...proposals.asMap().entries
+                    .map((e) => _buildProposalCard(e.value, e.key)),
+            ]),
+          ),
         ),
       ]),
-      floatingActionButton: fab == null
+      // Stack both FABs vertically when both are visible
+      floatingActionButton: (credFab == null && propFab == null)
           ? null
-          : FloatingActionButton.extended(
-              onPressed: onApplyNew,
-              backgroundColor: AppColors.primary,
-              icon: Icon(fab.icon, color: Colors.white),
-              label: Text(fab.label,
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w700)),
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (propFab != null) ...[
+                  FloatingActionButton.extended(
+                    heroTag: 'propose_fab',
+                    onPressed: onProposeService,
+                    backgroundColor: const Color(0xFFD4A843),
+                    icon: Icon(propFab.icon, color: Colors.white),
+                    label: Text(propFab.label,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (credFab != null)
+                  FloatingActionButton.extended(
+                    heroTag: 'cred_fab',
+                    onPressed: onApplyNew,
+                    backgroundColor: AppColors.primary,
+                    icon: Icon(credFab.icon, color: Colors.white),
+                    label: Text(credFab.label,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700)),
+                  ),
+              ],
             ),
     );
   }
@@ -265,47 +411,6 @@ class VerificationStatusScreen extends StatelessWidget {
             ]),
           ),
         ],
-        // ── Submitted documents ──────────────────────────────────────────────
-        // Shown whenever at least one URL is present. Each thumbnail is
-        // tappable and opens a full-screen InteractiveViewer dialog.
-        if (app.credentialUrl != null || app.validIdUrl != null) ...[
-          const SizedBox(height: 14),
-          const Divider(height: 1, color: Color(0xFFEEEEEE)),
-          const SizedBox(height: 12),
-          Row(children: [
-            const Icon(Icons.folder_copy_rounded,
-                size: 13, color: AppColors.textLight),
-            const SizedBox(width: 5),
-            const Text('Submitted Documents',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textLight)),
-          ]),
-          const SizedBox(height: 10),
-          Row(children: [
-            if (app.credentialUrl != null)
-              Expanded(
-                child: _CredentialThumbnail(
-                  url: app.credentialUrl!,
-                  label: 'Credential',
-                  icon: Icons.workspace_premium_rounded,
-                  color: const Color(0xFFFF9500),
-                ),
-              ),
-            if (app.credentialUrl != null && app.validIdUrl != null)
-              const SizedBox(width: 10),
-            if (app.validIdUrl != null)
-              Expanded(
-                child: _CredentialThumbnail(
-                  url: app.validIdUrl!,
-                  label: 'Valid ID',
-                  icon: Icons.badge_rounded,
-                  color: const Color(0xFF007AFF),
-                ),
-              ),
-          ]),
-        ],
       ]),
     ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
   }
@@ -321,30 +426,226 @@ class VerificationStatusScreen extends StatelessWidget {
                 fontWeight: FontWeight.w500)),
       ]);
 
-  Widget _buildEmpty() => Center(
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Container(
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.08),
-              shape: BoxShape.circle),
-          child: const Icon(Icons.workspace_premium_outlined,
-              color: AppColors.primary, size: 40),
+  Widget _buildEmpty({
+    IconData icon = Icons.workspace_premium_outlined,
+    String title = 'No applications yet',
+    String subtitle =
+        'Submit your credentials to start\ngetting bookings from customers.',
+  }) =>
+      Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 3))
+          ],
         ),
-        const SizedBox(height: 16),
-        const Text('No applications yet',
-            style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textDark)),
-        const SizedBox(height: 8),
-        const Text(
-            'Submit your credentials to start\ngetting bookings from customers.',
-            style: TextStyle(fontSize: 13, color: AppColors.textLight),
-            textAlign: TextAlign.center),
-      ]));
+        child: Row(children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.08),
+                shape: BoxShape.circle),
+            child: Icon(icon, color: AppColors.primary, size: 26),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textDark)),
+              const SizedBox(height: 4),
+              Text(subtitle,
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.textLight, height: 1.4)),
+            ]),
+          ),
+        ]),
+      );
 
+  // ── VIEW — Service Proposal card ─────────────────────────────────────────
+
+  Widget _buildProposalCard(ServiceProposalModel prop, int index) {
+    final statusInfo = _statusInfo(prop.status);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4))
+        ],
+        border:
+            Border.all(color: (statusInfo['color'] as Color).withOpacity(0.2)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          // Service image thumbnail
+          if (prop.imageUrl != null && prop.imageUrl!.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.network(prop.imageUrl!,
+                  width: 46,
+                  height: 46,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(10)),
+                        child: const Icon(Icons.storefront_rounded,
+                            color: AppColors.primary, size: 22),
+                      )),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12)),
+              child: const Icon(Icons.storefront_rounded,
+                  color: AppColors.primary, size: 22),
+            ),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(prop.serviceName,
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textDark)),
+                const SizedBox(height: 2),
+                Text(
+                    '${prop.serviceType}  ·  Submitted ${_formatDate(prop.submittedAt)}',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.textLight)),
+              ])),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              color: (statusInfo['color'] as Color).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: (statusInfo['color'] as Color).withOpacity(0.35)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(statusInfo['icon'] as IconData,
+                  color: statusInfo['color'] as Color, size: 13),
+              const SizedBox(width: 4),
+              Text(statusInfo['label'] as String,
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: statusInfo['color'] as Color,
+                      letterSpacing: 0.3)),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 12),
+        const Divider(height: 1, color: Color(0xFFEEEEEE)),
+        const SizedBox(height: 10),
+        Row(children: [
+          if (prop.priceRange != null)
+            _detail(Icons.payments_rounded, prop.priceRange!),
+          if (prop.priceRange != null && prop.duration != null)
+            const SizedBox(width: 20),
+          if (prop.duration != null)
+            _detail(Icons.schedule_rounded, prop.duration!),
+        ]),
+        // Admin feedback on rejection
+        if (prop.status == 'rejected' && prop.adminNote != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF3B30).withOpacity(0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: const Color(0xFFFF3B30).withOpacity(0.2)),
+            ),
+            child:
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.info_outline_rounded,
+                  color: Color(0xFFFF3B30), size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text('Admin feedback: ${prop.adminNote}',
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFFFF3B30)))),
+            ]),
+          ),
+        ],
+        // Approval note
+        if (prop.status == 'approved') ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF34C759).withOpacity(0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: const Color(0xFF34C759).withOpacity(0.2)),
+            ),
+            child: const Row(children: [
+              Icon(Icons.check_circle_outline_rounded,
+                  color: Color(0xFF34C759), size: 16),
+              SizedBox(width: 8),
+              Expanded(
+                  child: Text(
+                      'Your service is live and visible to customers.',
+                      style: TextStyle(
+                          fontSize: 12, color: Color(0xFF34C759)))),
+            ]),
+          ),
+        ],
+        // Submitted documents thumbnails
+        if (prop.imageUrl != null) ...[
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: Color(0xFFEEEEEE)),
+          const SizedBox(height: 12),
+          Row(children: [
+            const Icon(Icons.image_rounded,
+                size: 13, color: AppColors.textLight),
+            const SizedBox(width: 5),
+            const Text('Service Image',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textLight)),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            _CredentialThumbnail(
+              url: prop.imageUrl!,
+              label: 'Service Image',
+              icon: Icons.storefront_rounded,
+              color: const Color(0xFFD4A843),
+            ),
+            const Expanded(child: SizedBox()),
+          ]),
+        ],
+      ]),
+    ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
+  }
+
+  // ── VIEW — status info ─────────────────────────────────────────────────────
   Map<String, dynamic> _statusInfo(String status) {
     switch (status) {
       case 'approved':
@@ -387,182 +688,4 @@ class VerificationStatusScreen extends StatelessWidget {
   }
 }
 
-// ── FAB config ────────────────────────────────────────────────────────────────
-// Immutable value object that drives the FAB label and icon.
-// Returned as null by _fabConfig when the FAB should be hidden (pending state).
-
-class _FabConfig {
-  final String label;
-  final IconData icon;
-  const _FabConfig({required this.label, required this.icon});
-}
-
-// ── Credential thumbnail ──────────────────────────────────────────────────────
-// Tappable image tile used in the "Submitted Documents" section.
-// Opens a full-screen InteractiveViewer dialog on tap — pinch-to-zoom supported.
-// Shows a placeholder tile while loading and a broken-image state on error.
-
-class _CredentialThumbnail extends StatelessWidget {
-  final String url;
-  final String label;
-  final IconData icon;
-  final Color color;
-
-  const _CredentialThumbnail({
-    required this.url,
-    required this.label,
-    required this.icon,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => _showImagePreview(context),
-      child: Container(
-        height: 96,
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.25)),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(13),
-          child: Stack(fit: StackFit.expand, children: [
-            // Network image
-            Image.network(
-              url,
-              fit: BoxFit.cover,
-              loadingBuilder: (_, child, progress) =>
-                  progress == null ? child : _placeholder(spinning: true),
-              errorBuilder: (_, __, ___) => _placeholder(error: true),
-            ),
-            // Label overlay at the bottom
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withOpacity(0.55),
-                    ],
-                  ),
-                ),
-                child: Row(children: [
-                  Icon(icon, size: 11, color: Colors.white),
-                  const SizedBox(width: 4),
-                  Text(label,
-                      style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white)),
-                  const Spacer(),
-                  const Icon(Icons.zoom_in_rounded,
-                      size: 12, color: Colors.white70),
-                ]),
-              ),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  Widget _placeholder({bool spinning = false, bool error = false}) => Container(
-        color: Colors.grey.shade100,
-        child: Center(
-          child: spinning
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(color)),
-                )
-              : Icon(
-                  error ? Icons.broken_image_rounded : icon,
-                  size: 28,
-                  color: color.withOpacity(0.4),
-                ),
-        ),
-      );
-
-  void _showImagePreview(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black.withOpacity(0.92),
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: EdgeInsets.zero,
-        child: Stack(alignment: Alignment.center, children: [
-          // Pinch-to-zoom image viewer
-          InteractiveViewer(
-            minScale: 0.8,
-            maxScale: 5.0,
-            child: Image.network(
-              url,
-              fit: BoxFit.contain,
-              loadingBuilder: (_, child, progress) => progress == null
-                  ? child
-                  : const SizedBox(
-                      height: 200,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white54),
-                      ),
-                    ),
-              errorBuilder: (_, __, ___) => const Center(
-                child: Icon(Icons.broken_image_rounded,
-                    size: 64, color: Colors.white38),
-              ),
-            ),
-          ),
-          // Label chip at the top
-          Positioned(
-            top: MediaQuery.of(ctx).padding.top + 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.55),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(icon, size: 13, color: Colors.white),
-                const SizedBox(width: 6),
-                Text(label,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white)),
-              ]),
-            ),
-          ),
-          // Close button
-          Positioned(
-            top: MediaQuery.of(ctx).padding.top + 12,
-            right: 16,
-            child: GestureDetector(
-              onTap: () => Navigator.of(ctx).pop(),
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.close_rounded,
-                    color: Colors.white, size: 20),
-              ),
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
-}
+// (helpers moved earlier)

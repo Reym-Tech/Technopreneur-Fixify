@@ -101,6 +101,7 @@ import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
 import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
 import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
+import 'package:fixify/presentation/screens/professional/propose_service_screen.dart';
 import 'package:fixify/presentation/screens/customer/privacy_policy_screen.dart';
 
 Future<void> main() async {
@@ -274,6 +275,7 @@ class _MainAppState extends State<MainApp> {
   late final SupabaseDataSource _ds;
   late final ApplicationDataSource _appDs;
   late final NotificationDataSource _notifDs;
+  late final ServiceProposalDatasource _proposalDs;
 
   // ── Controller state ──────────────────────────────────────────────────────
   DateTime? _lastBackPress;
@@ -297,6 +299,10 @@ class _MainAppState extends State<MainApp> {
   Set<String> _skippedRequestIds = {};
 
   List<ApplicationModel> _applications = [];
+  List<ServiceProposalModel> _proposals =
+      []; // admin: all proposals; pro: own proposals
+  List<ServiceOfferModel> _serviceOffers =
+      []; // customer: approved proposals as offers
   List<ReviewModel> _reviews = [];
   int _navIndex = 0;
   String _screen = 'home';
@@ -657,6 +663,7 @@ class _MainAppState extends State<MainApp> {
     _ds = SupabaseDataSource(Supabase.instance.client);
     _appDs = ApplicationDataSource(Supabase.instance.client);
     _notifDs = NotificationDataSource(Supabase.instance.client);
+    _proposalDs = ServiceProposalDatasource(Supabase.instance.client);
     _init();
   }
 
@@ -717,6 +724,7 @@ class _MainAppState extends State<MainApp> {
                   .removeWhere((r) => _skippedRequestIds.contains(r.id));
             }
             _applications = await _appDs.getMyApplications(_pro!.id);
+            _proposals = await _proposalDs.getMyProposals(_pro!.id);
             _reviews = await _ds.getProfessionalReviews(_pro!.id);
 
             _openRequestsChannel = _ds.subscribeToOpenBookingRequests(
@@ -763,12 +771,33 @@ class _MainAppState extends State<MainApp> {
                     .then((list) => setState(() => _professionals = list));
               },
             );
+
+            // Subscribe to proposal status updates (approved / rejected).
+            _proposalDs.subscribeToMyProposals(
+              professionalId: _pro!.id,
+              onUpdate: (p) {
+                setState(() => _proposals =
+                    _proposals.map((x) => x.id == p.id ? p : x).toList());
+                if (p.status == 'approved')
+                  _notify(
+                      '"${p.serviceName}" proposal was approved and is now live!');
+                if (p.status == 'rejected')
+                  _notify('"${p.serviceName}" proposal was reviewed.');
+              },
+            );
           }
         } else if (_user!.role == 'admin') {
           _applications = await _appDs.getAllApplications();
+          _proposals = await _proposalDs.getAllProposals();
         } else {
           // ── Customer ──────────────────────────────────────────────────
           _bookings = await _ds.getCustomerBookings(_user!.id);
+          // Load approved service proposals as the customer's service offers.
+          try {
+            _serviceOffers = await _ds.getServiceOffers();
+          } catch (e) {
+            debugPrint('Could not load service offers: $e');
+          }
 
           for (final b in _bookings) {
             if (b.status == BookingStatus.completed) {
@@ -904,10 +933,12 @@ class _MainAppState extends State<MainApp> {
     try {
       final pros = await _ds.getProfessionals();
       final bookings = await _ds.getCustomerBookings(_user!.id);
+      final offers = await _ds.getServiceOffers();
       if (mounted)
         setState(() {
           _professionals = pros;
           _bookings = _deduped(bookings);
+          _serviceOffers = offers;
         });
     } catch (e) {
       debugPrint('Pull-to-refresh (customer) error: $e');
@@ -1024,6 +1055,7 @@ class _MainAppState extends State<MainApp> {
     if (_navIndex == 1) {
       return ApprovalsScreen(
         applications: _applications,
+        proposals: _proposals,
         onBack: () => setState(() => _navIndex = 0),
         onApprove: (app) async {
           try {
@@ -1042,6 +1074,26 @@ class _MainAppState extends State<MainApp> {
             _applications = await _appDs.getAllApplications();
             setState(() {});
             _notify('Application rejected.');
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
+        onApproveProposal: (prop) async {
+          try {
+            await _proposalDs.approveProposal(prop);
+            _proposals = await _proposalDs.getAllProposals();
+            setState(() {});
+            _notify('"${prop.serviceName}" is now live in Service Offers!');
+          } catch (e) {
+            _notify('Error: $e');
+          }
+        },
+        onRejectProposal: (prop, note) async {
+          try {
+            await _proposalDs.rejectProposal(prop, note: note);
+            _proposals = await _proposalDs.getAllProposals();
+            setState(() {});
+            _notify('Proposal rejected.');
           } catch (e) {
             _notify('Error: $e');
           }
@@ -1305,8 +1357,61 @@ class _MainAppState extends State<MainApp> {
     if (_screen == 'verification_status') {
       return VerificationStatusScreen(
         applications: _applications,
+        proposals: _proposals,
         onBack: () => setState(() => _screen = 'home'),
         onApplyNew: () => setState(() => _screen = 'apply'),
+        onProposeService: () => setState(() => _screen = 'propose_service'),
+      );
+    }
+
+    if (_screen == 'propose_service') {
+      final proId = _pro?.id;
+      if (proId == null) return _home();
+      // Find existing proposal if this is a resubmission.
+      final existing =
+          _proposals.isNotEmpty && _proposals.first.status == 'rejected'
+              ? _proposals.first
+              : null;
+      return ProposeServiceScreen(
+        professionalId: proId,
+        userId: _user!.id,
+        existingProposal: existing,
+        onBack: () => setState(() => _screen = 'home'),
+        onSubmit: (data) async {
+          try {
+            final ServiceProposalModel result;
+            if (existing != null) {
+              result = await _proposalDs.resubmitProposal(
+                proposalId: existing.id,
+                userId: _user!.id,
+                data: data,
+                existingImageUrl:
+                    data.imageFile.path.isEmpty ? existing.imageUrl : null,
+              );
+              setState(() {
+                _proposals = _proposals
+                    .map((p) => p.id == result.id ? result : p)
+                    .toList();
+                _screen = 'home';
+              });
+            } else {
+              result = await _proposalDs.submitProposal(
+                professionalId: proId,
+                userId: _user!.id,
+                data: data,
+              );
+              setState(() {
+                _proposals = [result, ..._proposals];
+                _screen = 'home';
+              });
+            }
+            _notify('Proposal submitted! We\'ll review it within 24–48 hours.');
+          } catch (e) {
+            if (mounted)
+              ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Submission failed: $e')));
+          }
+        },
       );
     }
 

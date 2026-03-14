@@ -229,14 +229,40 @@ class SupabaseDataSource {
 
   // ── SERVICE OFFERS ─────────────────────────────────────
 
+  // ── Service Offers — reads approved service_proposals rows ───────────────
+  // Approved proposals are the canonical source of service offers.
+  // Falls back to the legacy 'services' table (AppConfig.servicesTable) if
+  // service_proposals returns nothing, so hardcoded seed data still works
+  // during the migration period.
+
   Future<List<ServiceOfferModel>> getServiceOffers() async {
-    final data = await _client
-        .from(AppConfig.servicesTable)
-        .select()
-        .order('created_at', ascending: false);
-    return (data as List)
-        .map((j) => ServiceOfferModel.fromJson(j as Map<String, dynamic>))
-        .toList();
+    try {
+      final data = await _client
+          .from('service_proposals')
+          .select()
+          .eq('status', 'approved')
+          .order('submitted_at', ascending: false);
+      if ((data as List).isNotEmpty) {
+        return data
+          .map((j) => ServiceOfferModel.fromJson(j))
+          .toList();
+      }
+    } catch (e) {
+      debugPrint('[getServiceOffers] service_proposals error: $e');
+    }
+    // Legacy fallback — existing services table seed data
+    try {
+      final data = await _client
+          .from(AppConfig.servicesTable)
+          .select()
+          .order('created_at', ascending: false);
+        return (data as List)
+          .map((j) => ServiceOfferModel.fromJson(j))
+          .toList();
+    } catch (e) {
+      debugPrint('[getServiceOffers] legacy fallback error: $e');
+      return [];
+    }
   }
 
   Future<ServiceOfferModel?> getServiceOfferBySlug(String slug) async {
@@ -246,7 +272,7 @@ class SupabaseDataSource {
         .eq('slug', slug)
         .maybeSingle();
     if (maybe == null) return null;
-    return ServiceOfferModel.fromJson(maybe as Map<String, dynamic>);
+    return ServiceOfferModel.fromJson(maybe);
   }
 
   // ── PROFESSIONALS REALTIME ────────────────────────────────
@@ -632,17 +658,12 @@ class SupabaseDataSource {
   }
 
   // ── Shared join string ─────────────────────────────────────
-  // NOTE: The nested users join inside professionals MUST use the explicit
-  // FK hint `users!user_id` to avoid PostgREST key-name collision with the
-  // top-level `users!customer_id` join. Without the hint, PostgREST may
-  // omit the nested users object (returning null), causing ProfessionalModel
-  // to lose name, avatarUrl, and phone — even though the data exists in DB.
   static const String _fullBookingSelect = '*, '
       'users!customer_id(id, name, avatar_url, phone), '
       'professionals!professional_id(id, user_id, skills, verified, '
       'rating, review_count, price_range, price_min, price_max, city, '
       'bio, years_experience, available, latitude, longitude, '
-      'users!user_id(id, name, avatar_url, phone))';
+      'users(id, name, avatar_url, phone))';
 
   // ── BOOKING QUERIES ───────────────────────────────────────
 

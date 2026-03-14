@@ -81,7 +81,7 @@ class _PipeLeakRepairScreenState extends State<PipeLeakRepairScreen> {
       serviceName: _offer!.serviceName,
       serviceType: _offer!.serviceType,
       description: _offer!.description ?? '',
-      imagePath: _offer!.imagePath ?? 'assets/images/pipeleakrepair.png',
+      imagePath: _offer!.imageUrl ?? 'assets/images/pipeleakrepair.png',
       accentColor: accent,
       icon: icon,
       priceRange: _offer!.priceRange ?? '',

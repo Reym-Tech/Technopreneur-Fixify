@@ -595,7 +595,9 @@ class ServiceOfferModel extends Equatable {
   final String serviceName;
   final String serviceType;
   final String? description;
-  final String? imagePath;
+
+  /// Network URL (Supabase Storage). Previously `imagePath` (local asset).
+  final String? imageUrl;
 
   final List<String> includes;
   final String? priceRange;
@@ -603,18 +605,22 @@ class ServiceOfferModel extends Equatable {
   final String? tips;
   final DateTime? createdAt;
 
+  /// professional_id from service_proposals — null for admin-seeded rows.
+  final String? professionalId;
+
   const ServiceOfferModel({
     required this.id,
     required this.slug,
     required this.serviceName,
     required this.serviceType,
     this.description,
-    this.imagePath,
+    this.imageUrl,
     required this.includes,
     this.priceRange,
     this.duration,
     this.tips,
     this.createdAt,
+    this.professionalId,
   });
 
   factory ServiceOfferModel.fromJson(Map<String, dynamic> json) {
@@ -630,7 +636,10 @@ class ServiceOfferModel extends Equatable {
       serviceName: json['service_name']?.toString() ?? '',
       serviceType: json['service_type']?.toString() ?? '',
       description: json['description'] as String?,
-      imagePath: json['image_path'] as String?,
+      // Reads 'image_url' from service_proposals; falls back to legacy
+      // 'image_path' field for any existing rows in the old services table.
+      imageUrl:
+          (json['image_url'] as String?) ?? (json['image_path'] as String?),
       includes: (json['includes'] as List?)
               ?.map((e) => e.toString())
               .toList(growable: false) ??
@@ -639,6 +648,7 @@ class ServiceOfferModel extends Equatable {
       duration: json['duration'] as String?,
       tips: json['tips'] as String?,
       createdAt: created,
+      professionalId: json['professional_id'] as String?,
     );
   }
 
@@ -648,12 +658,13 @@ class ServiceOfferModel extends Equatable {
         serviceName: serviceName,
         serviceType: serviceType,
         description: description,
-        imagePath: imagePath,
+        imageUrl: imageUrl,
         includes: includes,
         priceRange: priceRange,
         duration: duration,
         tips: tips,
         createdAt: createdAt,
+        professionalId: professionalId,
       );
 
   @override

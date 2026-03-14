@@ -287,3 +287,290 @@ class ApplicationDataSource {
         .subscribe();
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SERVICE PROPOSAL PIPELINE
+// ─────────────────────────────────────────────────────────────────────────────
+// Handymen propose services (name, type, image, description, includes, price,
+// duration, tips). Admin reviews and approves → appears in customer Service
+// Offers. Rejected proposals return an adminNote so the handyman can fix and
+// resubmit. Mirrors the ApplicationModel / ApplicationDataSource pattern.
+//
+// Supabase table: service_proposals
+//   id               UUID PK
+//   professional_id  UUID FK → professionals.id
+//   user_id          UUID FK → users.id
+//   service_type     TEXT       — e.g. 'Plumbing'
+//   service_name     TEXT       — e.g. 'Pipe Leak Repair'
+//   description      TEXT
+//   image_url        TEXT       — Supabase Storage URL (service-images bucket)
+//   includes         TEXT[]     — bullet points
+//   price_range      TEXT       — e.g. '₱300 – ₱1,800'
+//   duration         TEXT       — e.g. '1–3 hours'
+//   tips             TEXT?
+//   status           TEXT       — 'pending' | 'approved' | 'rejected'
+//   admin_note       TEXT?      — feedback shown to the handyman on rejection
+//   submitted_at     TIMESTAMPTZ
+//   reviewed_at      TIMESTAMPTZ?
+// ═════════════════════════════════════════════════════════════════════════════
+
+class ServiceProposalModel {
+  final String id;
+  final String professionalId;
+  final String userId;
+  final String serviceType;
+  final String serviceName;
+  final String? description;
+  final String? imageUrl;
+  final List<String> includes;
+  final String? priceRange;
+  final String? duration;
+  final String? tips;
+  final String status; // pending | approved | rejected
+  final String? adminNote;
+  final DateTime submittedAt;
+  final DateTime? reviewedAt;
+
+  // Joined from users table
+  final String? proposerName;
+
+  const ServiceProposalModel({
+    required this.id,
+    required this.professionalId,
+    required this.userId,
+    required this.serviceType,
+    required this.serviceName,
+    this.description,
+    this.imageUrl,
+    required this.includes,
+    this.priceRange,
+    this.duration,
+    this.tips,
+    required this.status,
+    this.adminNote,
+    required this.submittedAt,
+    this.reviewedAt,
+    this.proposerName,
+  });
+
+  factory ServiceProposalModel.fromJson(Map<String, dynamic> j) {
+    final user = j['users'] as Map<String, dynamic>?;
+    return ServiceProposalModel(
+      id: j['id'] as String,
+      professionalId: j['professional_id'] as String,
+      userId: j['user_id'] as String,
+      serviceType: j['service_type'] as String? ?? '',
+      serviceName: j['service_name'] as String? ?? '',
+      description: j['description'] as String?,
+      imageUrl: j['image_url'] as String?,
+      includes:
+          (j['includes'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      priceRange: j['price_range'] as String?,
+      duration: j['duration'] as String?,
+      tips: j['tips'] as String?,
+      status: j['status'] as String? ?? 'pending',
+      adminNote: j['admin_note'] as String?,
+      submittedAt: DateTime.parse(j['submitted_at'] as String),
+      reviewedAt: j['reviewed_at'] != null
+          ? DateTime.parse(j['reviewed_at'] as String)
+          : null,
+      proposerName: user?['name'] as String?,
+    );
+  }
+}
+
+// ── Data passed from ProposeServiceScreen to the Controller ──────────────────
+
+class ProposeServiceFormData {
+  final String serviceType;
+  final String serviceName;
+  final String description;
+  final File imageFile;
+  final List<String> includes;
+  final String priceRange;
+  final String duration;
+  final String? tips;
+
+  const ProposeServiceFormData({
+    required this.serviceType,
+    required this.serviceName,
+    required this.description,
+    required this.imageFile,
+    required this.includes,
+    required this.priceRange,
+    required this.duration,
+    this.tips,
+  });
+}
+
+class ServiceProposalDatasource {
+  final SupabaseClient _client;
+  static const _table = 'service_proposals';
+  static const _bucket = 'service-images';
+
+  ServiceProposalDatasource(this._client);
+
+  // ── Upload service image ───────────────────────────────────────────────────
+
+  Future<String> _uploadImage({
+    required String userId,
+    required File file,
+  }) async {
+    final ext = file.path.split('.').last;
+    final path =
+        '$userId/service_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    await _client.storage.from(_bucket).upload(path, file);
+    return _client.storage.from(_bucket).getPublicUrl(path);
+  }
+
+  // ── Submit a new proposal ──────────────────────────────────────────────────
+
+  Future<ServiceProposalModel> submitProposal({
+    required String professionalId,
+    required String userId,
+    required ProposeServiceFormData data,
+  }) async {
+    final imageUrl = await _uploadImage(userId: userId, file: data.imageFile);
+
+    final row = await _client
+        .from(_table)
+        .insert({
+          'professional_id': professionalId,
+          'user_id': userId,
+          'service_type': data.serviceType,
+          'service_name': data.serviceName,
+          'description': data.description,
+          'image_url': imageUrl,
+          'includes': data.includes,
+          'price_range': data.priceRange,
+          'duration': data.duration,
+          'tips': data.tips,
+          'status': 'pending',
+          'submitted_at': DateTime.now().toIso8601String(),
+        })
+        .select('*, users(name)')
+        .single();
+
+    return ServiceProposalModel.fromJson(row);
+  }
+
+  // ── Resubmit a rejected proposal (update + reset to pending) ──────────────
+
+  Future<ServiceProposalModel> resubmitProposal({
+    required String proposalId,
+    required String userId,
+    required ProposeServiceFormData data,
+    String? existingImageUrl, // pass if the handyman kept the old image
+  }) async {
+    final imageUrl = existingImageUrl ??
+        await _uploadImage(userId: userId, file: data.imageFile);
+
+    final row = await _client
+        .from(_table)
+        .update({
+          'service_type': data.serviceType,
+          'service_name': data.serviceName,
+          'description': data.description,
+          'image_url': imageUrl,
+          'includes': data.includes,
+          'price_range': data.priceRange,
+          'duration': data.duration,
+          'tips': data.tips,
+          'status': 'pending',
+          'admin_note': null,
+          'submitted_at': DateTime.now().toIso8601String(),
+          'reviewed_at': null,
+        })
+        .eq('id', proposalId)
+        .select('*, users(name)')
+        .single();
+
+    return ServiceProposalModel.fromJson(row);
+  }
+
+  // ── Professional: own proposals ────────────────────────────────────────────
+
+  Future<List<ServiceProposalModel>> getMyProposals(
+      String professionalId) async {
+    final data = await _client
+        .from(_table)
+        .select('*, users(name)')
+        .eq('professional_id', professionalId)
+        .order('submitted_at', ascending: false);
+    return (data as List)
+        .map((j) => ServiceProposalModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  // ── Admin: all proposals ───────────────────────────────────────────────────
+
+  Future<List<ServiceProposalModel>> getAllProposals() async {
+    final data = await _client
+        .from(_table)
+        .select('*, users(name)')
+        .order('submitted_at', ascending: false);
+    return (data as List)
+        .map((j) => ServiceProposalModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  // ── Admin: approve ─────────────────────────────────────────────────────────
+  // Uses a SECURITY DEFINER RPC to bypass RLS when writing the approved row
+  // to service_proposals — same pattern as approve_professional_application.
+  //
+  // SQL (run once in Supabase SQL Editor):
+  //   create or replace function approve_service_proposal(p_proposal_id uuid)
+  //   returns void language plpgsql
+  //   security definer set search_path = public as $$
+  //   begin
+  //     update service_proposals
+  //     set status = 'approved', reviewed_at = now()
+  //     where id = p_proposal_id;
+  //   end; $$;
+
+  Future<void> approveProposal(ServiceProposalModel proposal) async {
+    await _client.rpc('approve_service_proposal', params: {
+      'p_proposal_id': proposal.id,
+    });
+    debugPrint(
+        '[ServiceProposalDatasource] ✅ proposal ${proposal.id} approved');
+  }
+
+  // ── Admin: reject with optional feedback ──────────────────────────────────
+
+  Future<void> rejectProposal(ServiceProposalModel proposal,
+      {String? note}) async {
+    await _client.from(_table).update({
+      'status': 'rejected',
+      'admin_note': note,
+      'reviewed_at': DateTime.now().toIso8601String(),
+    }).eq('id', proposal.id);
+    debugPrint(
+        '[ServiceProposalDatasource] ✅ proposal ${proposal.id} rejected');
+  }
+
+  // ── Realtime: handyman gets live status updates ────────────────────────────
+
+  RealtimeChannel subscribeToMyProposals({
+    required String professionalId,
+    required void Function(ServiceProposalModel) onUpdate,
+  }) {
+    return _client
+        .channel('proposals_$professionalId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: _table,
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'professional_id',
+            value: professionalId,
+          ),
+          callback: (payload) {
+            final updated = ServiceProposalModel.fromJson(payload.newRecord);
+            onUpdate(updated);
+          },
+        )
+        .subscribe();
+  }
+}
