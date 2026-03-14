@@ -62,7 +62,8 @@ class _CredentialThumbnail extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(11),
-          child: Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) {
+          child:
+              Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) {
             return Container(
               color: color.withOpacity(0.06),
               child: Center(
@@ -126,8 +127,7 @@ class VerificationStatusScreen extends StatelessWidget {
   // Rejected proposal → shows "Update & Resubmit".
   // Pending proposal  → hidden (under review).
   _FabConfig? get _proposalFabConfig {
-    final isVerified =
-        applications.any((a) => a.status == 'approved');
+    final isVerified = applications.any((a) => a.status == 'approved');
     if (!isVerified) return null; // must be verified first
 
     if (proposals.isEmpty) {
@@ -163,9 +163,8 @@ class VerificationStatusScreen extends StatelessWidget {
         Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               // ── Credentials section ───────────────────────────────────
               const Text('Verification Application',
                   style: TextStyle(
@@ -182,7 +181,9 @@ class VerificationStatusScreen extends StatelessWidget {
                       'Submit your credentials to get verified and start receiving bookings.',
                 )
               else
-                ...applications.asMap().entries
+                ...applications
+                    .asMap()
+                    .entries
                     .map((e) => _buildCard(e.value, e.key)),
 
               // ── Service Proposals section ──────────────────────────────
@@ -203,7 +204,9 @@ class VerificationStatusScreen extends StatelessWidget {
                       : 'Get verified first, then you can propose services to customers.',
                 )
               else
-                ...proposals.asMap().entries
+                ...proposals
+                    .asMap()
+                    .entries
                     .map((e) => _buildProposalCard(e.value, e.key)),
             ]),
           ),
@@ -224,8 +227,7 @@ class VerificationStatusScreen extends StatelessWidget {
                     icon: Icon(propFab.icon, color: Colors.white),
                     label: Text(propFab.label,
                         style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700)),
+                            color: Colors.white, fontWeight: FontWeight.w700)),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -237,8 +239,7 @@ class VerificationStatusScreen extends StatelessWidget {
                     icon: Icon(credFab.icon, color: Colors.white),
                     label: Text(credFab.label,
                         style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700)),
+                            color: Colors.white, fontWeight: FontWeight.w700)),
                   ),
               ],
             ),
@@ -455,9 +456,8 @@ class VerificationStatusScreen extends StatelessWidget {
           ),
           const SizedBox(width: 16),
           Expanded(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title,
                   style: const TextStyle(
                       fontSize: 14,
@@ -537,8 +537,7 @@ class VerificationStatusScreen extends StatelessWidget {
                         fontSize: 11, color: AppColors.textLight)),
               ])),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
             decoration: BoxDecoration(
               color: (statusInfo['color'] as Color).withOpacity(0.12),
               borderRadius: BorderRadius.circular(10),
@@ -577,11 +576,10 @@ class VerificationStatusScreen extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xFFFF3B30).withOpacity(0.06),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: const Color(0xFFFF3B30).withOpacity(0.2)),
+              border:
+                  Border.all(color: const Color(0xFFFF3B30).withOpacity(0.2)),
             ),
-            child:
-                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Icon(Icons.info_outline_rounded,
                   color: Color(0xFFFF3B30), size: 16),
               const SizedBox(width: 8),
@@ -600,18 +598,17 @@ class VerificationStatusScreen extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xFF34C759).withOpacity(0.06),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: const Color(0xFF34C759).withOpacity(0.2)),
+              border:
+                  Border.all(color: const Color(0xFF34C759).withOpacity(0.2)),
             ),
             child: const Row(children: [
               Icon(Icons.check_circle_outline_rounded,
                   color: Color(0xFF34C759), size: 16),
               SizedBox(width: 8),
               Expanded(
-                  child: Text(
-                      'Your service is live and visible to customers.',
-                      style: TextStyle(
-                          fontSize: 12, color: Color(0xFF34C759)))),
+                  child: Text('Your service is live and visible to customers.',
+                      style:
+                          TextStyle(fontSize: 12, color: Color(0xFF34C759)))),
             ]),
           ),
         ],

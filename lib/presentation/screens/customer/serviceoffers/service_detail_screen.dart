@@ -31,6 +31,7 @@ class ServiceDetailScreen extends StatelessWidget {
   /// Network URL for the hero image (Supabase Storage).
   /// Falls back to an icon placeholder if null or if the network request fails.
   final String? imageUrl;
+
   /// Legacy local asset path used by older callers. If provided, it will be
   /// used as a fallback for `imageUrl` so older callers that pass
   /// `imagePath:` keep working.
@@ -116,7 +117,8 @@ class ServiceDetailScreen extends StatelessWidget {
                       errorBuilder: (_, __, ___) => _heroPlaceholder(),
                     )
                   else if (_heroSrc != null)
-                    Image.asset(_heroSrc, fit: BoxFit.cover,
+                    Image.asset(_heroSrc,
+                        fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => _heroPlaceholder())
                   else
                     _heroPlaceholder(),

@@ -110,8 +110,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
               indicatorColor: Colors.white,
               labelColor: Colors.white,
               unselectedLabelColor: Colors.white54,
-              labelStyle: const TextStyle(
-                  fontWeight: FontWeight.w700, fontSize: 13),
+              labelStyle:
+                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
               tabs: [
                 Tab(
                   text: 'Handyman Apps'
@@ -157,9 +157,15 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           labelStyle:
               const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
           tabs: [
-            Tab(text: 'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
-            Tab(text: 'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
-            Tab(text: 'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
+            Tab(
+                text:
+                    'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
+            Tab(
+                text:
+                    'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
+            Tab(
+                text:
+                    'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
           ],
         ),
       ),
@@ -201,9 +207,15 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           labelStyle:
               const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
           tabs: [
-            Tab(text: 'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
-            Tab(text: 'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
-            Tab(text: 'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
+            Tab(
+                text:
+                    'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
+            Tab(
+                text:
+                    'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
+            Tab(
+                text:
+                    'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
           ],
         ),
       ),
@@ -262,7 +274,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
       child: Column(children: [
         Padding(
           padding: const EdgeInsets.all(18),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               _avatar(app.applicantName),
               const SizedBox(width: 12),
@@ -270,16 +283,16 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text(app.applicantName ?? 'Unknown',
-                      style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textDark)),
-                  const SizedBox(height: 2),
-                  Text(app.applicantEmail ?? '',
-                      style: const TextStyle(
-                          fontSize: 12, color: AppColors.textLight)),
-                ]),
+                      Text(app.applicantName ?? 'Unknown',
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textDark)),
+                      const SizedBox(height: 2),
+                      Text(app.applicantEmail ?? '',
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textLight)),
+                    ]),
               ),
               _statusChip(app.status),
             ]),
@@ -287,8 +300,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             _serviceBadge(app.serviceType, Icons.build_rounded),
             const SizedBox(height: 10),
             Row(children: [
-              _info(Icons.trending_up_rounded,
-                  '${app.yearsExp} yrs experience'),
+              _info(
+                  Icons.trending_up_rounded, '${app.yearsExp} yrs experience'),
               if (app.priceMin != null) ...[
                 const SizedBox(width: 16),
                 _info(Icons.payments_rounded,
@@ -313,9 +326,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           const Divider(height: 1, color: Color(0xFFF0F0F0)),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('Submitted Documents',
                   style: TextStyle(
                       fontSize: 12,
@@ -330,8 +342,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                 if (app.credentialUrl != null && app.validIdUrl != null)
                   const SizedBox(width: 10),
                 if (app.validIdUrl != null)
-                  _docTile('Valid ID', app.validIdUrl!,
-                      const Color(0xFF007AFF)),
+                  _docTile(
+                      'Valid ID', app.validIdUrl!, const Color(0xFF007AFF)),
               ]),
             ]),
           ),
@@ -343,8 +355,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             child: isLoading
                 ? const Center(
                     child: CircularProgressIndicator(
-                        valueColor:
-                            AlwaysStoppedAnimation(AppColors.primary),
+                        valueColor: AlwaysStoppedAnimation(AppColors.primary),
                         strokeWidth: 2))
                 : _approveRejectRow(
                     onReject: () => _confirmRejectApp(app),
@@ -380,24 +391,22 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              _avatar(prop.proposerName,
-                  color: const Color(0xFFD4A843)),
+              _avatar(prop.proposerName, color: const Color(0xFFD4A843)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text(prop.proposerName ?? 'Unknown',
-                      style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textDark)),
-                  const SizedBox(height: 2),
-                  Text(
-                      'Submitted ${_formatDate(prop.submittedAt)}',
-                      style: const TextStyle(
-                          fontSize: 12, color: AppColors.textLight)),
-                ]),
+                      Text(prop.proposerName ?? 'Unknown',
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textDark)),
+                      const SizedBox(height: 2),
+                      Text('Submitted ${_formatDate(prop.submittedAt)}',
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textLight)),
+                    ]),
               ),
               _statusChip(prop.status),
             ]),
@@ -420,8 +429,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                   _info(Icons.schedule_rounded, prop.duration!),
               ]),
             ],
-            if (prop.description != null &&
-                prop.description!.isNotEmpty) ...[
+            if (prop.description != null && prop.description!.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(prop.description!,
                   style: const TextStyle(
@@ -440,9 +448,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           const Divider(height: 1, color: Color(0xFFF0F0F0)),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('Service Image',
                   style: TextStyle(
                       fontSize: 12,
@@ -451,8 +458,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                       letterSpacing: 0.3)),
               const SizedBox(height: 10),
               Row(children: [
-                _docTile('Service Image', prop.imageUrl!,
-                    const Color(0xFFD4A843)),
+                _docTile(
+                    'Service Image', prop.imageUrl!, const Color(0xFFD4A843)),
               ]),
             ]),
           ),
@@ -462,9 +469,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           const Divider(height: 1, color: Color(0xFFF0F0F0)),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('What\'s Included',
                   style: TextStyle(
                       fontSize: 12,
@@ -476,16 +482,15 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                     child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                      const Icon(Icons.check_rounded,
-                          size: 13, color: Color(0xFF34C759)),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(item,
-                            style: const TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textMedium)),
-                      ),
-                    ]),
+                          const Icon(Icons.check_rounded,
+                              size: 13, color: Color(0xFF34C759)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(item,
+                                style: const TextStyle(
+                                    fontSize: 12, color: AppColors.textMedium)),
+                          ),
+                        ]),
                   )),
               if (prop.includes.length > 3)
                 Text('+ ${prop.includes.length - 3} more',
@@ -501,8 +506,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             child: isLoading
                 ? const Center(
                     child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation(
-                            Color(0xFFD4A843)),
+                        valueColor: AlwaysStoppedAnimation(Color(0xFFD4A843)),
                         strokeWidth: 2))
                 : _approveRejectRow(
                     onReject: () => _confirmRejectProposal(prop),
@@ -517,23 +521,19 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
 
   // ── Shared widget helpers ─────────────────────────────────────────────────
 
-  Widget _avatar(String? name,
-          {Color color = const Color(0xFF34C759)}) =>
+  Widget _avatar(String? name, {Color color = const Color(0xFF34C759)}) =>
       Container(
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-              colors: [color, color.withOpacity(0.6)]),
+          gradient: LinearGradient(colors: [color, color.withOpacity(0.6)]),
           shape: BoxShape.circle,
         ),
         child: Center(
           child: Text(
             name?.isNotEmpty == true ? name![0].toUpperCase() : '?',
             style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 18),
+                color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
           ),
         ),
       );
@@ -541,8 +541,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
   Widget _serviceBadge(String label, IconData icon,
           {Color color = AppColors.primary}) =>
       Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: color.withOpacity(0.08),
           borderRadius: BorderRadius.circular(10),
@@ -552,9 +551,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           const SizedBox(width: 5),
           Text(label,
               style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: color)),
+                  fontSize: 12, fontWeight: FontWeight.w700, color: color)),
         ]),
       );
 
@@ -563,8 +560,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         decoration: BoxDecoration(
           color: const Color(0xFFFF3B30).withOpacity(0.06),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: const Color(0xFFFF3B30).withOpacity(0.2)),
+          border: Border.all(color: const Color(0xFFFF3B30).withOpacity(0.2)),
         ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Icon(Icons.info_outline_rounded,
@@ -572,8 +568,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           const SizedBox(width: 6),
           Expanded(
             child: Text('Feedback: $note',
-                style: const TextStyle(
-                    fontSize: 11, color: Color(0xFFFF3B30))),
+                style: const TextStyle(fontSize: 11, color: Color(0xFFFF3B30))),
           ),
         ]),
       );
@@ -595,8 +590,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             ),
             child: const Text('Reject',
                 style: TextStyle(
-                    color: Color(0xFFFF3B30),
-                    fontWeight: FontWeight.w700)),
+                    color: Color(0xFFFF3B30), fontWeight: FontWeight.w700)),
           ),
         ),
         const SizedBox(width: 12),
@@ -619,28 +613,17 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
 
   Widget _statusChip(String status) {
     final info = <String, dynamic>{
-          'pending': {
-            'label': 'Pending',
-            'color': const Color(0xFFFF9500)
-          },
-          'approved': {
-            'label': 'Approved',
-            'color': const Color(0xFF34C759)
-          },
-          'rejected': {
-            'label': 'Rejected',
-            'color': const Color(0xFFFF3B30)
-          },
+          'pending': {'label': 'Pending', 'color': const Color(0xFFFF9500)},
+          'approved': {'label': 'Approved', 'color': const Color(0xFF34C759)},
+          'rejected': {'label': 'Rejected', 'color': const Color(0xFFFF3B30)},
         }[status] ??
         {'label': status, 'color': AppColors.textLight};
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: (info['color'] as Color).withOpacity(0.1),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-            color: (info['color'] as Color).withOpacity(0.35)),
+        border: Border.all(color: (info['color'] as Color).withOpacity(0.35)),
       ),
       child: Text(info['label'] as String,
           style: TextStyle(
@@ -690,8 +673,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: color.withOpacity(0.6)),
+                              strokeWidth: 2, color: color.withOpacity(0.6)),
                         ),
                       ),
                     );
@@ -710,8 +692,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                   right: 0,
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 4),
-                    decoration:
-                        BoxDecoration(color: color.withOpacity(0.85)),
+                    decoration: BoxDecoration(color: color.withOpacity(0.85)),
                     child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -734,8 +715,18 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
 
   String _formatDate(DateTime dt) {
     const m = [
-      'Jan','Feb','Mar','Apr','May','Jun',
-      'Jul','Aug','Sep','Oct','Nov','Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
     ];
     return '${m[dt.month - 1]} ${dt.day}, ${dt.year}';
   }
@@ -802,13 +793,12 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
       showDialog<bool>(
         context: ctx,
         builder: (dialogCtx) => AlertDialog(
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
-          title: Text(title,
-              style: const TextStyle(fontWeight: FontWeight.w700)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title:
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(message,
-                style: const TextStyle(color: AppColors.textMedium)),
+            Text(message, style: const TextStyle(color: AppColors.textMedium)),
             const SizedBox(height: 16),
             TextField(
               controller: noteCtrl,
@@ -816,8 +806,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
               decoration: InputDecoration(
                 hintText: 'Feedback for the handyman (optional)',
                 hintStyle: const TextStyle(fontSize: 13),
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide:
@@ -851,8 +841,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         context: context,
         builder: (dialogCtx) => Dialog(
           backgroundColor: Colors.black87,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 14, 8, 8),
@@ -865,15 +855,14 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                           color: Colors.white)),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close_rounded,
-                      color: Colors.white60),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white60),
                   onPressed: () => Navigator.of(dialogCtx).pop(),
                 ),
               ]),
             ),
             ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(20)),
+              borderRadius:
+                  const BorderRadius.vertical(bottom: Radius.circular(20)),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 480),
                 child: InteractiveViewer(
@@ -898,8 +887,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                       );
                     },
                     errorBuilder: (_, __, ___) => Padding(
-                      padding:
-                          const EdgeInsets.fromLTRB(24, 8, 24, 28),
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
                       child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: const [
@@ -908,8 +896,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                             SizedBox(height: 10),
                             Text('Image could not be loaded.',
                                 style: TextStyle(
-                                    color: Colors.white60,
-                                    fontSize: 13),
+                                    color: Colors.white60, fontSize: 13),
                                 textAlign: TextAlign.center),
                           ]),
                     ),
@@ -928,11 +915,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF082218),
-              Color(0xFF0F3D2E),
-              Color(0xFF1A5C43)
-            ],
+            colors: [Color(0xFF082218), Color(0xFF0F3D2E), Color(0xFF1A5C43)],
           ),
         ),
         child: SafeArea(
@@ -957,21 +940,21 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text('Approvals',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700)),
-                  SizedBox(height: 2),
-                  Text('Review applications & service proposals',
-                      style:
-                          TextStyle(color: Colors.white70, fontSize: 12)),
-                ]),
+                      Text('Approvals',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700)),
+                      SizedBox(height: 2),
+                      Text('Review applications & service proposals',
+                          style:
+                              TextStyle(color: Colors.white70, fontSize: 12)),
+                    ]),
               ),
               if (totalPending > 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFF3B30).withOpacity(0.15),
                     borderRadius: BorderRadius.circular(10),
@@ -1020,8 +1003,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                 onTap: () => widget.onNavTap?.call(i),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
                     color: active
                         ? AppColors.primary.withOpacity(0.1)
@@ -1030,17 +1013,14 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                   ),
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                     Icon(items[i]['icon'] as IconData,
-                        color: active
-                            ? AppColors.primary
-                            : AppColors.textLight,
+                        color: active ? AppColors.primary : AppColors.textLight,
                         size: 24),
                     const SizedBox(height: 4),
                     Text(items[i]['label'] as String,
                         style: TextStyle(
                             fontSize: 11,
-                            fontWeight: active
-                                ? FontWeight.w700
-                                : FontWeight.w400,
+                            fontWeight:
+                                active ? FontWeight.w700 : FontWeight.w400,
                             color: active
                                 ? AppColors.primary
                                 : AppColors.textLight)),

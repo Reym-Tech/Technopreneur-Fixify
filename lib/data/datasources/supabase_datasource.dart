@@ -243,9 +243,7 @@ class SupabaseDataSource {
           .eq('status', 'approved')
           .order('submitted_at', ascending: false);
       if ((data as List).isNotEmpty) {
-        return data
-          .map((j) => ServiceOfferModel.fromJson(j))
-          .toList();
+        return data.map((j) => ServiceOfferModel.fromJson(j)).toList();
       }
     } catch (e) {
       debugPrint('[getServiceOffers] service_proposals error: $e');
@@ -256,9 +254,7 @@ class SupabaseDataSource {
           .from(AppConfig.servicesTable)
           .select()
           .order('created_at', ascending: false);
-        return (data as List)
-          .map((j) => ServiceOfferModel.fromJson(j))
-          .toList();
+      return (data as List).map((j) => ServiceOfferModel.fromJson(j)).toList();
     } catch (e) {
       debugPrint('[getServiceOffers] legacy fallback error: $e');
       return [];
