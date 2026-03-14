@@ -298,6 +298,9 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         return const Color(0xFF007AFF); // blue — confirmed schedule
       case BookingStatus.pendingCustomerConfirmation:
         return Colors.amber; // amber — awaiting customer confirmation
+      case BookingStatus.pendingArrivalConfirmation:
+        return Colors
+            .teal; // teal — handyman arrived, awaiting customer confirmation
     }
   }
 
@@ -321,6 +324,8 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       case BookingStatus.scheduled:
         return 'Scheduled';
       case BookingStatus.pendingCustomerConfirmation:
+        return 'Awaiting Customer';
+      case BookingStatus.pendingArrivalConfirmation:
         return 'Awaiting Customer';
     }
   }

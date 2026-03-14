@@ -14,6 +14,13 @@
 //   • DB value: 'pending_customer_confirmation'.
 //   • Pro marks job done → status = pendingCustomerConfirmation.
 //   • Customer confirms → status = completed.
+//
+// ARRIVAL CONFIRMATION UPDATE:
+//   • Added BookingStatus.pendingArrivalConfirmation between scheduled and assessment.
+//   • Handyman taps "I've Arrived" → status = pendingArrivalConfirmation.
+//   • Customer confirms arrival → status = assessment (price-setting unlocked).
+//   • DB value: 'pending_arrival_confirmation'.
+//   • _parseStatus() and statusToString() handle the new value.
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
@@ -380,6 +387,8 @@ class BookingModel extends Equatable {
         return BookingStatus.scheduleProposed;
       case 'scheduled':
         return BookingStatus.scheduled;
+      case 'pending_arrival_confirmation':
+        return BookingStatus.pendingArrivalConfirmation;
       case 'assessment':
         return BookingStatus.assessment;
       case 'in_progress':
@@ -404,6 +413,8 @@ class BookingModel extends Equatable {
         return 'schedule_proposed';
       case BookingStatus.scheduled:
         return 'scheduled';
+      case BookingStatus.pendingArrivalConfirmation:
+        return 'pending_arrival_confirmation';
       case BookingStatus.assessment:
         return 'assessment';
       case BookingStatus.inProgress:

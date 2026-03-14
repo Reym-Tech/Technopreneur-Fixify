@@ -1,23 +1,36 @@
 // lib/presentation/screens/customer/booking_status_screen.dart
 //
-// SCHEDULING UPDATE:
-//   • Timeline now shows 8 steps:
-//       Pending → Accepted → Schedule Proposed → Scheduled →
+// MVC ROLE: VIEW
+//   • Receives all data and callbacks from the Controller (main.dart).
+//   • Owns only presentation logic — formatting, step colors, icon mapping.
+//   • No direct data-source calls; every action fires a callback.
+//
+// SCHEDULE SIMPLIFICATION (applied):
+//   • scheduleProposed step REMOVED from the progress timeline.
+//     Customers set their preferred date/time at booking creation.
+//     Handymen who accept simply confirm that time — no back-and-forth.
+//   • "Review Schedule" CTA (_buildScheduleCTA) REMOVED.
+//   • onReviewSchedule callback retained for API compatibility but no
+//     longer wired to any UI element.
+//
+// ARRIVAL CONFIRMATION (applied):
+//   • New status: pendingArrivalConfirmation
+//     Handyman taps "I've Arrived" → customer sees _ConfirmArrivalCTA.
+//     Customer confirms → status = assessment → handyman sets price.
+//   • onConfirmArrival callback added (nullable, backward-compat).
+//   • Timeline steps are now 8:
+//       Pending → Accepted → Scheduled → Handyman Arrived →
 //       Assessment → In Progress → Confirm Completion → Completed
-//   • When status == scheduleProposed: shows a pulsing "Review Schedule" CTA.
-//   • AssessmentCTA is only shown for status == assessment.
 //
-// COMPLETION UPDATE:
-//   • When status == pendingCustomerConfirmation: shows ConfirmCompletionCTA
-//     so the customer can confirm the job is done.
-//   • onConfirmCompletion callback added.
+// COMPLETION UPDATE (retained):
+//   • pendingCustomerConfirmation → shows _ConfirmCompletionCTA.
 //
-// REVIEW FIX:
-//   • onLeaveReview callback added. BookingStatusScreen now exposes a
-//     "Leave a Review" button when status == completed and the booking
-//     has not yet been reviewed. The parent (main.dart) drives navigation.
+// REVIEW FIX (retained):
+//   • onLeaveReview shown for completed, unreviewed bookings.
 //
-// PROPS ADDED (all optional for backward compat):
+// PROPS (all optional for backward compat):
+//   onReviewSchedule    — VoidCallback? — kept in signature, no longer shown
+//   onConfirmArrival    — VoidCallback? — customer confirms handyman arrived
 //   onConfirmCompletion — VoidCallback?
 //   onLeaveReview       — VoidCallback?
 //   hasReviewed         — bool (default false)
@@ -33,8 +46,13 @@ class BookingStatusScreen extends StatefulWidget {
   final VoidCallback? onBack;
   final VoidCallback? onViewAssessment;
 
-  /// Called when the customer taps "Review Schedule".
+  /// Retained for API compatibility. No longer shown in UI — schedule
+  /// confirmation is no longer part of the customer flow.
   final VoidCallback? onReviewSchedule;
+
+  /// Called when the customer confirms the handyman has arrived on-site.
+  /// Transitions status: pendingArrivalConfirmation → assessment.
+  final VoidCallback? onConfirmArrival;
 
   /// Called when the customer confirms the job is complete.
   final VoidCallback? onConfirmCompletion;
@@ -46,7 +64,6 @@ class BookingStatusScreen extends StatefulWidget {
   final VoidCallback? onCancel;
 
   /// Whether the customer has already submitted a review for this booking.
-  /// When true the "Leave a Review" button is hidden.
   final bool hasReviewed;
 
   const BookingStatusScreen({
@@ -54,7 +71,8 @@ class BookingStatusScreen extends StatefulWidget {
     required this.booking,
     this.onBack,
     this.onViewAssessment,
-    this.onReviewSchedule,
+    this.onReviewSchedule, // retained — not wired to UI
+    this.onConfirmArrival,
     this.onConfirmCompletion,
     this.onLeaveReview,
     this.onCancel,
@@ -66,31 +84,43 @@ class BookingStatusScreen extends StatefulWidget {
 }
 
 class _BookingStatusScreenState extends State<BookingStatusScreen> {
-  // Convenience accessors so the rest of the methods read exactly as before.
+  // ── VIEW convenience accessors ────────────────────────────────────────────
   BookingEntity get booking => widget.booking;
   VoidCallback? get onBack => widget.onBack;
   VoidCallback? get onViewAssessment => widget.onViewAssessment;
-  VoidCallback? get onReviewSchedule => widget.onReviewSchedule;
+  // onReviewSchedule intentionally not surfaced — no longer used in UI.
+  VoidCallback? get onConfirmArrival => widget.onConfirmArrival;
   VoidCallback? get onConfirmCompletion => widget.onConfirmCompletion;
   VoidCallback? get onLeaveReview => widget.onLeaveReview;
   VoidCallback? get onCancel => widget.onCancel;
   bool get hasReviewed => widget.hasReviewed;
 
-  // ── Step helpers ───────────────────────────────────────────────────────────
-
+  // ── MODEL (View-local) — timeline step definitions ────────────────────────
+  // scheduleProposed intentionally removed — customers set their own time;
+  // handymen confirm it directly, so this intermediate status no longer
+  // represents a customer-visible phase.
+  // pendingArrivalConfirmation is the new step between scheduled and assessment:
+  // handyman arrives → customer confirms → price-setting unlocked.
   static const List<BookingStatus> _steps = [
     BookingStatus.pending,
     BookingStatus.accepted,
-    BookingStatus.scheduleProposed,
     BookingStatus.scheduled,
+    BookingStatus.pendingArrivalConfirmation,
     BookingStatus.assessment,
     BookingStatus.inProgress,
     BookingStatus.pendingCustomerConfirmation,
     BookingStatus.completed,
   ];
 
+  // ── VIEW helpers — step index & labels ───────────────────────────────────
+
   int get _currentStepIndex {
     if (booking.status == BookingStatus.cancelled) return -1;
+    // scheduleProposed maps to "accepted" visually — treat as step 1 so the
+    // timeline still renders correctly if the status is encountered.
+    if (booking.status == BookingStatus.scheduleProposed) {
+      return _steps.indexOf(BookingStatus.accepted);
+    }
     return _steps.indexOf(booking.status);
   }
 
@@ -100,10 +130,10 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
         return 'Pending';
       case BookingStatus.accepted:
         return 'Accepted';
-      case BookingStatus.scheduleProposed:
-        return 'Schedule\nProposed';
       case BookingStatus.scheduled:
         return 'Scheduled';
+      case BookingStatus.pendingArrivalConfirmation:
+        return 'Handyman\nArrived';
       case BookingStatus.assessment:
         return 'Assessment';
       case BookingStatus.inProgress:
@@ -117,7 +147,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     }
   }
 
-  // ── Status display helpers ─────────────────────────────────────────────────
+  // ── VIEW helpers — status display ─────────────────────────────────────────
 
   String get _statusLabel {
     switch (booking.status) {
@@ -126,11 +156,13 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       case BookingStatus.accepted:
         return 'Handyman Assigned';
       case BookingStatus.scheduleProposed:
-        return 'Schedule Proposed';
+        return 'Handyman Assigned';
       case BookingStatus.scheduled:
         return 'Job Scheduled';
+      case BookingStatus.pendingArrivalConfirmation:
+        return 'Handyman Arrived!';
       case BookingStatus.assessment:
-        return 'Assessment Ready';
+        return 'Assessment In Progress';
       case BookingStatus.inProgress:
         return 'In Progress';
       case BookingStatus.pendingCustomerConfirmation:
@@ -147,13 +179,15 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       case BookingStatus.pending:
         return 'We\'re matching you with an available handyman. This usually takes just a few minutes.';
       case BookingStatus.accepted:
-        return 'A handyman has accepted your request and is setting up a schedule for your job.';
+        return 'A handyman has accepted your request and confirmed your preferred schedule.';
       case BookingStatus.scheduleProposed:
-        return 'Your handyman has proposed a start time. Please review and confirm the schedule below.';
+        return 'A handyman has accepted your request and is confirming the schedule.';
       case BookingStatus.scheduled:
-        return 'You\'ve confirmed the schedule. Your handyman will arrive at the agreed time.';
+        return 'Your handyman is on the way. You\'ll be notified when they arrive.';
+      case BookingStatus.pendingArrivalConfirmation:
+        return 'Your handyman has arrived! Please confirm their arrival below so they can begin the assessment.';
       case BookingStatus.assessment:
-        return 'Your handyman has assessed the job and set a price. Please review and confirm to get started.';
+        return 'Your handyman is assessing the job and will send you a price shortly.';
       case BookingStatus.inProgress:
         return 'Your handyman is currently working on the job.';
       case BookingStatus.pendingCustomerConfirmation:
@@ -170,11 +204,12 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       case BookingStatus.pending:
         return const Color(0xFFFF9500);
       case BookingStatus.accepted:
-        return const Color(0xFF007AFF);
       case BookingStatus.scheduleProposed:
-        return const Color(0xFFFF9500);
+        return const Color(0xFF007AFF);
       case BookingStatus.scheduled:
         return const Color(0xFF007AFF);
+      case BookingStatus.pendingArrivalConfirmation:
+        return const Color(0xFF34C759);
       case BookingStatus.assessment:
         return const Color(0xFF5856D6);
       case BookingStatus.inProgress:
@@ -187,6 +222,8 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
         return const Color(0xFFFF3B30);
     }
   }
+
+  // ── VIEW — build ───────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -218,13 +255,12 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                         .slideY(begin: 0.06, end: 0),
                     const SizedBox(height: 16),
 
-                    // ── Schedule Review CTA ──────────────────────────────
-                    if (booking.status == BookingStatus.scheduleProposed) ...[
-                      _buildScheduleCTA()
-                          .animate(onPlay: (c) => c.repeat(reverse: true))
-                          .shimmer(
-                              duration: 2000.ms,
-                              color: Colors.white.withOpacity(0.3)),
+                    // ── Confirm Arrival CTA ──────────────────────────────
+                    if (booking.status ==
+                        BookingStatus.pendingArrivalConfirmation) ...[
+                      _ConfirmArrivalCTA(
+                        onConfirmArrival: onConfirmArrival,
+                      ).animate().fadeIn(delay: 220.ms),
                       const SizedBox(height: 16),
                     ],
 
@@ -262,7 +298,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                         .fadeIn(delay: 280.ms)
                         .slideY(begin: 0.06, end: 0),
 
-                    // ── Issue Photo card (shown when customer uploaded one) ──
+                    // ── Issue Photo card ────────────────────────────────
                     if (booking.photoUrl != null &&
                         booking.photoUrl!.isNotEmpty) ...[
                       const SizedBox(height: 16),
@@ -333,7 +369,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     );
   }
 
-  // ── Header ─────────────────────────────────────────────────────────────────
+  // ── VIEW — Header ──────────────────────────────────────────────────────────
 
   Widget _buildHeader() => Container(
         decoration: const BoxDecoration(
@@ -397,7 +433,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
         ),
       );
 
-  // ── Status Card ────────────────────────────────────────────────────────────
+  // ── VIEW — Status Card ─────────────────────────────────────────────────────
 
   Widget _buildStatusCard() {
     if (booking.status == BookingStatus.cancelled) {
@@ -486,11 +522,12 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       case BookingStatus.pending:
         return Icons.search_rounded;
       case BookingStatus.accepted:
-        return Icons.person_rounded;
       case BookingStatus.scheduleProposed:
-        return Icons.schedule_rounded;
+        return Icons.person_rounded;
       case BookingStatus.scheduled:
         return Icons.event_available_rounded;
+      case BookingStatus.pendingArrivalConfirmation:
+        return Icons.directions_walk_rounded;
       case BookingStatus.assessment:
         return Icons.receipt_long_rounded;
       case BookingStatus.inProgress:
@@ -504,7 +541,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     }
   }
 
-  // ── Timeline ───────────────────────────────────────────────────────────────
+  // ── VIEW — Timeline ────────────────────────────────────────────────────────
 
   Widget _buildTimeline() {
     final currentIdx = _currentStepIndex;
@@ -569,8 +606,8 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
 
   Color _colorForStep(BookingStatus s) {
     switch (s) {
-      case BookingStatus.scheduleProposed:
-        return const Color(0xFFFF9500);
+      case BookingStatus.pendingArrivalConfirmation:
+        return const Color(0xFF34C759);
       case BookingStatus.assessment:
         return const Color(0xFF5856D6);
       case BookingStatus.inProgress:
@@ -584,80 +621,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     }
   }
 
-  // ── Schedule CTA ───────────────────────────────────────────────────────────
-
-  Widget _buildScheduleCTA() {
-    final proposedTime = booking.scheduledTime;
-    final proposedStr = proposedTime != null
-        ? DateFormat('MMM d · h:mm a').format(proposedTime.toLocal())
-        : null;
-
-    final preferredStr =
-        DateFormat('MMM d, yyyy').format(booking.scheduledDate.toLocal());
-
-    return GestureDetector(
-      onTap: onReviewSchedule,
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFFF9500), Color(0xFFFFB340)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-                color: const Color(0xFFFF9500).withOpacity(0.35),
-                blurRadius: 16,
-                offset: const Offset(0, 6))
-          ],
-        ),
-        child: Row(children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: const Icon(Icons.event_available_rounded,
-                color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Schedule Proposed!',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800)),
-              const SizedBox(height: 3),
-              if (proposedStr != null)
-                Text(
-                  'Proposed: $proposedStr',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700),
-                ),
-              const SizedBox(height: 2),
-              Text(
-                'Your request: $preferredStr  •  Tap to review',
-                style: TextStyle(
-                    color: Colors.white.withOpacity(0.75), fontSize: 11),
-              ),
-            ]),
-          ),
-          const Icon(Icons.arrow_forward_ios_rounded,
-              color: Colors.white, size: 16),
-        ]),
-      ),
-    );
-  }
-
-  // ── Booking Info ───────────────────────────────────────────────────────────
+  // ── VIEW — Booking Info ────────────────────────────────────────────────────
 
   Widget _buildBookingInfo(BuildContext context) => Container(
         padding: const EdgeInsets.all(20),
@@ -693,13 +657,13 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
           const SizedBox(height: 12),
           _infoRow(
             Icons.calendar_today_rounded,
-            'Requested Date',
+            'Preferred Date',
             DateFormat('MMM d, yyyy').format(booking.scheduledDate.toLocal()),
           ),
           const SizedBox(height: 12),
           _infoRow(
             Icons.access_time_rounded,
-            'Requested Time',
+            'Preferred Time',
             DateFormat('h:mm a').format(booking.scheduledDate.toLocal()),
           ),
           if (booking.scheduledTime != null) ...[
@@ -715,7 +679,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
             const SizedBox(height: 12),
             _infoRow(Icons.location_on_rounded, 'Location', booking.address!),
           ],
-          // Show estimated textual range (if present in notes) before agreed price.
           if (_extractPriceRange(booking.notes) != null) ...[
             const SizedBox(height: 12),
             _infoRow(Icons.payments_rounded, 'Estimated Range',
@@ -738,15 +701,10 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
               return const SizedBox.shrink();
             }(),
           ],
-          // (Removed) in-card Cancel button — replaced by sticky footer button
         ]),
       );
 
-  // ── Issue Photo Card ───────────────────────────────────────────────────────
-  // Displayed as its own card beneath Booking Details when the customer
-  // attached a photo during the service request. Tapping the thumbnail
-  // opens a full-screen pinch-to-zoom preview, consistent with the
-  // preview introduced in requestservice_customer.dart (Step 4 confirm).
+  // ── VIEW — Issue Photo Card ────────────────────────────────────────────────
 
   Widget _buildPhotoCard() {
     return Container(
@@ -763,7 +721,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Card header ─────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
             child: Row(children: [
@@ -794,7 +751,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                   ],
                 ),
               ),
-              // Tap-to-expand hint pill
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -818,15 +774,11 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
               ),
             ]),
           ),
-
-          // ── Divider ─────────────────────────────────────────────────
           Container(
             height: 1,
             color: const Color(0xFFF0F0F0),
             margin: const EdgeInsets.symmetric(horizontal: 16),
           ),
-
-          // ── Thumbnail (tappable) ─────────────────────────────────────
           GestureDetector(
             onTap: () => _showPhotoPreview(context),
             child: ClipRRect(
@@ -839,7 +791,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                 fit: BoxFit.cover,
                 loadingBuilder: (context, child, progress) {
                   if (progress == null) return child;
-                  // Shimmer-like placeholder while the image loads
                   return Container(
                     height: 200,
                     decoration: BoxDecoration(
@@ -904,9 +855,8 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     );
   }
 
-  // ── Full-screen photo preview ──────────────────────────────────────────────
-  // Consistent with the preview in requestservice_customer.dart.
-  // Uses InteractiveViewer so the customer can pinch-to-zoom.
+  // ── VIEW — full-screen photo preview ──────────────────────────────────────
+
   void _showPhotoPreview(BuildContext context) {
     showDialog<void>(
       context: context,
@@ -917,7 +867,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // ── Pinch-to-zoom image ──────────────────────────────────
             InteractiveViewer(
               minScale: 0.8,
               maxScale: 5.0,
@@ -940,8 +889,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                 ),
               ),
             ),
-
-            // ── Close button ─────────────────────────────────────────
             Positioned(
               top: MediaQuery.of(ctx).padding.top + 12,
               right: 16,
@@ -951,37 +898,30 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.55),
-                    shape: BoxShape.circle,
-                  ),
+                      color: Colors.black.withOpacity(0.55),
+                      shape: BoxShape.circle),
                   child: const Icon(Icons.close_rounded,
                       color: Colors.white, size: 20),
                 ),
               ),
             ),
-
-            // ── Bottom hint ──────────────────────────────────────────
             Positioned(
               bottom: MediaQuery.of(ctx).padding.bottom + 28,
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.45),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.pinch_rounded, color: Colors.white70, size: 14),
-                    SizedBox(width: 6),
-                    Text('Pinch to zoom',
-                        style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500)),
-                  ],
-                ),
+                    color: Colors.black.withOpacity(0.45),
+                    borderRadius: BorderRadius.circular(20)),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.pinch_rounded, color: Colors.white70, size: 14),
+                  SizedBox(width: 6),
+                  Text('Pinch to zoom',
+                      style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500)),
+                ]),
               ),
             ),
           ],
@@ -990,28 +930,14 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     );
   }
 
-  String? _extractPriceRange(String? notes) {
-    if (notes == null) return null;
-
-    // Look for explicit "Price Range: ..." lines first.
-    final explicit = RegExp(r'Price Range:\s*(.+)', caseSensitive: false);
-    final m = explicit.firstMatch(notes);
-    if (m != null) return m.group(1)?.trim();
-
-    // Fallback: try to find a currency range like "₱300 – ₱1,800" anywhere in notes.
-    final fallback = RegExp(r'₱\s?[0-9,]+\s*(?:[–\-]\s*₱?\s?[0-9,]+)?');
-    final m2 = fallback.firstMatch(notes);
-    if (m2 != null) return m2.group(0)?.trim();
-
-    return null;
-  }
+  // ── VIEW — Cancel dialog ───────────────────────────────────────────────────
 
   void _confirmCancelDialog(BuildContext context) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Cancel Booking',
+        title: const Text('Cancel Booking?',
             style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
         content: const Text(
           'Are you sure you want to cancel this booking? This action cannot be undone.',
@@ -1021,8 +947,8 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child:
-                const Text('No', style: TextStyle(color: AppColors.textLight)),
+            child: const Text('Keep Booking',
+                style: TextStyle(color: AppColors.textLight)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -1036,13 +962,15 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                   borderRadius: BorderRadius.circular(12)),
               elevation: 0,
             ),
-            child: const Text('Yes, Cancel Booking',
+            child: const Text('Yes, Cancel',
                 style: TextStyle(fontWeight: FontWeight.w700)),
           ),
         ],
       ),
     );
   }
+
+  // ── VIEW — row helpers ─────────────────────────────────────────────────────
 
   Widget _infoRow(IconData icon, String label, String value) => Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1073,25 +1001,30 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
           ),
         ],
       );
+
+  // ── MODEL (View-local) — notes parsing helpers ─────────────────────────────
+
+  /// Extracts a "Price Range: …" line from notes, if present.
+  String? _extractPriceRange(String? notes) {
+    if (notes == null) return null;
+    final m =
+        RegExp(r'Price Range:\s*(.+)', caseSensitive: false).firstMatch(notes);
+    if (m != null) return m.group(1)?.trim();
+    return null;
+  }
+
+  /// Returns notes with the "Price Range:" line removed.
+  String _pruneNotes(String notes) {
+    return notes
+        .split('\n')
+        .where((line) =>
+            !RegExp(r'Price Range:', caseSensitive: false).hasMatch(line))
+        .join('\n')
+        .trim();
+  }
 }
 
-String _pruneNotes(String notes) {
-  var out = notes;
-
-  // Remove explicit 'Price Range: ...' or 'Estimated Price Range: ...' lines.
-  out = out.replaceAll(
-      RegExp(r'^.*Price Range:.*\n?', multiLine: true, caseSensitive: false),
-      '');
-  out = out.replaceAll(
-      RegExp(r'^.*Estimated Price Range:.*\n?',
-          multiLine: true, caseSensitive: false),
-      '');
-
-  // Trim leftover whitespace and return.
-  return out.trim();
-}
-
-// ── Timeline Step Widget ───────────────────────────────────────────────────────
+// ── VIEW — Timeline Step widget ────────────────────────────────────────────
 
 class _TimelineStep extends StatelessWidget {
   final String label;
@@ -1110,32 +1043,40 @@ class _TimelineStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      SizedBox(
-        width: 24,
-        child: Column(children: [
+    final dotColor = isDone
+        ? AppColors.primary
+        : isActive
+            ? activeColor
+            : const Color(0xFFE0E0E0);
+
+    final lineColor = isDone ? AppColors.primary : const Color(0xFFE0E0E0);
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Column(children: [
           Container(
-            width: 24,
-            height: 24,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(
-              color: isDone
-                  ? activeColor
-                  : isActive
-                      ? activeColor.withOpacity(0.15)
-                      : Colors.grey.shade200,
+              color: isDone || isActive
+                  ? dotColor.withOpacity(0.15)
+                  : const Color(0xFFF5F5F5),
               shape: BoxShape.circle,
-              border:
-                  isActive ? Border.all(color: activeColor, width: 2) : null,
+              border: Border.all(
+                color: dotColor,
+                width: isActive ? 2.5 : 1.5,
+              ),
             ),
             child: isDone
-                ? const Icon(Icons.check_rounded, color: Colors.white, size: 13)
+                ? Icon(Icons.check_rounded, color: dotColor, size: 14)
                 : isActive
                     ? Center(
                         child: Container(
-                          width: 8,
-                          height: 8,
+                          width: 10,
+                          height: 10,
                           decoration: BoxDecoration(
-                              color: activeColor, shape: BoxShape.circle),
+                              color: dotColor, shape: BoxShape.circle),
                         ),
                       )
                     : null,
@@ -1143,35 +1084,34 @@ class _TimelineStep extends StatelessWidget {
           if (!isLast)
             Container(
               width: 2,
-              height: 36,
-              color:
-                  isDone ? activeColor.withOpacity(0.4) : Colors.grey.shade200,
+              height: 32,
+              color: lineColor,
+              margin: const EdgeInsets.symmetric(vertical: 3),
             ),
         ]),
-      ),
-      const SizedBox(width: 14),
-      Expanded(
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 18),
+        const SizedBox(width: 14),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
           child: Text(
             label,
             style: TextStyle(
               fontSize: 13,
-              fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+              fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
               color: isActive
                   ? activeColor
                   : isDone
                       ? AppColors.textDark
                       : AppColors.textLight,
+              height: 1.3,
             ),
           ),
         ),
-      ),
-    ]);
+      ],
+    );
   }
 }
 
-// ── Assessment CTA ─────────────────────────────────────────────────────────────
+// ── VIEW — Assessment CTA ──────────────────────────────────────────────────
 
 class AssessmentCTA extends StatelessWidget {
   final BookingEntity booking;
@@ -1241,7 +1181,113 @@ class AssessmentCTA extends StatelessWidget {
   }
 }
 
-// ── Confirm Completion CTA ─────────────────────────────────────────────────────
+// ── VIEW — Confirm Arrival CTA ─────────────────────────────────────────────
+//
+// Shown when status = pendingArrivalConfirmation.
+// Customer confirms the handyman has physically arrived on-site.
+// Tapping fires onConfirmArrival() → Controller → confirmHandymanArrival()
+// → status = assessment → price-setting unlocks for the handyman.
+
+class _ConfirmArrivalCTA extends StatelessWidget {
+  final VoidCallback? onConfirmArrival;
+
+  const _ConfirmArrivalCTA({this.onConfirmArrival});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _confirmDialog(context),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF34C759), Color(0xFF30D158)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: const Color(0xFF34C759).withOpacity(0.35),
+                blurRadius: 16,
+                offset: const Offset(0, 6))
+          ],
+        ),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: const Icon(Icons.where_to_vote_rounded,
+                color: Colors.white, size: 24),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Handyman Has Arrived!',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800)),
+              SizedBox(height: 3),
+              Text(
+                'Is your handyman at your location? Tap to confirm.',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ]),
+          ),
+          const Icon(Icons.arrow_forward_ios_rounded,
+              color: Colors.white, size: 16),
+        ]),
+      ),
+    );
+  }
+
+  void _confirmDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Confirm Arrival',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        content: const Text(
+          'Please confirm that your handyman has arrived at your location. '
+          'This will allow them to begin the assessment.',
+          style:
+              TextStyle(fontSize: 13, color: AppColors.textMedium, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Not Yet',
+                style: TextStyle(color: AppColors.textLight)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              onConfirmArrival?.call();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF34C759),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            child: const Text('Yes, They\'re Here',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── VIEW — Confirm Completion CTA ──────────────────────────────────────────
 
 class _ConfirmCompletionCTA extends StatelessWidget {
   final BookingEntity booking;
@@ -1343,18 +1389,10 @@ class _ConfirmCompletionCTA extends StatelessWidget {
         ],
       ),
     );
-
-    // String? _extractPriceRange(String? notes) {
-    //   if (notes == null) return null;
-    //   final m = RegExp(r'Price Range:\s*(.+)', caseSensitive: false)
-    //       .firstMatch(notes);
-    //   if (m != null) return m.group(1)?.trim();
-    //   return null;
-    // }
   }
 }
 
-// ── Review CTA ─────────────────────────────────────────────────────────────────
+// ── VIEW — Review CTA ──────────────────────────────────────────────────────
 
 class _ReviewCTA extends StatelessWidget {
   final VoidCallback onLeaveReview;

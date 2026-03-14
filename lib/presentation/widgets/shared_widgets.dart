@@ -247,6 +247,11 @@ class StatusBadge extends StatelessWidget {
           'color': const Color(0xFFFFA500),
           'label': 'Pending Confirmation',
         };
+      case BookingStatus.pendingArrivalConfirmation:
+        return {
+          'color': const Color(0xFF009688),
+          'label': 'Awaiting Confirmation',
+        };
     }
   }
 }

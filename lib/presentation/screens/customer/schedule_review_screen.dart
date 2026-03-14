@@ -1,27 +1,32 @@
 // lib/presentation/screens/customer/schedule_review_screen.dart
 //
-// Shown to the customer when the handyman has proposed a start date/time
-// (booking status = scheduleProposed).
+// MVC ROLE: VIEW
+//   • Receives all data and callbacks from the Controller (main.dart).
+//   • Owns only presentation logic — formatting, layout, dialogs.
+//   • No direct data-source calls; every action fires a callback.
 //
-// The customer can:
-//   • Accept           → onAccept()  → respondToSchedule(accepted:true)
-//   • Decline & Cancel → onDecline() → respondToSchedule(accepted:false)
+// WHEN THIS SCREEN IS SHOWN:
+//   This screen is NO LONGER part of the initial booking flow.
+//   Customers set their own preferred date/time at booking creation;
+//   handymen confirm that time directly (scheduled → no back-and-forth).
 //
-// CHANGES:
-//   • "Suggest a Different Time" option removed. Customer can only
-//     Accept or Decline & Cancel.
-//   • Added a notice card explaining that the handyman will arrive
-//     approximately 10–30 minutes after the scheduled start time.
-//   • onProposeAlternative parameter retained for API compatibility
-//     but is no longer exposed in the UI.
+//   This screen is shown ONLY for the reschedule case:
+//     • A handyman who is already scheduled proposes a NEW time via
+//       ProBookingDetailScreen's "Running Late?" / reschedule section.
+//     • The booking status returns to scheduleProposed.
+//     • The customer is brought here to accept or decline.
 //
-// Props:
+//   In both cases the customer can only:
+//     • Accept  → onAccept()  → respondToSchedule(accepted:true)
+//     • Decline → onDecline() → respondToSchedule(accepted:false) → cancelled
+//
+// PROPS:
 //   booking              — BookingEntity with status == scheduleProposed
 //   onAccept             — VoidCallback
 //   onDecline            — VoidCallback
-//   onProposeAlternative — Function(DateTime)? — kept for signature compat,
-//                          not used in UI
-//   onBack               — VoidCallback
+//   onProposeAlternative — Function(DateTime)? — retained for API compat,
+//                          not exposed in the UI
+//   onBack               — VoidCallback?
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -35,7 +40,6 @@ class ScheduleReviewScreen extends StatefulWidget {
   final VoidCallback onDecline;
 
   /// Retained for API compatibility but not exposed in the UI.
-  /// Use onAccept / onDecline instead.
   final Function(DateTime)? onProposeAlternative;
 
   final VoidCallback? onBack;
@@ -54,6 +58,8 @@ class ScheduleReviewScreen extends StatefulWidget {
 }
 
 class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
+  // ── VIEW — display helpers ────────────────────────────────────────────────
+
   String get _proName => widget.booking.professional?.name ?? 'Your handyman';
 
   String get _formattedDate {
@@ -68,11 +74,13 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
     return DateFormat('h:mm a').format(t.toLocal());
   }
 
+  /// True when the handyman has provided a reschedule reason,
+  /// indicating this is a re-proposal rather than an initial schedule.
   bool get _isReschedule =>
       widget.booking.rescheduleReason != null &&
       widget.booking.rescheduleReason!.isNotEmpty;
 
-  // ── Build ──────────────────────────────────────────────────────────────────
+  // ── VIEW — build ───────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -111,7 +119,6 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
                           .slideY(begin: 0.06, end: 0),
                       const SizedBox(height: 16),
                     ],
-                    // ── 10–30 min arrival notice ───────────────────────
                     _buildArrivalNotice()
                         .animate()
                         .fadeIn(delay: _isReschedule ? 360.ms : 290.ms),
@@ -135,7 +142,7 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
     );
   }
 
-  // ── Header ─────────────────────────────────────────────────────────────────
+  // ── VIEW — Header ──────────────────────────────────────────────────────────
 
   Widget _buildHeader(BuildContext context) => Container(
         decoration: const BoxDecoration(
@@ -209,7 +216,7 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ),
       );
 
-  // ── Banner ─────────────────────────────────────────────────────────────────
+  // ── VIEW — Banner ──────────────────────────────────────────────────────────
 
   Widget _buildBanner() => Container(
         padding: const EdgeInsets.all(16),
@@ -270,7 +277,7 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ]),
       );
 
-  // ── Schedule Card ──────────────────────────────────────────────────────────
+  // ── VIEW — Schedule Card ───────────────────────────────────────────────────
 
   Widget _buildScheduleCard() => Container(
         padding: const EdgeInsets.all(20),
@@ -331,7 +338,7 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ]),
       );
 
-  // ── Booking Info ───────────────────────────────────────────────────────────
+  // ── VIEW — Booking Info ────────────────────────────────────────────────────
 
   Widget _buildBookingInfoCard() => Container(
         padding: const EdgeInsets.all(18),
@@ -399,7 +406,7 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ],
       );
 
-  // ── Reschedule Reason ──────────────────────────────────────────────────────
+  // ── VIEW — Reschedule Reason ───────────────────────────────────────────────
 
   Widget _buildRescheduleReasonCard() => Container(
         padding: const EdgeInsets.all(18),
@@ -429,7 +436,7 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ]),
       );
 
-  // ── Arrival Notice (10–30 min window) ─────────────────────────────────────
+  // ── VIEW — Arrival Notice ──────────────────────────────────────────────────
 
   Widget _buildArrivalNotice() => Container(
         padding: const EdgeInsets.all(14),
@@ -454,7 +461,7 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ]),
       );
 
-  // ── General Notice ─────────────────────────────────────────────────────────
+  // ── VIEW — General Notice ──────────────────────────────────────────────────
 
   Widget _buildNotice() => Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -473,10 +480,9 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ],
       );
 
-  // ── Action Buttons ─────────────────────────────────────────────────────────
+  // ── VIEW — Action Buttons ──────────────────────────────────────────────────
 
   Widget _buildActions(BuildContext context) => Column(children: [
-        // ── Accept ────────────────────────────────────────────────────────
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
@@ -495,8 +501,6 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
           ),
         ),
         const SizedBox(height: 12),
-
-        // ── Decline & Cancel ───────────────────────────────────────────────
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
@@ -515,7 +519,7 @@ class _ScheduleReviewScreenState extends State<ScheduleReviewScreen> {
         ),
       ]);
 
-  // ── Dialogs ────────────────────────────────────────────────────────────────
+  // ── VIEW — Dialogs ─────────────────────────────────────────────────────────
 
   void _confirmAccept(BuildContext context) {
     showDialog(

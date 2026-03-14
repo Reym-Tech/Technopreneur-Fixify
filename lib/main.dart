@@ -93,6 +93,7 @@ import 'package:fixify/presentation/screens/professional/profile_professional.da
 import 'package:fixify/presentation/screens/professional/apply_professional.dart';
 import 'package:fixify/presentation/screens/professional/verificationstatus_professional.dart';
 import 'package:fixify/presentation/screens/professional/booking_requests_professional.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fixify/presentation/screens/professional/booking_history_professional.dart';
 import 'package:fixify/presentation/screens/professional/reviews_professional.dart';
 import 'package:fixify/presentation/screens/professional/notificationhandyman.dart';
@@ -288,6 +289,13 @@ class _MainAppState extends State<MainApp> {
   // Open (unassigned) booking requests visible to this professional.
   List<BookingModel> _openRequests = [];
 
+  // MODEL — per-professional skip persistence key.
+  // Scoped to the professional's ID so that different handymen on the same
+  // device maintain completely separate skip lists.
+  // The key is initialised lazily in _loadSkippedRequests() once _pro is known.
+  String get _prefsSkippedKey => 'skipped_bookings_${_pro?.id ?? 'unknown'}';
+  Set<String> _skippedRequestIds = {};
+
   List<ApplicationModel> _applications = [];
   List<ReviewModel> _reviews = [];
   int _navIndex = 0;
@@ -470,8 +478,89 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  /// Handyman confirms the customer's own preferred time.
+  /// Calls _ds.confirmSchedule() → status = scheduled directly.
+  Future<void> _handleConfirmSchedule(DateTime confirmedTime) async {
+    if (_selectedProBooking == null) return;
+    try {
+      final updated = await _ds.confirmSchedule(
+        bookingId: _selectedProBooking!.id,
+        confirmedTime: confirmedTime,
+      );
+      _updateBookingInList(updated);
+      setState(() => _selectedProBooking = updated.toEntity());
+      await _notifDs.pushToUser(
+        targetUserId: updated.customerId,
+        role: 'customer',
+        type: NotificationTypeStrings.bookingAccepted,
+        title: 'Booking Confirmed!',
+        message:
+            '${_pro?.name ?? 'Your handyman'} has confirmed your ${updated.serviceType} booking for your preferred time.',
+        referenceId: updated.id,
+        referenceType: 'booking',
+      );
+    } catch (e) {
+      _notify('Failed to confirm schedule: $e');
+    }
+  }
+
+  /// Handyman taps "I've Arrived" on-site.
+  /// Transitions status: scheduled → pendingArrivalConfirmation.
+  /// Customer is notified and must confirm arrival before price-setting unlocks.
+  Future<void> _handleStartAssessment() async {
+    if (_selectedProBooking == null) return;
+    try {
+      final updated = await _ds.markHandymanArrived(_selectedProBooking!.id);
+      _updateBookingInList(updated);
+      setState(() => _selectedProBooking = updated.toEntity());
+      await _notifDs.pushToUser(
+        targetUserId: updated.customerId,
+        role: 'customer',
+        type: NotificationTypeStrings.bookingAccepted,
+        title: 'Your Handyman Has Arrived!',
+        message:
+            '${_pro?.name ?? 'Your handyman'} is at your location. Please confirm their arrival in the app.',
+        referenceId: updated.id,
+        referenceType: 'booking',
+      );
+    } catch (e) {
+      _notify('Failed to mark arrival: $e');
+    }
+  }
+
+  /// Customer confirms the handyman has arrived.
+  /// Transitions status: pendingArrivalConfirmation → assessment.
+  /// Price-setting tools unlock for the handyman.
+  Future<void> _handleConfirmArrival() async {
+    if (_selectedBooking == null) return;
+    try {
+      final updated = await _ds.confirmHandymanArrival(_selectedBooking!.id);
+      _updateBookingInList(updated);
+      setState(() {
+        _selectedBooking = updated;
+        _screen = 'booking_status';
+      });
+      _notify('Arrival confirmed! Your handyman will now assess the job. 🔧');
+      final proUserId = updated.professional?.userId;
+      if (proUserId != null) {
+        await _notifDs.pushToUser(
+          targetUserId: proUserId,
+          role: 'professional',
+          type: NotificationTypeStrings.bookingAccepted,
+          title: 'Arrival Confirmed!',
+          message:
+              '${_user?.name ?? 'The customer'} confirmed your arrival. You can now set the assessment price.',
+          referenceId: updated.id,
+          referenceType: 'booking',
+        );
+      }
+    } catch (e) {
+      _notify('Failed to confirm arrival: $e');
+    }
+  }
+
   /// Professional proposes an initial schedule for a booking.
-  /// Validation (past-time guard) is enforced in SupabaseDataSource.proposeSchedule().
+  /// Retained for compat — no longer the primary path (use _handleConfirmSchedule).
   Future<void> _handleProposeSchedule(DateTime proposedTime) async {
     if (_selectedProBooking == null) return;
     try {
@@ -621,6 +710,12 @@ class _MainAppState extends State<MainApp> {
             _openRequests = await _ds.getOpenBookingRequests(
               skills: _pro!.skills,
             );
+            // Load persisted skips and filter open requests
+            await _loadSkippedRequests();
+            if (_skippedRequestIds.isNotEmpty) {
+              _openRequests
+                  .removeWhere((r) => _skippedRequestIds.contains(r.id));
+            }
             _applications = await _appDs.getMyApplications(_pro!.id);
             _reviews = await _ds.getProfessionalReviews(_pro!.id);
 
@@ -628,7 +723,8 @@ class _MainAppState extends State<MainApp> {
               skills: _pro!.skills,
               onNewRequest: (newRequest) {
                 if (!mounted) return;
-                if (!_openRequests.any((r) => r.id == newRequest.id)) {
+                if (!_openRequests.any((r) => r.id == newRequest.id) &&
+                    !_skippedRequestIds.contains(newRequest.id)) {
                   setState(
                       () => _openRequests = [newRequest, ..._openRequests]);
                   _notify('New booking request!');
@@ -646,6 +742,12 @@ class _MainAppState extends State<MainApp> {
                 });
               },
             );
+
+            // Ensure skipped requests stay filtered when professional bookings update
+            if (_skippedRequestIds.isNotEmpty) {
+              _openRequests
+                  .removeWhere((r) => _skippedRequestIds.contains(r.id));
+            }
 
             _appDs.subscribeToMyApplications(
               professionalId: _pro!.id,
@@ -682,6 +784,8 @@ class _MainAppState extends State<MainApp> {
             final isActive = existingBooking.status == BookingStatus.pending ||
                 existingBooking.status == BookingStatus.accepted ||
                 existingBooking.status == BookingStatus.assessment ||
+                existingBooking.status ==
+                    BookingStatus.pendingArrivalConfirmation ||
                 existingBooking.status == BookingStatus.inProgress ||
                 existingBooking.status ==
                     BookingStatus.pendingCustomerConfirmation;
@@ -722,6 +826,35 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  Future<void> _loadSkippedRequests() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_prefsSkippedKey) ?? <String>[];
+      setState(() => _skippedRequestIds = list.toSet());
+    } catch (e) {
+      debugPrint('Could not load skipped requests: $e');
+    }
+  }
+
+  Future<void> _saveSkippedRequests() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_prefsSkippedKey, _skippedRequestIds.toList());
+    } catch (e) {
+      debugPrint('Could not save skipped requests: $e');
+    }
+  }
+
+  void _skipOpenRequestById(String id) {
+    if (id.isEmpty) return;
+    setState(() {
+      _skippedRequestIds.add(id);
+      _openRequests.removeWhere((r) => r.id == id);
+    });
+    _saveSkippedRequests();
+    _notify('Request dismissed.');
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // CONTROLLER — refresh helpers (Model re-fetch → View setState)
   // ══════════════════════════════════════════════════════════════════════════
@@ -735,7 +868,8 @@ class _MainAppState extends State<MainApp> {
         if (mounted)
           setState(() {
             _bookings = _deduped(assigned);
-            _openRequests = open;
+            _openRequests =
+                open.where((r) => !_skippedRequestIds.contains(r.id)).toList();
           });
       } else if (_user!.role == 'customer') {
         final list = await _ds.getCustomerBookings(_user!.id);
@@ -790,7 +924,10 @@ class _MainAppState extends State<MainApp> {
       if (mounted)
         setState(() {
           _bookings = _deduped(bookings);
-          _openRequests = open;
+          // MODEL — re-apply this handyman's skip list so that refreshing the
+          // dashboard never resurfaces bookings they already dismissed.
+          _openRequests =
+              open.where((r) => !_skippedRequestIds.contains(r.id)).toList();
           _reviews = reviews;
           if (updatedPro != null) _pro = updatedPro;
         });
@@ -1001,7 +1138,10 @@ class _MainAppState extends State<MainApp> {
     final u = _user!.toEntity();
     final proEntity = _pro?.toEntity();
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
-    final openRequestEntities = _openRequests.map((b) => b.toEntity()).toList();
+    final openRequestEntities = _openRequests
+        .where((r) => !_skippedRequestIds.contains(r.id))
+        .map((b) => b.toEntity())
+        .toList();
 
     if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
       return ProBookingDetailScreen(
@@ -1040,8 +1180,9 @@ class _MainAppState extends State<MainApp> {
             rethrow;
           }
         },
-        onProposeSchedule: _handleProposeSchedule,
+        onProposeSchedule: _handleConfirmSchedule,
         onProposeReschedule: _handleProposeReschedule,
+        onStartAssessment: _handleStartAssessment,
       );
     }
 
@@ -1265,8 +1406,7 @@ class _MainAppState extends State<MainApp> {
           }
         },
         onDecline: (booking) async {
-          setState(() => _openRequests.removeWhere((r) => r.id == booking.id));
-          _notify('Request dismissed.');
+          _skipOpenRequestById(booking.id);
         },
       );
     }
@@ -1375,7 +1515,8 @@ class _MainAppState extends State<MainApp> {
       user: u,
       professional: proEntity,
       bookings: bookingEntities,
-      openRequestCount: _openRequests.length,
+      openRequestCount:
+          _openRequests.where((r) => !_skippedRequestIds.contains(r.id)).length,
       reviews: _reviews.map((r) => r.toEntity()).toList(),
       pendingApplications:
           _applications.where((a) => a.status == 'pending').length,
@@ -1492,13 +1633,18 @@ class _MainAppState extends State<MainApp> {
           }),
           onSubmit: (result) async {
             try {
-              final notesText = [
-                result.problemTitle,
-                if (result.priceRange != null && result.priceRange!.isNotEmpty)
-                  'Price Range: ${result.priceRange}',
+              // ── description: issue title + detail (shown as "Issue Details"
+              //    in the handyman's booking detail view).
+              final issueDescription = [
+                if (result.problemTitle.isNotEmpty) result.problemTitle,
                 if (result.description.isNotEmpty) result.description,
-                if (result.notes != null) result.notes!,
-              ].join('\n');
+              ].join('\n').trim();
+
+              // ── notes: the customer's optional P.S. field only — no price
+              //    range or problem title mixed in here any more.
+              final customerNotes = (result.notes?.trim().isEmpty ?? true)
+                  ? null
+                  : result.notes!.trim();
 
               final lowestPrice = result.matchedPros.isNotEmpty
                   ? result.matchedPros
@@ -1528,7 +1674,11 @@ class _MainAppState extends State<MainApp> {
                 professionalId: null,
                 serviceType: result.serviceType,
                 scheduledDate: result.preferredDate,
-                notes: notesText,
+                // Issue title + customer's description stored here — shown as
+                // "Issue Details" on the handyman's ProBookingDetailScreen.
+                description: issueDescription.isEmpty ? null : issueDescription,
+                // Customer's optional P.S. notes only — no price info mixed in.
+                notes: customerNotes,
                 address: result.address,
                 priceEstimate: lowestPrice ?? parsedMinFromRange,
                 latitude: result.latitude,
@@ -1612,10 +1762,18 @@ class _MainAppState extends State<MainApp> {
         return BookingStatusScreen(
           booking: _selectedBooking!.toEntity(),
           onBack: () => setState(() => _screen = 'home'),
+          // onViewAssessment routes to AssessmentScreen where customer
+          // reviews the price and confirms → inProgress.
           onViewAssessment: _selectedBooking!.status == BookingStatus.assessment
               ? () => setState(() => _screen = 'assessment')
               : null,
           onReviewSchedule: () => setState(() => _screen = 'schedule_review'),
+          // Customer confirms the handyman has arrived on-site.
+          // pendingArrivalConfirmation → assessment.
+          onConfirmArrival: _selectedBooking!.status ==
+                  BookingStatus.pendingArrivalConfirmation
+              ? _handleConfirmArrival
+              : null,
           // Customer confirms job is done (pendingCustomerConfirmation → completed).
           onConfirmCompletion: _selectedBooking!.status ==
                   BookingStatus.pendingCustomerConfirmation

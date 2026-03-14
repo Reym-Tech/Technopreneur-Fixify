@@ -94,20 +94,22 @@ class ProfessionalEntity extends Equatable {
 // ─────────────────────────────────────────
 
 // Full lifecycle:
-//   pending                    → Open request, no pro assigned yet
-//   accepted                   → Pro claimed the booking; must now propose a schedule
-//   scheduleProposed           → Pro has proposed a start date/time; customer reviewing
-//   scheduled                  → Customer accepted the proposed schedule; waiting for arrival
-//   assessment                 → Pro arrived, set a price; customer must confirm
-//   inProgress                 → Customer confirmed price; job underway
+//   pending                     → Open request, no pro assigned yet
+//   accepted                    → Pro claimed the booking; must confirm customer's schedule
+//   scheduleProposed            → Pro has proposed a start date/time; customer reviewing
+//   scheduled                   → Schedule confirmed; handyman heading to customer's location
+//   pendingArrivalConfirmation  → Handyman tapped "I've Arrived"; customer must confirm
+//   assessment                  → Customer confirmed arrival; handyman sets assessment price
+//   inProgress                  → Customer confirmed price; job underway
 //   pendingCustomerConfirmation → Pro marked job done; waiting for customer to confirm
-//   completed                  → Customer confirmed the job is done
-//   cancelled                  → Either side cancelled at any point
+//   completed                   → Customer confirmed the job is done
+//   cancelled                   → Either side cancelled at any point
 enum BookingStatus {
   pending,
   accepted,
   scheduleProposed,
   scheduled,
+  pendingArrivalConfirmation, // Handyman arrived on-site; awaiting customer confirmation
   assessment,
   inProgress,
   pendingCustomerConfirmation, // Pro marked done; awaiting customer confirmation

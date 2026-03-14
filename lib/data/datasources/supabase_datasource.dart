@@ -512,6 +512,77 @@ class SupabaseDataSource {
     return BookingModel.fromJson(data);
   }
 
+  // ── SCHEDULE CONFIRMATION ─────────────────────────────────
+
+  /// Called when the handyman confirms the customer's own preferred time.
+  ///
+  /// Under the simplified scheduling model, customers declare their preferred
+  /// time at booking creation. Handymen who can make that time confirm it here,
+  /// jumping the booking directly to 'scheduled' — no schedule_proposed /
+  /// customer-review step needed.
+  ///
+  /// NOTE: Intentionally skips _assertFutureTime() — the customer's preferred
+  /// time may be "now" or very soon, which would incorrectly fail the 1-minute
+  /// future guard for valid same-day confirmations.
+  Future<BookingModel> confirmSchedule({
+    required String bookingId,
+    required DateTime confirmedTime,
+  }) async {
+    debugPrint('[Supabase] confirmSchedule: id=$bookingId time=$confirmedTime');
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': 'scheduled',
+      'scheduled_time': confirmedTime.toUtc().toIso8601String(),
+      'reschedule_reason': null,
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] confirmSchedule: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  // ── ARRIVAL CONFIRMATION ──────────────────────────────────
+
+  /// Called by the handyman when they tap "I've Arrived".
+  /// Sets status = 'pending_arrival_confirmation'.
+  /// The customer will see a CTA to confirm the handyman has arrived.
+  /// Only after the customer confirms does the booking advance to 'assessment'
+  /// and the price-setting tools unlock for the handyman.
+  Future<BookingModel> markHandymanArrived(String bookingId) async {
+    debugPrint('[Supabase] markHandymanArrived: id=$bookingId');
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': 'pending_arrival_confirmation',
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] markHandymanArrived: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  /// Called by the customer to confirm the handyman has arrived.
+  /// Sets status = 'assessment', unlocking the price-setting tools for the handyman.
+  Future<BookingModel> confirmHandymanArrival(String bookingId) async {
+    debugPrint('[Supabase] confirmHandymanArrival: id=$bookingId');
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': 'assessment',
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] confirmHandymanArrival: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
   // ── COMPLETION ────────────────────────────────────────────
 
   /// Called by the professional when they believe the job is done.

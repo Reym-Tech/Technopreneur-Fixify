@@ -10,6 +10,19 @@
 //   • Decline button label changed to "Skip" to reflect that the job is not
 //     being cancelled, just dismissed from this pro's list.
 //   • All prop names, types, and widget structure are unchanged.
+//
+// DESCRIPTION / NOTES FIX:
+//   • booking.description holds "problemTitle\ndescription" (joined in main.dart
+//     from RequestServiceResult.problemTitle + .description).
+//   • booking.notes holds only the customer's optional P.S. field.
+//   • The card summary now shows the problem title (first line of description)
+//     as a subtitle under the service type so handymen can instantly see what
+//     the job is about without expanding the card.
+//   • The expanded section now shows:
+//       – Problem Title  (first line of booking.description)
+//       – Description    (remaining lines of booking.description, if any)
+//       – Location, Preferred Schedule, Estimated Range (unchanged)
+//       – Notes (P.S.)   (booking.notes — shown last, only if non-empty)
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -63,6 +76,28 @@ String? _findOfferPriceRangeForBooking(BookingEntity booking) {
   return offers.first['price'];
 }
 
+// ── Description field helpers ─────────────────────────────────────────────
+// booking.description stores "problemTitle\ndetailBody" (joined in main.dart).
+// These helpers split that back into its two constituent parts.
+
+/// Returns the first line of [description] as the Problem Title.
+/// Returns null when [description] is null or empty.
+String? _problemTitle(String? description) {
+  if (description == null || description.trim().isEmpty) return null;
+  final firstLine = description.split('\n').first.trim();
+  return firstLine.isEmpty ? null : firstLine;
+}
+
+/// Returns everything after the first line of [description] as the detail body.
+/// Returns null when there is no second line or it is empty.
+String? _descriptionBody(String? description) {
+  if (description == null || description.trim().isEmpty) return null;
+  final lines = description.split('\n');
+  if (lines.length < 2) return null;
+  final body = lines.sublist(1).join('\n').trim();
+  return body.isEmpty ? null : body;
+}
+
 class BookingRequestsScreen extends StatefulWidget {
   final List<BookingEntity> bookings;
   final bool isAvailable;
@@ -91,7 +126,8 @@ class _BookingRequestsScreenState extends State<BookingRequestsScreen> {
   String? _expandedId;
 
   // In the open-booking model all items passed in are already pending+unassigned,
-  // so we display all of them. The filter is kept for safety.
+  // so we display all of them. The parent (MainApp) is responsible for
+  // filtering out skipped requests centrally.
   List<BookingEntity> get _pending =>
       widget.bookings.where((b) => b.status == BookingStatus.pending).toList();
 
@@ -470,6 +506,20 @@ class _RequestCard extends StatelessWidget {
                             fontWeight: FontWeight.w700,
                             color: AppColors.textDark)),
                     const SizedBox(height: 2),
+                    // Problem title — first line of booking.description.
+                    // Gives the handyman instant context without expanding.
+                    if (_problemTitle(booking.description) != null) ...[
+                      Text(
+                        _problemTitle(booking.description)!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textMedium),
+                      ),
+                      const SizedBox(height: 2),
+                    ],
                     Text(
                       'Requested ${_timeAgo(booking.createdAt)}',
                       style: const TextStyle(
@@ -496,6 +546,23 @@ class _RequestCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── Problem Title ────────────────────────────────────────
+                  // First line of booking.description (e.g. "Pipe Leak Repair").
+                  if (_problemTitle(booking.description) != null)
+                    _detailRow(
+                      Icons.build_circle_outlined,
+                      'Problem Title',
+                      _problemTitle(booking.description)!,
+                    ),
+                  // ── Description / Detail ─────────────────────────────────
+                  // Everything after the first line — the customer's free-text
+                  // description of the issue from Step 2.
+                  if (_descriptionBody(booking.description) != null)
+                    _detailRow(
+                      Icons.description_outlined,
+                      'Description',
+                      _descriptionBody(booking.description)!,
+                    ),
                   if (booking.address != null && booking.address!.isNotEmpty)
                     _detailRow(Icons.location_on_outlined, 'Location',
                         booking.address!),
@@ -503,8 +570,8 @@ class _RequestCard extends StatelessWidget {
                     // Avoid showing a duplicate "Price Range" line in Notes
                     // when we already surface the estimated range/rate below.
                     _detailRow(
-                      Icons.notes_rounded,
-                      'Notes',
+                      Icons.sticky_note_2_outlined,
+                      'Notes (P.S.)',
                       _stripPriceRangeFromNotes(
                         booking.notes!,
                         // Hide the inline Price Range when we'll show any
