@@ -31,7 +31,20 @@ import '../models/models.dart';
 import '../../core/constants/app_config.dart';
 // NOTE: AppConfig must define:
 //   static const String bookingPhotosBucket = 'booking_photos';
-// Add this alongside avatarsBucket in lib/core/constants/app_config.dart.
+//   static const String completionPhotosBucket = 'completion_photos';
+//   static const String completionPhotosTable = 'booking_completion_photos';
+// Add these alongside avatarsBucket in lib/core/constants/app_config.dart.
+//
+// Required Supabase setup:
+//   1. Create a public Storage bucket named 'completion_photos'.
+//      RLS INSERT policy: (storage.foldername(name))[1] = auth.uid()
+//      RLS SELECT policy: true (public read so customer + admin can view)
+//   2. Create a table 'booking_completion_photos':
+//      id          uuid primary key default gen_random_uuid()
+//      booking_id  uuid references bookings(id) on delete cascade
+//      photo_url   text not null
+//      uploaded_by uuid references auth.users(id)
+//      created_at  timestamptz default now()
 // IMPORTANT: The bucket name must match the Supabase Storage bucket exactly
 // (underscores, not hyphens). The RLS INSERT policy requires the first path
 // segment to equal auth.uid() — so we always use the auth UID, not a
@@ -534,6 +547,35 @@ class SupabaseDataSource {
     return BookingModel.fromJson(data);
   }
 
+  /// Called when the handyman is running late but NOT rescheduling to a
+  /// different day. Updates scheduled_time to the new ETA without changing
+  /// the booking status — the customer is notified informally; no
+  /// accept/decline is required.
+  ///
+  /// ✅ Validates that newEta is at least 1 minute in the future.
+  Future<BookingModel> notifyRunningLate({
+    required String bookingId,
+    required DateTime newEta,
+    String? reason,
+  }) async {
+    _assertFutureTime(newEta, label: 'New ETA');
+    debugPrint(
+        '[Supabase] notifyRunningLate: id=$bookingId eta=$newEta reason=$reason');
+    await _client.from(AppConfig.bookingsTable).update({
+      'scheduled_time': newEta.toUtc().toIso8601String(),
+      'reschedule_reason': reason,
+      // status intentionally unchanged — booking stays 'scheduled'
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+    debugPrint('[Supabase] notifyRunningLate: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
   // ── SCHEDULE CONFIRMATION ─────────────────────────────────
 
   /// Called when the handyman confirms the customer's own preferred time.
@@ -665,14 +707,20 @@ class SupabaseDataSource {
 
   Future<List<BookingModel>> getOpenBookingRequests({
     required List<String> skills,
+    required String professionalId,
   }) async {
     if (skills.isEmpty) return [];
 
+    // Fetch both:
+    //   1. Open (unassigned) pending bookings — visible to all matching pros.
+    //   2. Directly-assigned pending bookings for this specific professional —
+    //      created when a customer books via "Book This Professional".
+    // Supabase .or() maps to: WHERE (professional_id IS NULL OR professional_id = ?)
     final response = await _client
         .from(AppConfig.bookingsTable)
         .select('*, users!customer_id(id, name, avatar_url, phone)')
         .eq('status', 'pending')
-        .isFilter('professional_id', null)
+        .or('professional_id.is.null,professional_id.eq.$professionalId')
         .order('created_at', ascending: false);
 
     final normalizedSkills = skills.map((s) => s.toLowerCase()).toSet();
@@ -688,6 +736,19 @@ class SupabaseDataSource {
         .from(AppConfig.bookingsTable)
         .select(_fullBookingSelect)
         .eq('customer_id', customerId)
+        .order('created_at', ascending: false);
+    return (response as List)
+        .map((j) => BookingModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Fetches ALL bookings across all customers and professionals.
+  /// Intended for admin use only — requires unrestricted RLS or service role.
+  Future<List<BookingModel>> getAllBookings() async {
+    debugPrint('[Supabase] getAllBookings');
+    final response = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
         .order('created_at', ascending: false);
     return (response as List)
         .map((j) => BookingModel.fromJson(j as Map<String, dynamic>))
@@ -772,6 +833,7 @@ class SupabaseDataSource {
 
   RealtimeChannel subscribeToOpenBookingRequests({
     required List<String> skills,
+    required String professionalId,
     required Function(BookingModel) onNewRequest,
   }) {
     final normalizedSkills = skills.map((s) => s.toLowerCase()).toSet();
@@ -784,7 +846,11 @@ class SupabaseDataSource {
           table: AppConfig.bookingsTable,
           callback: (payload) async {
             final record = payload.newRecord;
-            if (record['professional_id'] != null) return;
+            // Accept the booking if it is either:
+            //   • an open request (professional_id is null), or
+            //   • a direct booking assigned specifically to this professional.
+            final recordProId = record['professional_id'] as String?;
+            if (recordProId != null && recordProId != professionalId) return;
             final serviceType =
                 (record['service_type'] as String?)?.toLowerCase() ?? '';
             if (!normalizedSkills.contains(serviceType)) return;
@@ -982,6 +1048,100 @@ class SupabaseDataSource {
         .eq('id', userId)
         .single();
     return UserModel.fromJson(data);
+  }
+
+  // ── COMPLETION PHOTOS ─────────────────────────────────────────────────────
+
+  /// Uploads a single completion-proof image to Supabase Storage.
+  /// Returns the public URL of the uploaded file.
+  ///
+  /// [uploaderUid]  — auth.uid() of the professional (used as the folder name
+  ///                  to satisfy the RLS INSERT policy).
+  /// [bookingId]    — included in the path so photos are grouped per booking.
+  /// [fileBytes]    — raw image bytes (from image_picker XFile.readAsBytes()).
+  /// [index]        — position in the batch (0-based) — used to de-duplicate
+  ///                  file names when uploading multiple photos.
+  Future<String> uploadCompletionPhoto({
+    required String uploaderUid,
+    required String bookingId,
+    required List<int> fileBytes,
+    required int index,
+  }) async {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final path = '$uploaderUid/$bookingId/proof_${index}_$timestamp.jpg';
+
+    debugPrint('[Supabase] uploadCompletionPhoto: path=$path');
+    await _client.storage.from(AppConfig.completionPhotosBucket).uploadBinary(
+          path,
+          Uint8List.fromList(fileBytes),
+          fileOptions: const FileOptions(
+            contentType: 'image/jpeg',
+            upsert: false,
+          ),
+        );
+
+    final url = _client.storage
+        .from(AppConfig.completionPhotosBucket)
+        .getPublicUrl(path);
+    debugPrint('[Supabase] uploadCompletionPhoto: done ✅ $url');
+    return url;
+  }
+
+  /// Saves completion photo URLs to the booking_completion_photos table and
+  /// transitions the booking status to pending_customer_confirmation.
+  ///
+  /// Call this instead of the bare markJobDoneByPro() when proof photos have
+  /// been uploaded. The two operations are performed in sequence — if the
+  /// status update fails the photo rows are already saved and can be retried.
+  Future<BookingModel> submitJobDoneWithProof({
+    required String bookingId,
+    required String uploaderUid,
+    required List<String> photoUrls,
+  }) async {
+    assert(photoUrls.length >= 3, 'At least 3 completion photos are required.');
+
+    debugPrint(
+        '[Supabase] submitJobDoneWithProof: id=$bookingId photos=${photoUrls.length}');
+
+    // 1. Insert photo rows (batch insert)
+    final rows = photoUrls
+        .map((url) => {
+              'booking_id': bookingId,
+              'photo_url': url,
+              'uploaded_by': uploaderUid,
+            })
+        .toList();
+    await _client.from(AppConfig.completionPhotosTable).insert(rows);
+
+    // 2. Transition booking status
+    await _client.from(AppConfig.bookingsTable).update({
+      'status': 'pending_customer_confirmation',
+    }).eq('id', bookingId);
+
+    final data = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .eq('id', bookingId)
+        .single();
+
+    debugPrint('[Supabase] submitJobDoneWithProof: done ✅');
+    return BookingModel.fromJson(data);
+  }
+
+  /// Fetches all completion-proof photo URLs for a given booking.
+  /// Returns an empty list if no photos have been uploaded yet.
+  Future<List<String>> getCompletionPhotos(String bookingId) async {
+    debugPrint('[Supabase] getCompletionPhotos: bookingId=$bookingId');
+    final response = await _client
+        .from(AppConfig.completionPhotosTable)
+        .select('photo_url')
+        .eq('booking_id', bookingId)
+        .order('created_at', ascending: true);
+
+    final urls =
+        (response as List).map((row) => row['photo_url'] as String).toList();
+    debugPrint('[Supabase] getCompletionPhotos: ${urls.length} photos');
+    return urls;
   }
 
   Future<String> uploadAvatar(

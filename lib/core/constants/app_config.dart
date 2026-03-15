@@ -37,6 +37,8 @@ class AppConfig {
   static const String avatarsBucket = 'avatars';
   static const String documentsBucket = 'documents';
   static const String bookingPhotosBucket = 'booking_photos';
+  static const String completionPhotosBucket = 'completion_photos';
+  static const String completionPhotosTable = 'booking_completion_photos';
 
   static String _missing(String key) {
     throw Exception(

@@ -58,8 +58,26 @@ class BookingStatusScreen extends StatefulWidget {
   /// Called when the customer confirms the job is complete.
   final VoidCallback? onConfirmCompletion;
 
+  /// Called to load completion proof photos for this booking.
+  /// Returns a list of public image URLs uploaded by the handyman.
+  /// Shown to the customer in the pendingCustomerConfirmation state.
+  final Future<List<String>> Function(String bookingId)? onLoadCompletionPhotos;
+
   /// Called when the customer taps "Leave a Review" on a completed booking.
   final VoidCallback? onLeaveReview;
+
+  /// Called when the customer accepts a proposed reschedule (scheduleProposed).
+  /// Reuses onReviewSchedule routing — navigates to ScheduleReviewScreen.
+  // (onReviewSchedule already declared above)
+
+  /// Called when the customer declines a proposed reschedule directly
+  /// from the booking status card without going to ScheduleReviewScreen.
+  final VoidCallback? onDeclineSchedule;
+
+  /// Called when the customer taps "Book Again" on a completed booking.
+  /// The controller should navigate to RequestServiceScreen pre-targeting
+  /// the same professional (direct booking behaviour).
+  final Function(String serviceType)? onBookAgain;
 
   /// Called when the customer taps "Cancel Booking".
   final VoidCallback? onCancel;
@@ -75,7 +93,10 @@ class BookingStatusScreen extends StatefulWidget {
     this.onReviewSchedule, // retained — not wired to UI
     this.onConfirmArrival,
     this.onConfirmCompletion,
+    this.onLoadCompletionPhotos,
     this.onLeaveReview,
+    this.onBookAgain,
+    this.onDeclineSchedule,
     this.onCancel,
     this.hasReviewed = false,
   });
@@ -89,10 +110,15 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
   BookingEntity get booking => widget.booking;
   VoidCallback? get onBack => widget.onBack;
   VoidCallback? get onViewAssessment => widget.onViewAssessment;
-  // onReviewSchedule intentionally not surfaced — no longer used in UI.
+  // onReviewSchedule is surfaced for the scheduleProposed reschedule flow.
+  VoidCallback? get onReviewSchedule => widget.onReviewSchedule;
   VoidCallback? get onConfirmArrival => widget.onConfirmArrival;
   VoidCallback? get onConfirmCompletion => widget.onConfirmCompletion;
+  Future<List<String>> Function(String bookingId)? get onLoadCompletionPhotos =>
+      widget.onLoadCompletionPhotos;
   VoidCallback? get onLeaveReview => widget.onLeaveReview;
+  VoidCallback? get onDeclineSchedule => widget.onDeclineSchedule;
+  Function(String serviceType)? get onBookAgain => widget.onBookAgain;
   VoidCallback? get onCancel => widget.onCancel;
   bool get hasReviewed => widget.hasReviewed;
 
@@ -199,7 +225,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       case BookingStatus.accepted:
         return 'A handyman has accepted your request and confirmed your preferred schedule.';
       case BookingStatus.scheduleProposed:
-        return 'A handyman has accepted your request and is confirming the schedule.';
+        return 'Your handyman has requested a reschedule. Please review the new proposed time below.';
       case BookingStatus.scheduled:
         return 'Your handyman is on the way. You\'ll be notified when they arrive.';
       case BookingStatus.pendingArrivalConfirmation:
@@ -295,6 +321,32 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                       const SizedBox(height: 16),
                     ],
 
+                    // ── Reschedule Review Card (scheduleProposed) ─────────
+                    // Shown when the handyman has proposed a new date.
+                    // Customer can Accept or Decline.
+                    if (booking.status == BookingStatus.scheduleProposed) ...[
+                      _RescheduleReviewCard(
+                        booking: booking,
+                        onAccept: onReviewSchedule != null
+                            ? () => onReviewSchedule!()
+                            : null,
+                        onDecline: onDeclineSchedule,
+                      ).animate().fadeIn(delay: 220.ms),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // ── Running Late ETA Banner (scheduled) ───────────────
+                    // Shown when the handyman updated their ETA without
+                    // changing the date (status stays 'scheduled').
+                    if (booking.status == BookingStatus.scheduled &&
+                        booking.scheduledTime != null &&
+                        booking.rescheduleReason != null) ...[
+                      _RunningLateBanner(booking: booking)
+                          .animate()
+                          .fadeIn(delay: 220.ms),
+                      const SizedBox(height: 16),
+                    ],
+
                     // ── Assessment CTA ───────────────────────────────────
                     if (booking.status == BookingStatus.assessment) ...[
                       AssessmentCTA(
@@ -307,6 +359,15 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                     // ── Confirm Completion CTA ───────────────────────────
                     if (booking.status ==
                         BookingStatus.pendingCustomerConfirmation) ...[
+                      // Proof photos — shown above the confirm button so the
+                      // customer reviews the handyman's evidence first.
+                      if (onLoadCompletionPhotos != null) ...[
+                        _CompletionProofCard(
+                          bookingId: booking.id,
+                          onLoad: onLoadCompletionPhotos!,
+                        ).animate().fadeIn(delay: 215.ms),
+                        const SizedBox(height: 12),
+                      ],
                       _ConfirmCompletionCTA(
                         booking: booking,
                         onConfirmCompletion: onConfirmCompletion,
@@ -321,6 +382,15 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                       _ReviewCTA(
                         onLeaveReview: onLeaveReview!,
                       ).animate().fadeIn(delay: 220.ms),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // ── Book Again CTA (completed) ────────────────────────
+                    if (booking.status == BookingStatus.completed &&
+                        onBookAgain != null) ...[
+                      _BookAgainCTA(
+                        onBookAgain: () => onBookAgain!(booking.serviceType),
+                      ).animate().fadeIn(delay: 260.ms),
                       const SizedBox(height: 16),
                     ],
 
@@ -1961,6 +2031,67 @@ class _HICPill extends StatelessWidget {
   }
 }
 
+// ── VIEW — Book Again CTA ──────────────────────────────────────────────────
+
+class _BookAgainCTA extends StatelessWidget {
+  final VoidCallback onBookAgain;
+  const _BookAgainCTA({required this.onBookAgain});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onBookAgain,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: AppColors.primary.withOpacity(0.30),
+                blurRadius: 16,
+                offset: const Offset(0, 6))
+          ],
+        ),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child:
+                const Icon(Icons.replay_rounded, color: Colors.white, size: 26),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Book Again',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800)),
+              SizedBox(height: 3),
+              Text(
+                'Request the same professional for a new job.',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ]),
+          ),
+          const Icon(Icons.arrow_forward_ios_rounded,
+              color: Colors.white, size: 16),
+        ]),
+      ),
+    );
+  }
+}
+
 // ── VIEW — Review CTA ──────────────────────────────────────────────────────
 
 class _ReviewCTA extends StatelessWidget {
@@ -2016,6 +2147,422 @@ class _ReviewCTA extends StatelessWidget {
           ),
           const Icon(Icons.arrow_forward_ios_rounded,
               color: Colors.white, size: 16),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── VIEW — Reschedule Review Card ─────────────────────────────────────────────
+// Shown when the handyman proposes a new date (status = scheduleProposed).
+// Displays the new proposed time, the reason, and Accept / Decline buttons.
+
+class _RescheduleReviewCard extends StatelessWidget {
+  final BookingEntity booking;
+  final VoidCallback? onAccept;
+  final VoidCallback? onDecline;
+
+  const _RescheduleReviewCard({
+    required this.booking,
+    this.onAccept,
+    this.onDecline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final newTime = booking.scheduledTime;
+    final reason = booking.rescheduleReason;
+    final proName = booking.professional?.name ?? 'Your handyman';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF5856D6).withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+              color: const Color(0xFF5856D6).withOpacity(0.08),
+              blurRadius: 16,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Header ──────────────────────────────────────────────────────
+        Row(children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFF5856D6).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.event_repeat_rounded,
+                color: Color(0xFF5856D6), size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Reschedule Requested',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF5856D6))),
+              Text('$proName has proposed a new time.',
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.textLight)),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 14),
+
+        // ── Proposed time ────────────────────────────────────────────────
+        if (newTime != null)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF5856D6).withOpacity(0.05),
+              borderRadius: BorderRadius.circular(14),
+              border:
+                  Border.all(color: const Color(0xFF5856D6).withOpacity(0.15)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.schedule_rounded,
+                  color: Color(0xFF5856D6), size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Proposed new time',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF5856D6),
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 3),
+                      Text(
+                        DateFormat('EEEE, MMMM d, yyyy')
+                            .format(newTime.toLocal()),
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark),
+                      ),
+                      Text(
+                        DateFormat('h:mm a').format(newTime.toLocal()),
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.textLight),
+                      ),
+                    ]),
+              ),
+            ]),
+          ),
+
+        // ── Reason (if provided) ─────────────────────────────────────────
+        if (reason != null && reason.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F8F8),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.info_outline_rounded,
+                  size: 16, color: AppColors.textLight),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(reason,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textMedium,
+                        height: 1.4)),
+              ),
+            ]),
+          ),
+        ],
+        const SizedBox(height: 16),
+
+        // ── Accept / Decline buttons ─────────────────────────────────────
+        Row(children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: onDecline,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFFF3B30),
+                side: const BorderSide(color: Color(0xFFFF3B30)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: const Text('Decline',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: ElevatedButton(
+              onPressed: onAccept,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5856D6),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                elevation: 0,
+              ),
+              child: const Text('Accept',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+}
+
+// ── VIEW — Running Late ETA Banner ────────────────────────────────────────────
+// Shown on the customer's booking status screen when the handyman updated
+// their ETA (status stays 'scheduled'; rescheduleReason is set).
+
+class _RunningLateBanner extends StatelessWidget {
+  final BookingEntity booking;
+  const _RunningLateBanner({required this.booking});
+
+  @override
+  Widget build(BuildContext context) {
+    final eta = booking.scheduledTime!;
+    final reason = booking.rescheduleReason;
+    final proName = booking.professional?.name ?? 'Your handyman';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF9500).withOpacity(0.07),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFF9500).withOpacity(0.25)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFF9500).withOpacity(0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Icon(Icons.access_time_rounded,
+              color: Color(0xFFFF9500), size: 22),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Handyman Running Late',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFCC7700))),
+            const SizedBox(height: 4),
+            Text(
+              '$proName has updated their arrival time to '
+              '${DateFormat('h:mm a').format(eta.toLocal())}.',
+              style: const TextStyle(
+                  fontSize: 13, color: AppColors.textMedium, height: 1.4),
+            ),
+            if (reason != null && reason.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text('Reason: $reason',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textLight,
+                      fontStyle: FontStyle.italic)),
+            ],
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── VIEW — Completion Proof Photo Card ───────────────────────────────────────
+// Shown in pendingCustomerConfirmation status above the confirm button.
+// Loads photos lazily via onLoad and displays them in a scrollable grid.
+
+class _CompletionProofCard extends StatefulWidget {
+  final String bookingId;
+  final Future<List<String>> Function(String bookingId) onLoad;
+
+  const _CompletionProofCard({
+    required this.bookingId,
+    required this.onLoad,
+  });
+
+  @override
+  State<_CompletionProofCard> createState() => _CompletionProofCardState();
+}
+
+class _CompletionProofCardState extends State<_CompletionProofCard> {
+  late Future<List<String>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.onLoad(widget.bookingId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF34C759).withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Header ────────────────────────────────────────────────────────
+        Row(children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: const Color(0xFF34C759).withOpacity(0.10),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.photo_library_rounded,
+                color: Color(0xFF34C759), size: 20),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Completion Proof',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textDark)),
+              Text('Photos uploaded by your handyman.',
+                  style: TextStyle(fontSize: 11, color: AppColors.textLight)),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 14),
+
+        // ── Photos ────────────────────────────────────────────────────────
+        FutureBuilder<List<String>>(
+          future: _future,
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(Color(0xFF34C759))),
+                ),
+              );
+            }
+            if (snap.hasError || !snap.hasData || snap.data!.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'No proof photos were uploaded for this job.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textLight),
+                ),
+              );
+            }
+            final urls = snap.data!;
+            return GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: 1,
+              ),
+              itemCount: urls.length,
+              itemBuilder: (context, i) => GestureDetector(
+                onTap: () => _showFullscreen(context, urls, i),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    urls[i],
+                    fit: BoxFit.cover,
+                    loadingBuilder: (_, child, progress) => progress == null
+                        ? child
+                        : Container(
+                            color: const Color(0xFFF0F4F2),
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation(
+                                      Color(0xFF34C759))),
+                            ),
+                          ),
+                    errorBuilder: (_, __, ___) => Container(
+                      color: const Color(0xFFF0F4F2),
+                      child: const Icon(Icons.broken_image_rounded,
+                          color: AppColors.textLight, size: 28),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ]),
+    );
+  }
+
+  void _showFullscreen(BuildContext context, List<String> urls, int initial) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(children: [
+          PageView.builder(
+            controller: PageController(initialPage: initial),
+            itemCount: urls.length,
+            itemBuilder: (_, i) => InteractiveViewer(
+              child: Image.network(urls[i], fit: BoxFit.contain),
+            ),
+          ),
+          Positioned(
+            top: 40,
+            right: 16,
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.55),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close_rounded,
+                    color: Colors.white, size: 22),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 24,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Text(
+                '${initial + 1} / ${urls.length}',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+            ),
+          ),
         ]),
       ),
     );

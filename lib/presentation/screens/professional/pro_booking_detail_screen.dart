@@ -36,6 +36,8 @@ import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 import 'dart:math' as math;
 
 class ProBookingDetailScreen extends StatefulWidget {
@@ -46,16 +48,29 @@ class ProBookingDetailScreen extends StatefulWidget {
   /// Parent calls supabase.proposeSchedule().
   final Function(DateTime proposedTime)? onProposeSchedule;
 
-  /// Called when the handyman wants to reschedule.
-  /// Parent calls supabase.proposeReschedule().
+  /// Called when the handyman wants to reschedule to a DIFFERENT DAY.
+  /// Parent calls supabase.proposeReschedule() → status = scheduleProposed.
+  /// Customer must accept or decline.
   final Function(DateTime newTime, String? reason)? onProposeReschedule;
+
+  /// Called when the handyman is running late (same day, time-only update).
+  /// Parent calls supabase.notifyRunningLate() — status stays 'scheduled'.
+  /// Customer is notified but no accept/decline is required.
+  final Function(DateTime newEta, String? reason)? onNotifyRunningLate;
 
   /// Called when the handyman sets an assessment price.
   /// Parent calls supabase.updateBookingAssessmentPrice().
   final Function(double price)? onSetAssessmentPrice;
 
-  /// Called when the handyman marks the job complete.
+  /// Called when the handyman marks the job complete (legacy — no proof).
+  /// Kept for API compatibility; prefer onMarkCompleteWithProof.
   final VoidCallback? onMarkComplete;
+
+  /// Called when the handyman submits job-done proof photos.
+  /// Receives the list of local file paths picked by the handyman.
+  /// The Controller (main.dart) uploads them and calls submitJobDoneWithProof().
+  /// Requires at least 3 photos — the UI enforces this before enabling submit.
+  final Function(List<String> photoPaths)? onMarkCompleteWithProof;
 
   /// Called when the handyman taps "Start Assessment" (scheduled → assessment).
   /// Parent calls supabase.updateBookingStatus(id, BookingStatus.assessment).
@@ -67,8 +82,10 @@ class ProBookingDetailScreen extends StatefulWidget {
     this.onBack,
     this.onProposeSchedule,
     this.onProposeReschedule,
+    this.onNotifyRunningLate,
     this.onSetAssessmentPrice,
     this.onMarkComplete,
+    this.onMarkCompleteWithProof,
     this.onStartAssessment,
   });
 
@@ -81,13 +98,25 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
 
   bool _isSubmittingSchedule = false;
 
-  // ── Reschedule state ───────────────────────────────────────────────────────
+  // ── Full reschedule state (different day → customer must approve) ──────────
   DateTime? _rescheduleDateTime;
   final _rescheduleReasonController = TextEditingController();
+
+  // ── Running-late state (same day, time update only) ───────────────────────
+  DateTime? _runningLateEta;
+  final _runningLateReasonController = TextEditingController();
+  bool _showRunningLateForm = false;
+  bool _showRescheduleForm = false;
 
   // ── Price state ────────────────────────────────────────────────────────────
   final _priceController = TextEditingController();
   bool _isSubmittingPrice = false;
+
+  // ── Completion proof photo state ───────────────────────────────────────────
+  static const int _minProofPhotos = 3;
+  static const int _maxProofPhotos = 6;
+  final List<XFile> _proofPhotos = [];
+  bool _isSubmittingProof = false;
 
   // ── MODEL (View-local) — the customer's original preferred time ────────────
   DateTime get _customerPreferredTime =>
@@ -97,6 +126,7 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
   void dispose() {
     _priceController.dispose();
     _rescheduleReasonController.dispose();
+    _runningLateReasonController.dispose();
     super.dispose();
   }
 
@@ -167,6 +197,53 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
       final reason = _rescheduleReasonController.text.trim();
       await widget.onProposeReschedule
           ?.call(_rescheduleDateTime!, reason.isEmpty ? null : reason);
+    } finally {
+      if (mounted) setState(() => _isSubmittingSchedule = false);
+    }
+  }
+
+  Future<void> _pickRunningLateEta() async {
+    final now = DateTime.now();
+    final initial = _runningLateEta ?? now;
+
+    // Time-only picker: date is fixed to today/tomorrow (same-day delay)
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: AppColors.primary,
+            onPrimary: Colors.white,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (time == null || !mounted) return;
+    final eta = DateTime(now.year, now.month, now.day, time.hour, time.minute);
+    // If the picked time is earlier than now, assume it's the next day
+    final adjusted = eta.isBefore(now) ? eta.add(const Duration(days: 1)) : eta;
+    setState(() => _runningLateEta = adjusted);
+  }
+
+  Future<void> _submitRunningLate() async {
+    if (_runningLateEta == null) {
+      _showSnack('Please pick your new estimated arrival time.');
+      return;
+    }
+    setState(() => _isSubmittingSchedule = true);
+    try {
+      final reason = _runningLateReasonController.text.trim();
+      await widget.onNotifyRunningLate
+          ?.call(_runningLateEta!, reason.isEmpty ? null : reason);
+      if (mounted) {
+        setState(() {
+          _showRunningLateForm = false;
+          _runningLateEta = null;
+          _runningLateReasonController.clear();
+        });
+      }
     } finally {
       if (mounted) setState(() => _isSubmittingSchedule = false);
     }
@@ -1198,7 +1275,19 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
 
   // ── VIEW — Reschedule section ──────────────────────────────────────────────
 
-  Widget _buildRescheduleSection() => Container(
+  // ── VIEW — Running Late + Reschedule (two separate cards) ────────────────
+  Widget _buildRescheduleSection() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── PATH A: Running Late (same-day, time only) ──────────────────
+          _buildRunningLateCard(),
+          const SizedBox(height: 12),
+          // ── PATH B: Request Reschedule (different day) ──────────────────
+          _buildRequestRescheduleCard(),
+        ],
+      );
+
+  Widget _buildRunningLateCard() => Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -1211,84 +1300,267 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
           ],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Row(children: [
-            Icon(Icons.update_rounded, color: Color(0xFFFF9500), size: 18),
-            SizedBox(width: 8),
-            Text('Running late?',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textDark)),
-          ]),
-          const SizedBox(height: 4),
-          const Text(
-            'Propose a new time and let the customer know.',
-            style: TextStyle(fontSize: 12, color: AppColors.textLight),
-          ),
-          const SizedBox(height: 14),
-          GestureDetector(
-            onTap: _pickReschedule,
-            child: Container(
-              padding: const EdgeInsets.all(14),
+          // ── Header row ────────────────────────────────────────────────
+          Row(children: [
+            Container(
+              width: 38,
+              height: 38,
               decoration: BoxDecoration(
-                color: AppColors.backgroundLight,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
+                color: const Color(0xFFFF9500).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: Row(children: [
-                const Icon(Icons.calendar_month_rounded,
-                    color: Color(0xFFFF9500), size: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _rescheduleDateTime != null
-                      ? Text(
-                          DateFormat('MMM d, yyyy · h:mm a')
-                              .format(_rescheduleDateTime!),
-                          style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textDark),
-                        )
-                      : const Text('Pick new date & time',
-                          style: TextStyle(
-                              fontSize: 13, color: AppColors.textLight)),
+              child: const Icon(Icons.access_time_rounded,
+                  color: Color(0xFFFF9500), size: 20),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Running Late?',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark)),
+                    Text('Update your arrival time — no reschedule needed.',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textLight)),
+                  ]),
+            ),
+            GestureDetector(
+              onTap: () =>
+                  setState(() => _showRunningLateForm = !_showRunningLateForm),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _showRunningLateForm
+                      ? const Color(0xFFFF9500).withOpacity(0.12)
+                      : const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                const Icon(Icons.edit_rounded,
-                    color: Color(0xFFFF9500), size: 16),
-              ]),
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _rescheduleReasonController,
-            maxLines: 2,
-            decoration: InputDecoration(
-              hintText: 'Reason (optional) — e.g. traffic, bad weather, etc.',
-              filled: true,
-              fillColor: AppColors.backgroundLight,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
+                child: Text(
+                  _showRunningLateForm ? 'Cancel' : 'Update ETA',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _showRunningLateForm
+                          ? const Color(0xFFFF9500)
+                          : AppColors.textDark),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _isSubmittingSchedule ? null : _submitReschedule,
-              icon: const Icon(Icons.send_rounded, size: 16),
-              label: const Text('Request Reschedule',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFFFF9500),
-                side: const BorderSide(color: Color(0xFFFF9500)),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
+          ]),
+
+          // ── Expanded form ─────────────────────────────────────────────
+          if (_showRunningLateForm) ...[
+            const SizedBox(height: 14),
+            // Time picker
+            GestureDetector(
+              onTap: _pickRunningLateEta,
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.backgroundLight,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.schedule_rounded,
+                      color: Color(0xFFFF9500), size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _runningLateEta != null
+                        ? Text(
+                            'New ETA: ${DateFormat('h:mm a').format(_runningLateEta!)}',
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textDark),
+                          )
+                        : const Text('Pick new arrival time',
+                            style: TextStyle(
+                                fontSize: 13, color: AppColors.textLight)),
+                  ),
+                  const Icon(Icons.edit_rounded,
+                      color: Color(0xFFFF9500), size: 16),
+                ]),
               ),
             ),
-          ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _runningLateReasonController,
+              maxLines: 2,
+              decoration: InputDecoration(
+                hintText:
+                    'Reason (optional) — e.g. heavy traffic, bad weather…',
+                hintStyle:
+                    const TextStyle(fontSize: 13, color: AppColors.textLight),
+                filled: true,
+                fillColor: AppColors.backgroundLight,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isSubmittingSchedule ? null : _submitRunningLate,
+                icon: const Icon(Icons.send_rounded, size: 16),
+                label: Text(
+                    _isSubmittingSchedule ? 'Sending…' : 'Notify Customer'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF9500),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  elevation: 0,
+                ),
+              ),
+            ),
+          ],
+        ]),
+      );
+
+  Widget _buildRequestRescheduleCard() => Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4))
+          ],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── Header row ────────────────────────────────────────────────
+          Row(children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: const Color(0xFF5856D6).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.event_repeat_rounded,
+                  color: Color(0xFF5856D6), size: 20),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Need to Reschedule?',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark)),
+                    Text('Propose a new date — customer must approve.',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textLight)),
+                  ]),
+            ),
+            GestureDetector(
+              onTap: () =>
+                  setState(() => _showRescheduleForm = !_showRescheduleForm),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _showRescheduleForm
+                      ? const Color(0xFF5856D6).withOpacity(0.12)
+                      : const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  _showRescheduleForm ? 'Cancel' : 'Request',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _showRescheduleForm
+                          ? const Color(0xFF5856D6)
+                          : AppColors.textDark),
+                ),
+              ),
+            ),
+          ]),
+
+          // ── Expanded form ─────────────────────────────────────────────
+          if (_showRescheduleForm) ...[
+            const SizedBox(height: 14),
+            GestureDetector(
+              onTap: _pickReschedule,
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.backgroundLight,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.calendar_month_rounded,
+                      color: Color(0xFF5856D6), size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _rescheduleDateTime != null
+                        ? Text(
+                            DateFormat('MMM d, yyyy · h:mm a')
+                                .format(_rescheduleDateTime!),
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textDark),
+                          )
+                        : const Text('Pick new date & time',
+                            style: TextStyle(
+                                fontSize: 13, color: AppColors.textLight)),
+                  ),
+                  const Icon(Icons.edit_rounded,
+                      color: Color(0xFF5856D6), size: 16),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _rescheduleReasonController,
+              maxLines: 2,
+              decoration: InputDecoration(
+                hintText: 'Reason (optional) — e.g. emergency, overbooked…',
+                hintStyle:
+                    const TextStyle(fontSize: 13, color: AppColors.textLight),
+                filled: true,
+                fillColor: AppColors.backgroundLight,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isSubmittingSchedule ? null : _submitReschedule,
+                icon: const Icon(Icons.send_rounded, size: 16),
+                label: Text(_isSubmittingSchedule
+                    ? 'Sending…'
+                    : 'Send Reschedule Request'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF5856D6),
+                  side: const BorderSide(color: Color(0xFF5856D6)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
         ]),
       );
 
@@ -1420,25 +1692,344 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
         ]),
       );
 
-  // ── VIEW — (6) inProgress → mark complete ─────────────────────────────────
+  // ── VIEW — (6) inProgress → upload proof + mark complete ──────────────────
 
-  Widget _buildMarkCompleteSection() => SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: widget.onMarkComplete,
-          icon: const Icon(Icons.check_circle_rounded, size: 20),
-          label: const Text('Mark Job as Complete',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF34C759),
-            foregroundColor: Colors.white,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            elevation: 0,
+  Future<void> _pickProofPhoto() async {
+    if (_proofPhotos.length >= _maxProofPhotos) return;
+
+    // Show source picker — camera or gallery
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFDDDDDD),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
           ),
+          const SizedBox(height: 16),
+          const Text('Add Proof Photo',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark)),
+          const SizedBox(height: 6),
+          Text(
+            '${_maxProofPhotos - _proofPhotos.length} slot${_maxProofPhotos - _proofPhotos.length == 1 ? '' : 's'} remaining',
+            style: const TextStyle(fontSize: 12, color: AppColors.textLight),
+          ),
+          const SizedBox(height: 20),
+          // Camera option
+          _sourceOption(
+            icon: Icons.camera_alt_rounded,
+            color: const Color(0xFF30B0C7),
+            label: 'Take a Photo',
+            subtitle: 'Use your camera right now',
+            onTap: () => Navigator.of(context).pop(ImageSource.camera),
+          ),
+          const SizedBox(height: 12),
+          // Gallery option
+          _sourceOption(
+            icon: Icons.photo_library_rounded,
+            color: const Color(0xFF5856D6),
+            label: 'Choose from Gallery',
+            subtitle: 'Select multiple photos at once',
+            onTap: () => Navigator.of(context).pop(ImageSource.gallery),
+          ),
+        ]),
+      ),
+    );
+
+    if (source == null || !mounted) return;
+
+    final picker = ImagePicker();
+
+    if (source == ImageSource.camera) {
+      // Camera: single shot
+      final photo = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+        maxWidth: 1920,
+      );
+      if (photo != null && mounted) {
+        setState(() => _proofPhotos.add(photo));
+      }
+    } else {
+      // Gallery: multi-select, capped at remaining slots
+      final remaining = _maxProofPhotos - _proofPhotos.length;
+      final picked = await picker.pickMultiImage(
+        imageQuality: 85,
+        maxWidth: 1920,
+        limit: remaining,
+      );
+      if (picked.isNotEmpty && mounted) {
+        setState(() => _proofPhotos.addAll(picked.take(remaining)));
+      }
+    }
+  }
+
+  Widget _sourceOption({
+    required IconData icon,
+    required Color color,
+    required String label,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: color.withOpacity(0.2)),
+          ),
+          child: Row(children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: color)),
+                    const SizedBox(height: 2),
+                    Text(subtitle,
+                        style: const TextStyle(
+                            fontSize: 11, color: AppColors.textLight)),
+                  ]),
+            ),
+            Icon(Icons.chevron_right_rounded, color: color, size: 20),
+          ]),
         ),
       );
+
+  Future<void> _submitWithProof() async {
+    if (_proofPhotos.length < _minProofPhotos) return;
+    setState(() => _isSubmittingProof = true);
+    try {
+      final paths = _proofPhotos.map((f) => f.path).toList();
+      await widget.onMarkCompleteWithProof?.call(paths);
+    } finally {
+      if (mounted) setState(() => _isSubmittingProof = false);
+    }
+  }
+
+  Widget _buildMarkCompleteSection() {
+    final count = _proofPhotos.length;
+    final canSubmit = count >= _minProofPhotos && !_isSubmittingProof;
+    final canAddMore = count < _maxProofPhotos;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Header ───────────────────────────────────────────────────────
+        Row(children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFF34C759).withOpacity(0.10),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.camera_alt_rounded,
+                color: Color(0xFF34C759), size: 22),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Upload Proof of Completion',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textDark)),
+              Text('At least 3 photos required before submitting.',
+                  style: TextStyle(fontSize: 11, color: AppColors.textLight)),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 16),
+
+        // ── Photo count indicator ─────────────────────────────────────────
+        Row(children: [
+          ...List.generate(_minProofPhotos, (i) {
+            final filled = i < count;
+            return Container(
+              width: 10,
+              height: 10,
+              margin: const EdgeInsets.only(right: 6),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color:
+                    filled ? const Color(0xFF34C759) : const Color(0xFFDDDDDD),
+              ),
+            );
+          }),
+          const SizedBox(width: 6),
+          Text(
+            count == 0
+                ? 'No photos added yet'
+                : '$count photo${count == 1 ? '' : 's'} added'
+                    '${count < _minProofPhotos ? ' — ${_minProofPhotos - count} more required' : ' ✓'}',
+            style: TextStyle(
+              fontSize: 12,
+              color: count >= _minProofPhotos
+                  ? const Color(0xFF34C759)
+                  : AppColors.textLight,
+              fontWeight:
+                  count >= _minProofPhotos ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ]),
+        const SizedBox(height: 14),
+
+        // ── Photo grid ────────────────────────────────────────────────────
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: 1,
+          ),
+          itemCount: count + (canAddMore ? 1 : 0),
+          itemBuilder: (context, i) {
+            // Last tile is the "Add" button when we haven't hit the max
+            if (i == count && canAddMore) {
+              return GestureDetector(
+                onTap: _pickProofPhoto,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F4F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: const Color(0xFF34C759).withOpacity(0.35),
+                        width: 1.5),
+                  ),
+                  child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add_a_photo_rounded,
+                            color: const Color(0xFF34C759).withOpacity(0.7),
+                            size: 26),
+                        const SizedBox(height: 4),
+                        Text(
+                          count == 0 ? 'Add Photos' : 'Add More',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color: const Color(0xFF34C759).withOpacity(0.8),
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ]),
+                ),
+              );
+            }
+            // Photo tile with remove button
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.file(
+                    File(_proofPhotos[i].path),
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity,
+                  ),
+                ),
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: GestureDetector(
+                    onTap: () => setState(() => _proofPhotos.removeAt(i)),
+                    child: Container(
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF3B30),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                      ),
+                      child: const Icon(Icons.close_rounded,
+                          color: Colors.white, size: 12),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 18),
+
+        // ── Submit button ─────────────────────────────────────────────────
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: canSubmit ? _submitWithProof : null,
+            icon: _isSubmittingProof
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.check_circle_rounded, size: 20),
+            label: Text(
+              _isSubmittingProof
+                  ? 'Uploading…'
+                  : count < _minProofPhotos
+                      ? 'Add ${_minProofPhotos - count} more photo${_minProofPhotos - count == 1 ? '' : 's'}'
+                      : 'Mark Job as Complete',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+                  canSubmit ? const Color(0xFF34C759) : const Color(0xFFBBBBBB),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              elevation: 0,
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
 
   // ── VIEW — (6) completed ───────────────────────────────────────────────────
 

@@ -60,6 +60,8 @@
 
 import 'package:fixify/presentation/screens/admin/superadmin_analytics.dart';
 import 'dart:math';
+import 'dart:io';
+import 'package:intl/intl.dart';
 import 'package:fixify/presentation/screens/professional/earnings.dart';
 import 'package:fixify/presentation/screens/professional/pro_booking_detail_screen.dart';
 import 'package:fixify/presentation/screens/customer/schedule_review_screen.dart';
@@ -84,6 +86,7 @@ import 'package:fixify/presentation/screens/customer/requestservice_customer.dar
 import 'package:fixify/presentation/screens/customer/bookings_customer.dart';
 import 'package:fixify/presentation/screens/customer/professional_profile_screen.dart'
     as customer;
+import 'package:fixify/presentation/screens/customer/all_professionals_screen.dart';
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
 import 'package:fixify/presentation/screens/customer/review_screen.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
@@ -101,6 +104,7 @@ import 'package:fixify/presentation/screens/admin/dashboard_admin.dart';
 import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
 import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
+import 'package:fixify/presentation/screens/admin/admin_booking_overview_screen.dart';
 import 'package:fixify/presentation/screens/professional/propose_service_screen.dart';
 import 'package:fixify/presentation/screens/customer/privacy_policy_screen.dart';
 
@@ -281,6 +285,7 @@ class _MainAppState extends State<MainApp> {
   DateTime? _lastBackPress;
   String? _preselectedServiceType;
   String? _preselectedProblemTitle;
+  String? _preselectedDescription;
 
   // ── Model state (data held by Controller for View consumption) ────────────
   UserModel? _user;
@@ -290,6 +295,9 @@ class _MainAppState extends State<MainApp> {
 
   // Open (unassigned) booking requests visible to this professional.
   List<BookingModel> _openRequests = [];
+
+  /// All platform bookings — loaded for the admin flow only.
+  List<BookingModel> _adminBookings = [];
 
   // MODEL — per-professional skip persistence key.
   // Scoped to the professional's ID so that different handymen on the same
@@ -306,6 +314,9 @@ class _MainAppState extends State<MainApp> {
   List<ReviewModel> _reviews = [];
   int _navIndex = 0;
   String _screen = 'home';
+  // Tracks which screen navigated to 'professional_profile' so the back
+  // button returns to the correct destination ('home' or 'all_professionals').
+  String _profileReturnScreen = 'home';
   ProfessionalModel? _selectedPro;
   List<ReviewModel> _proReviews = [];
   int _unreadNotifCount = 0;
@@ -619,6 +630,36 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  /// Professional is running late — updates ETA without changing booking status.
+  /// Customer is notified; no accept/decline required.
+  Future<void> _handleNotifyRunningLate(DateTime newEta, String? reason) async {
+    if (_selectedProBooking == null) return;
+    try {
+      final updated = await _ds.notifyRunningLate(
+        bookingId: _selectedProBooking!.id,
+        newEta: newEta,
+        reason: reason,
+      );
+      _updateBookingInList(updated);
+      setState(() => _selectedProBooking = updated.toEntity());
+      await _notifDs.pushToUser(
+        targetUserId: updated.customerId,
+        role: 'customer',
+        type: NotificationTypeStrings.bookingRequest,
+        title: 'Handyman Running Late',
+        message:
+            '${_pro?.name ?? 'Your handyman'} is running late and will arrive at '
+            '${updated.scheduledTime != null ? _fmtTime(updated.scheduledTime!) : 'a new time'}.'
+            '${reason != null && reason.isNotEmpty ? ' Reason: $reason' : ''}',
+        referenceId: updated.id,
+        referenceType: 'booking',
+      );
+      _notify('Customer has been notified of your new ETA.');
+    } catch (e) {
+      _notify('Failed to update ETA: $e');
+    }
+  }
+
   /// Customer confirms that the professional has completed the job.
   /// Transitions status: pendingCustomerConfirmation → completed.
   Future<void> _handleCustomerConfirmCompletion() async {
@@ -716,6 +757,7 @@ class _MainAppState extends State<MainApp> {
             _bookings = await _ds.getProfessionalBookings(_pro!.id);
             _openRequests = await _ds.getOpenBookingRequests(
               skills: _pro!.skills,
+              professionalId: _pro!.id,
             );
             // Load persisted skips and filter open requests
             await _loadSkippedRequests();
@@ -729,6 +771,7 @@ class _MainAppState extends State<MainApp> {
 
             _openRequestsChannel = _ds.subscribeToOpenBookingRequests(
               skills: _pro!.skills,
+              professionalId: _pro!.id,
               onNewRequest: (newRequest) {
                 if (!mounted) return;
                 if (!_openRequests.any((r) => r.id == newRequest.id) &&
@@ -789,6 +832,11 @@ class _MainAppState extends State<MainApp> {
         } else if (_user!.role == 'admin') {
           _applications = await _appDs.getAllApplications();
           _proposals = await _proposalDs.getAllProposals();
+          try {
+            _adminBookings = await _ds.getAllBookings();
+          } catch (e) {
+            debugPrint('[Admin] Could not load all bookings: $e');
+          }
         } else {
           // ── Customer ──────────────────────────────────────────────────
           _bookings = await _ds.getCustomerBookings(_user!.id);
@@ -893,7 +941,8 @@ class _MainAppState extends State<MainApp> {
       if (_user == null) return;
       if (_user!.isProfessional && _pro != null) {
         final assigned = await _ds.getProfessionalBookings(_pro!.id);
-        final open = await _ds.getOpenBookingRequests(skills: _pro!.skills);
+        final open = await _ds.getOpenBookingRequests(
+            skills: _pro!.skills, professionalId: _pro!.id);
         if (mounted)
           setState(() {
             _bookings = _deduped(assigned);
@@ -949,7 +998,8 @@ class _MainAppState extends State<MainApp> {
     if (_user == null || _pro == null) return;
     try {
       final bookings = await _ds.getProfessionalBookings(_pro!.id);
-      final open = await _ds.getOpenBookingRequests(skills: _pro!.skills);
+      final open = await _ds.getOpenBookingRequests(
+          skills: _pro!.skills, professionalId: _pro!.id);
       final reviews = await _ds.getProfessionalReviews(_pro!.id);
       final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
       if (mounted)
@@ -981,6 +1031,8 @@ class _MainAppState extends State<MainApp> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ));
   }
+
+  String _fmtTime(DateTime dt) => DateFormat('h:mm a').format(dt.toLocal());
 
   // ══════════════════════════════════════════════════════════════════════════
   // CONTROLLER — build / routing
@@ -1164,21 +1216,69 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
+    // ── Booking Overview screen ─────────────────────────────────────────────
+    if (_screen == 'booking_overview') {
+      return AdminBookingOverviewScreen(
+        bookings: _adminBookings.map((b) => b.toEntity()).toList(),
+        onLoadCompletionPhotos: (bookingId) =>
+            _ds.getCompletionPhotos(bookingId),
+        onBack: () async {
+          // Refresh admin bookings when returning so the list is up to date
+          try {
+            final fresh = await _ds.getAllBookings();
+            if (mounted)
+              setState(() {
+                _adminBookings = fresh;
+                _screen = 'home';
+              });
+          } catch (_) {
+            setState(() => _screen = 'home');
+          }
+        },
+        onRefresh: () async {
+          try {
+            final fresh = await _ds.getAllBookings();
+            if (mounted) setState(() => _adminBookings = fresh);
+          } catch (e) {
+            debugPrint('[Admin] Refresh bookings error: $e');
+          }
+        },
+      );
+    }
+
     final pending = _applications.where((a) => a.status == 'pending').length;
+    // Use _adminBookings for accurate stats; fall back to _bookings if empty.
+    final statsSource = _adminBookings.isNotEmpty ? _adminBookings : _bookings;
     return AdminDashboardScreen(
       adminUserId: _user!.id,
       adminName: _user!.name,
       pendingApprovals: pending,
       totalUsers: _professionals.length,
-      totalEarnings: _bookings
+      totalEarnings: statsSource
           .where((b) => b.status == BookingStatus.completed)
-          .fold(0.0, (s, b) => s + (b.priceEstimate ?? 0)),
+          .fold(0.0, (s, b) {
+        final ap = b.assessmentPrice;
+        return s + (ap != null && ap > 0 ? ap : (b.priceEstimate ?? 0));
+      }),
       completedBookings:
-          _bookings.where((b) => b.status == BookingStatus.completed).length,
+          statsSource.where((b) => b.status == BookingStatus.completed).length,
       currentNavIndex: _navIndex,
       onNavTap: (i) => setState(() => _navIndex = i),
       onHandymanApprovals: () => setState(() => _navIndex = 1),
       onAnalytics: () => setState(() => _navIndex = 2),
+      onBookingOverview: () async {
+        // Load/refresh admin bookings before navigating
+        try {
+          final fresh = await _ds.getAllBookings();
+          if (mounted)
+            setState(() {
+              _adminBookings = fresh;
+              _screen = 'booking_overview';
+            });
+        } catch (e) {
+          _notify('Could not load bookings: $e');
+        }
+      },
     );
   }
 
@@ -1219,6 +1319,8 @@ class _MainAppState extends State<MainApp> {
         // Controller: pro marks job done → pendingCustomerConfirmation.
         // Customer must then confirm via BookingStatusScreen before status
         // reaches 'completed'.
+        // onMarkComplete retained for API compat — onMarkCompleteWithProof
+        // is the primary path and requires ≥3 proof photos.
         onMarkComplete: () async {
           try {
             final updated = await _ds.markJobDoneByPro(_selectedProBooking!.id);
@@ -1232,8 +1334,40 @@ class _MainAppState extends State<MainApp> {
             rethrow;
           }
         },
+        onMarkCompleteWithProof: (photoPaths) async {
+          if (_pro == null || _selectedProBooking == null) return;
+          try {
+            // Upload each photo and collect public URLs
+            final photoUrls = <String>[];
+            for (int i = 0; i < photoPaths.length; i++) {
+              final bytes = await File(photoPaths[i]).readAsBytes();
+              final url = await _ds.uploadCompletionPhoto(
+                uploaderUid: _pro!.userId,
+                bookingId: _selectedProBooking!.id,
+                fileBytes: bytes,
+                index: i,
+              );
+              photoUrls.add(url);
+            }
+            // Save URLs + advance status in one call
+            final updated = await _ds.submitJobDoneWithProof(
+              bookingId: _selectedProBooking!.id,
+              uploaderUid: _pro!.userId,
+              photoUrls: photoUrls,
+            );
+            _updateBookingInList(updated);
+            if (mounted) {
+              setState(() => _selectedProBooking = updated.toEntity());
+            }
+            _notify('Proof uploaded! Waiting for customer confirmation. ✅');
+          } catch (e) {
+            _notify('Failed to upload proof: $e');
+            rethrow;
+          }
+        },
         onProposeSchedule: _handleConfirmSchedule,
         onProposeReschedule: _handleProposeReschedule,
+        onNotifyRunningLate: _handleNotifyRunningLate,
         onStartAssessment: _handleStartAssessment,
       );
     }
@@ -1727,13 +1861,16 @@ class _MainAppState extends State<MainApp> {
       case 'request_service':
         return RequestServiceScreen(
           professionals: _professionals,
+          serviceOffers: _serviceOffers,
           initialServiceType: _preselectedServiceType,
           initialProblemTitle: _preselectedProblemTitle,
+          initialDescription: _preselectedDescription,
           targetProfessionalId: _selectedPro?.id,
           onBack: () => setState(() {
             _screen = 'home';
             _preselectedServiceType = null;
             _preselectedProblemTitle = null;
+            _preselectedDescription = null;
             _selectedPro = null;
           }),
           onSubmit: (result) async {
@@ -1774,9 +1911,17 @@ class _MainAppState extends State<MainApp> {
                 } catch (_) {}
               }
 
+              // When coming from a professional's profile, _selectedPro is set
+              // and result.matchedPros contains only that one professional.
+              // Pass their ID directly so the booking is assigned to them alone
+              // instead of being broadcast as an open request.
+              final isDirectBooking = _selectedPro != null &&
+                  result.matchedPros.length == 1 &&
+                  result.matchedPros.first.id == _selectedPro!.id;
+
               final booking = await _ds.createBooking(
                 customerId: _user!.id,
-                professionalId: null,
+                professionalId: isDirectBooking ? _selectedPro!.id : null,
                 serviceType: result.serviceType,
                 scheduledDate: result.preferredDate,
                 // Issue title + customer's description stored here — shown as
@@ -1807,9 +1952,15 @@ class _MainAppState extends State<MainApp> {
                     targetUserId: pro.userId,
                     role: 'professional',
                     type: NotificationTypeStrings.bookingRequest,
-                    title: 'New Booking Request',
-                    message: 'A customer needs ${result.serviceType} service'
-                        ' near ${result.address.split(',').first}.$priceSnippet',
+                    title: isDirectBooking
+                        ? 'New Direct Booking Request'
+                        : 'New Booking Request',
+                    message: isDirectBooking
+                        ? 'A customer has requested you directly for '
+                            '${result.serviceType} service near '
+                            '${result.address.split(',').first}.$priceSnippet'
+                        : 'A customer needs ${result.serviceType} service'
+                            ' near ${result.address.split(',').first}.$priceSnippet',
                     referenceId: booking.id,
                     referenceType: 'booking',
                   );
@@ -1829,7 +1980,9 @@ class _MainAppState extends State<MainApp> {
                 });
               }
 
-              _notify('Request sent! Looking for an available handyman...');
+              _notify(isDirectBooking
+                  ? 'Request sent directly to your chosen professional!'
+                  : 'Request sent! Looking for an available handyman...');
             } catch (e) {
               if (mounted)
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1844,11 +1997,16 @@ class _MainAppState extends State<MainApp> {
           professional: (_selectedProFresh ?? _selectedPro!).toEntity(),
           reviews: _proReviews.map((r) => r.toEntity()).toList(),
           onBack: () => setState(() {
-            _screen = 'home';
+            _screen = _profileReturnScreen;
             _proReviews = [];
             _selectedProFresh = null;
           }),
-          onBookNow: () => setState(() => _screen = 'request_service'),
+          onBookNow: (serviceType) => setState(() {
+            _preselectedServiceType = serviceType;
+            _preselectedProblemTitle = null;
+            _preselectedDescription = null;
+            _screen = 'request_service';
+          }),
         );
 
       case 'booking':
@@ -1872,7 +2030,19 @@ class _MainAppState extends State<MainApp> {
           onViewAssessment: _selectedBooking!.status == BookingStatus.assessment
               ? () => setState(() => _screen = 'assessment')
               : null,
-          onReviewSchedule: () => setState(() => _screen = 'schedule_review'),
+          // onReviewSchedule routes to ScheduleReviewScreen — only shown when
+          // the handyman has proposed a reschedule (scheduleProposed status).
+          // The customer taps Accept on the _RescheduleReviewCard which calls
+          // this, navigating to the full ScheduleReviewScreen for confirmation.
+          onReviewSchedule:
+              _selectedBooking!.status == BookingStatus.scheduleProposed
+                  ? () => setState(() => _screen = 'schedule_review')
+                  : null,
+          // Customer declines a reschedule directly from the booking status card.
+          onDeclineSchedule:
+              _selectedBooking!.status == BookingStatus.scheduleProposed
+                  ? _handleDeclineSchedule
+                  : null,
           // Customer confirms the handyman has arrived on-site.
           // pendingArrivalConfirmation → assessment.
           onConfirmArrival: _selectedBooking!.status ==
@@ -1884,12 +2054,37 @@ class _MainAppState extends State<MainApp> {
                   BookingStatus.pendingCustomerConfirmation
               ? _handleCustomerConfirmCompletion
               : null,
+          // Load completion proof photos for the customer to review before
+          // confirming. Only fetched when status is pendingCustomerConfirmation.
+          onLoadCompletionPhotos: _selectedBooking!.status ==
+                  BookingStatus.pendingCustomerConfirmation
+              ? (bookingId) => _ds.getCompletionPhotos(bookingId)
+              : null,
           // Review CTA: shown for completed bookings the customer hasn't reviewed.
           onLeaveReview: _selectedBooking!.status == BookingStatus.completed &&
                   !_reviewedBookingIds.contains(_selectedBooking!.id)
               ? () => setState(() => _screen = 'review')
               : null,
           hasReviewed: _reviewedBookingIds.contains(_selectedBooking!.id),
+          // Book Again CTA: shown for completed bookings that had an assigned
+          // professional. Re-uses the direct booking path by setting _selectedPro
+          // to the same professional before navigating to request_service.
+          onBookAgain: _selectedBooking!.status == BookingStatus.completed &&
+                  _selectedBooking!.professionalId != null
+              ? (serviceType) {
+                  final pro = _professionals.firstWhereOrNull(
+                      (p) => p.id == _selectedBooking!.professionalId);
+                  if (pro == null) return;
+                  setState(() {
+                    _selectedPro = pro;
+                    _selectedProFresh = null;
+                    _preselectedServiceType = serviceType;
+                    _preselectedProblemTitle = null;
+                    _preselectedDescription = null;
+                    _screen = 'request_service';
+                  });
+                }
+              : null,
           onCancel: (_selectedBooking!.status == BookingStatus.pending ||
                   _selectedBooking!.status == BookingStatus.accepted ||
                   _selectedBooking!.status == BookingStatus.scheduleProposed ||
@@ -2020,6 +2215,35 @@ class _MainAppState extends State<MainApp> {
           onLogout: () async => Supabase.instance.client.auth.signOut(),
         );
 
+      case 'all_professionals':
+        return AllProfessionalsScreen(
+          professionals: _professionals.map((p) => p.toEntity()).toList(),
+          onBack: () => setState(() => _screen = 'home'),
+          onProfessionalTap: (entity) {
+            final model = _professionals.firstWhere((p) => p.id == entity.id);
+            setState(() {
+              _selectedPro = model;
+              _selectedProFresh = null;
+              _proReviews = [];
+              _profileReturnScreen = 'all_professionals';
+              _screen = 'professional_profile';
+            });
+            _ds.getProfessionalById(entity.id).then((freshPro) {
+              if (!mounted) return;
+              if (freshPro != null)
+                setState(() => _selectedProFresh = freshPro);
+            }).catchError((e) {
+              debugPrint('Could not load fresh professional: $e');
+            });
+            _ds.getProfessionalReviewsById(entity.id).then((reviews) {
+              if (!mounted) return;
+              setState(() => _proReviews = reviews);
+            }).catchError((e) {
+              debugPrint('Could not load pro reviews: $e');
+            });
+          },
+        );
+
       default:
         return _home();
     }
@@ -2041,12 +2265,15 @@ class _MainAppState extends State<MainApp> {
         onRequestService: () => setState(() {
           _preselectedServiceType = null;
           _preselectedProblemTitle = null;
+          _preselectedDescription = null;
           _selectedPro = null;
           _screen = 'request_service';
         }),
-        onRequestServiceWithType: (serviceType, serviceName) => setState(() {
+        onRequestServiceWithType: (serviceType, serviceName, description) =>
+            setState(() {
           _preselectedServiceType = serviceType;
           _preselectedProblemTitle = serviceName;
+          _preselectedDescription = description.isNotEmpty ? description : null;
           _selectedPro = null;
           _screen = 'request_service';
         }),
@@ -2079,6 +2306,7 @@ class _MainAppState extends State<MainApp> {
             _selectedPro = model;
             _selectedProFresh = null;
             _proReviews = [];
+            _profileReturnScreen = 'home';
             _screen = 'professional_profile';
           });
           _ds.getProfessionalById(entity.id).then((freshPro) {
@@ -2095,6 +2323,8 @@ class _MainAppState extends State<MainApp> {
             debugPrint('Could not load pro reviews: $e');
           });
         },
+        onViewAllProfessionals: () =>
+            setState(() => _screen = 'all_professionals'),
         onProfileTap: () {
           setState(() {
             _navIndex = 3;

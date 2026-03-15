@@ -69,19 +69,28 @@ class _OfferDef {
 
 class RequestServiceScreen extends StatefulWidget {
   final List<ProfessionalModel> professionals;
+
+  /// DB-backed approved service offers. When non-empty, these populate the
+  /// Problem Title picker for the matching service type instead of (or
+  /// merged with) the hardcoded _offerCatalogue fallback.
+  final List<ServiceOfferModel> serviceOffers;
+
   final Function(RequestServiceResult)? onSubmit;
   final VoidCallback? onBack;
   final String? initialServiceType;
   final String? initialProblemTitle;
+  final String? initialDescription;
   final String? targetProfessionalId;
 
   const RequestServiceScreen({
     super.key,
     this.professionals = const [],
+    this.serviceOffers = const [],
     this.onSubmit,
     this.onBack,
     this.initialServiceType,
     this.initialProblemTitle,
+    this.initialDescription,
     this.targetProfessionalId,
   });
 
@@ -217,8 +226,24 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   List<_OfferDef> _offersForType(String type) {
     if (type.trim().isEmpty) return const [];
-    final offers = _offerCatalogue[type];
-    if (offers != null && offers.isNotEmpty) return offers;
+
+    // ── DB offers take priority — build from approved ServiceOfferModel rows
+    // that match the selected service type.
+    final dbMatches = widget.serviceOffers
+        .where((o) => o.serviceType.toLowerCase() == type.toLowerCase())
+        .map((o) => _OfferDef(
+              title: o.serviceName,
+              priceRange: o.priceRange ?? 'Price to be assessed',
+            ))
+        .toList();
+
+    if (dbMatches.isNotEmpty) return dbMatches;
+
+    // ── Fallback: hardcoded catalogue for categories not yet in the DB.
+    final hardcoded = _offerCatalogue[type];
+    if (hardcoded != null && hardcoded.isNotEmpty) return hardcoded;
+
+    // ── Last resort: generic entry so the step is never blocked.
     return [
       _OfferDef(title: '$type Service', priceRange: 'Price to be assessed'),
     ];
@@ -272,6 +297,10 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
       _priceRange = _offerOptions
           .firstWhereOrNull((o) => o.title == _problemTitle)
           ?.priceRange;
+    }
+    if (widget.initialDescription != null &&
+        widget.initialDescription!.isNotEmpty) {
+      _descCtrl.text = widget.initialDescription!;
     }
   }
 
@@ -2128,23 +2157,27 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
           fontWeight: FontWeight.w600,
           color: AppColors.textDark));
 
-  // ── Problem Title — custom tile selector ─────────────────
-  // Matches the card-based design language used in Step 1 (service type)
-  // instead of the out-of-place system DropdownButtonFormField.
+  // ── Problem Title — bottom-sheet picker + inline confirmation ────────────
+  // The trigger field is always a single fixed-height row (saves space, scales
+  // to any number of options). Once a selection is made, the chosen tile is
+  // shown inline below the trigger so the customer has clear confirmation
+  // without reopening the sheet.
   Widget _problemTitleDropdown() {
     final options = _offerOptions;
     final hasOptions = options.isNotEmpty;
+    final isSelected = _problemTitle != null;
 
+    // Disabled state — no service type chosen yet
     if (!hasOptions) {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
         decoration: BoxDecoration(
           color: const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFE0E0E0)),
         ),
         child: const Row(children: [
-          Icon(Icons.title_rounded, color: Color(0xFFBBBBBB), size: 20),
+          Icon(Icons.list_alt_rounded, color: Color(0xFFBBBBBB), size: 20),
           SizedBox(width: 12),
           Text('Select a service type first',
               style: TextStyle(fontSize: 14, color: Color(0xFFBBBBBB))),
@@ -2154,114 +2187,84 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: options.asMap().entries.map((e) {
-        final idx = e.key;
-        final offer = e.value;
-        final isSelected = _problemTitle == offer.title;
-
-        return GestureDetector(
-          onTap: () => setState(() {
-            _problemTitle = offer.title;
-            _priceRange = offer.priceRange;
-          }),
+      children: [
+        // ── Trigger field ─────────────────────────────────────────────
+        GestureDetector(
+          onTap: () async {
+            final result = await showModalBottomSheet<_OfferDef>(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.transparent,
+              builder: (_) => _ProblemTitleSheet(
+                options: options,
+                selected: _problemTitle,
+              ),
+            );
+            if (result != null && mounted) {
+              setState(() {
+                _problemTitle = result.title;
+                _priceRange = result.priceRange;
+              });
+            }
+          },
           child: AnimatedContainer(
-            duration: 200.ms,
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            duration: 180.ms,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
             decoration: BoxDecoration(
               color: isSelected
-                  ? AppColors.primary.withOpacity(0.06)
+                  ? AppColors.primary.withOpacity(0.05)
                   : Colors.white,
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: isSelected ? AppColors.primary : const Color(0xFFE8E8E8),
+                color: isSelected ? AppColors.primary : const Color(0xFFE0E0E0),
                 width: isSelected ? 2 : 1,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2)),
               ],
             ),
             child: Row(children: [
-              // ── Leading icon bubble ──────────────────────────
               Container(
-                width: 42,
-                height: 42,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   color: isSelected
                       ? AppColors.primary.withOpacity(0.12)
                       : const Color(0xFFF0F4F2),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   Icons.build_circle_rounded,
                   color:
                       isSelected ? AppColors.primary : const Color(0xFFAAAAAA),
-                  size: 22,
+                  size: 20,
                 ),
               ),
               const SizedBox(width: 14),
-              // ── Title + price range ──────────────────────────
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      offer.title,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color:
-                            isSelected ? AppColors.primary : AppColors.textDark,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      offer.priceRange,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isSelected
-                            ? AppColors.primary.withOpacity(0.75)
-                            : AppColors.textLight,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  isSelected ? _problemTitle! : 'Select service type',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+                    color: isSelected ? AppColors.primary : AppColors.textLight,
+                  ),
                 ),
               ),
-              // ── Selection indicator ──────────────────────────
-              AnimatedSwitcher(
-                duration: 180.ms,
-                child: isSelected
-                    ? Container(
-                        key: const ValueKey('check'),
-                        width: 26,
-                        height: 26,
-                        decoration: const BoxDecoration(
-                          color: AppColors.primary,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.check_rounded,
-                            color: Colors.white, size: 15),
-                      )
-                    : Container(
-                        key: const ValueKey('empty'),
-                        width: 26,
-                        height: 26,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                              color: const Color(0xFFDDDDDD), width: 1.5),
-                        ),
-                      ),
+              Icon(
+                isSelected
+                    ? Icons.swap_vert_rounded
+                    : Icons.expand_more_rounded,
+                color: isSelected ? AppColors.primary : const Color(0xFFAAAAAA),
+                size: 22,
               ),
             ]),
-          ).animate().fadeIn(delay: (idx * 50).ms),
-        );
-      }).toList(),
+          ),
+        ),
+      ],
     );
   }
 
@@ -2326,6 +2329,266 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(16),
             borderSide: const BorderSide(color: AppColors.primary, width: 2)),
+      ),
+    );
+  }
+}
+
+// ── Problem Title Bottom-Sheet Picker ────────────────────────────────────────
+// Self-contained StatefulWidget so search state never leaks into the parent.
+// Pops with the chosen _OfferDef on selection, or null if dismissed.
+
+class _ProblemTitleSheet extends StatefulWidget {
+  final List<_OfferDef> options;
+  final String? selected;
+
+  const _ProblemTitleSheet({required this.options, this.selected});
+
+  @override
+  State<_ProblemTitleSheet> createState() => _ProblemTitleSheetState();
+}
+
+class _ProblemTitleSheetState extends State<_ProblemTitleSheet> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<_OfferDef> get _filtered {
+    if (_query.trim().isEmpty) return widget.options;
+    final q = _query.trim().toLowerCase();
+    return widget.options
+        .where((o) =>
+            o.title.toLowerCase().contains(q) ||
+            o.priceRange.toLowerCase().contains(q))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filtered;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF8F9FA),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Drag handle ───────────────────────────────────────────────
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: const Color(0xFFDDDDDD),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // ── Header ────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(children: [
+              const Expanded(
+                child: Text(
+                  'Select Service Type',
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textDark,
+                      letterSpacing: -0.2),
+                ),
+              ),
+              GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEEEEEE),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.close_rounded,
+                      size: 16, color: AppColors.textDark),
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Search field ──────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Container(
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE8E8E8)),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2)),
+                ],
+              ),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _query = v),
+                style: const TextStyle(fontSize: 14, color: AppColors.textDark),
+                decoration: InputDecoration(
+                  hintText: 'Search services…',
+                  hintStyle:
+                      const TextStyle(fontSize: 14, color: AppColors.textLight),
+                  prefixIcon: const Icon(Icons.search_rounded,
+                      size: 18, color: AppColors.textLight),
+                  suffixIcon: _query.isNotEmpty
+                      ? GestureDetector(
+                          onTap: () => setState(() {
+                            _query = '';
+                            _searchCtrl.clear();
+                          }),
+                          child: const Icon(Icons.close_rounded,
+                              size: 16, color: AppColors.textLight),
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Options list ──────────────────────────────────────────────
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.45,
+            ),
+            child: filtered.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.search_off_rounded,
+                          size: 36, color: Color(0xFFCCCCCC)),
+                      const SizedBox(height: 10),
+                      Text('No results for "$_query"',
+                          style: const TextStyle(
+                              fontSize: 13, color: AppColors.textLight)),
+                    ]),
+                  )
+                : ListView.separated(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, i) {
+                      final offer = filtered[i];
+                      final isSelected = widget.selected == offer.title;
+
+                      return GestureDetector(
+                        onTap: () => Navigator.of(context).pop(offer),
+                        child: AnimatedContainer(
+                          duration: 150.ms,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? AppColors.primary.withOpacity(0.06)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppColors.primary
+                                  : const Color(0xFFE8E8E8),
+                              width: isSelected ? 2 : 1,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                  color: Colors.black.withOpacity(0.04),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2)),
+                            ],
+                          ),
+                          child: Row(children: [
+                            Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? AppColors.primary.withOpacity(0.12)
+                                    : const Color(0xFFF0F4F2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(Icons.build_circle_rounded,
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : const Color(0xFFAAAAAA),
+                                  size: 22),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(offer.title,
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: isSelected
+                                              ? AppColors.primary
+                                              : AppColors.textDark)),
+                                  const SizedBox(height: 2),
+                                  Text(offer.priceRange,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: isSelected
+                                              ? AppColors.primary
+                                                  .withOpacity(0.75)
+                                              : AppColors.textLight,
+                                          fontWeight: FontWeight.w500)),
+                                ],
+                              ),
+                            ),
+                            AnimatedSwitcher(
+                              duration: 150.ms,
+                              child: isSelected
+                                  ? Container(
+                                      key: const ValueKey('chk'),
+                                      width: 26,
+                                      height: 26,
+                                      decoration: const BoxDecoration(
+                                          color: AppColors.primary,
+                                          shape: BoxShape.circle),
+                                      child: const Icon(Icons.check_rounded,
+                                          color: Colors.white, size: 15))
+                                  : Container(
+                                      key: const ValueKey('emp'),
+                                      width: 26,
+                                      height: 26,
+                                      decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                              color: const Color(0xFFDDDDDD),
+                                              width: 1.5))),
+                            ),
+                          ]),
+                        ).animate().fadeIn(delay: (i * 30).ms),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

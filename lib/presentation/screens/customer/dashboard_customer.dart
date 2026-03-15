@@ -9,7 +9,6 @@
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:fixify/data/models/models.dart';
-import 'package:fixify/presentation/screens/customer/all_professionals_screen.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -24,11 +23,12 @@ class CustomerDashboardScreen extends StatefulWidget {
   final List<ProfessionalEntity> professionals;
   final List<BookingEntity> recentBookings;
   final VoidCallback? onRequestService;
-  final Function(String serviceType, String serviceName)?
+  final Function(String serviceType, String serviceName, String description)?
       onRequestServiceWithType;
   final VoidCallback? onViewBookings;
   final Function(String skill)? onFilterBySkill;
   final Function(ProfessionalEntity)? onProfessionalTap;
+  final VoidCallback? onViewAllProfessionals;
   final Function(int)? onNavTap;
   final Function(BookingEntity)? onBookingTap;
   final VoidCallback? onNotificationTap;
@@ -56,6 +56,7 @@ class CustomerDashboardScreen extends StatefulWidget {
     this.onViewBookings,
     this.onFilterBySkill,
     this.onProfessionalTap,
+    this.onViewAllProfessionals,
     this.onNavTap,
     this.currentNavIndex = 0,
     this.onBookingTap,
@@ -361,6 +362,8 @@ final Map<String, Map<String, dynamic>> _serviceDetails = {
 
 class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   String _selectedSkill = 'All';
+  String _serviceSearch = '';
+  final _serviceSearchCtrl = TextEditingController();
 
   // ── Unread count — owned entirely by this state, fetched from Supabase ──
   int _unreadNotifCount = 0;
@@ -369,6 +372,12 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   void initState() {
     super.initState();
     _fetchUnreadCount();
+  }
+
+  @override
+  void dispose() {
+    _serviceSearchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchUnreadCount() async {
@@ -432,33 +441,47 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   Set<String> get _dbOfferCategories =>
       widget.serviceOffers.map((o) => o.serviceType).toSet();
 
-  /// Returns the display list after applying the selected category filter.
+  /// Returns the display list after applying the selected category filter
+  /// and the active search query.
   /// In DB mode: filters [widget.serviceOffers].
   /// In legacy mode: filters the hardcoded [_allServices].
   List<_ServiceDef> get _filteredServices {
+    final q = _serviceSearch.trim().toLowerCase();
+
     if (_usingDbOffers) {
-      // Map approved ServiceOfferModel rows → _ServiceDef so the existing
-      // _ServiceCard widget keeps working without modification.
       final filtered = _selectedSkill == 'All'
           ? widget.serviceOffers
           : widget.serviceOffers
               .where((o) => o.serviceType == _selectedSkill)
               .toList();
-      return filtered
+      final defs = filtered
           .map((o) => _ServiceDef(
                 id: o.id,
                 name: o.serviceName,
                 description: o.description ?? '',
-                // imageUrl stored in the image field; _ServiceCard renders
-                // it via Image.network when it starts with 'http'.
                 image: o.imageUrl ?? '',
                 category: o.serviceType,
               ))
           .toList();
+      if (q.isEmpty) return defs;
+      return defs
+          .where((s) =>
+              s.name.toLowerCase().contains(q) ||
+              s.description.toLowerCase().contains(q) ||
+              s.category.toLowerCase().contains(q))
+          .toList();
     }
     // Legacy hardcoded path
-    if (_selectedSkill == 'All') return _allServices.toList();
-    return _allServices.where((s) => s.category == _selectedSkill).toList();
+    final base = _selectedSkill == 'All'
+        ? _allServices.toList()
+        : _allServices.where((s) => s.category == _selectedSkill).toList();
+    if (q.isEmpty) return base;
+    return base
+        .where((s) =>
+            s.name.toLowerCase().contains(q) ||
+            s.description.toLowerCase().contains(q) ||
+            s.category.toLowerCase().contains(q))
+        .toList();
   }
 
   // ── CONTROLLER: navigate to ServiceDetailScreen ───────────────────────────
@@ -499,7 +522,8 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       );
       if (result != null && mounted) {
         final (serviceType, serviceName) = result;
-        widget.onRequestServiceWithType?.call(serviceType, serviceName);
+        widget.onRequestServiceWithType
+            ?.call(serviceType, serviceName, offer?.description ?? '');
       }
       return;
     }
@@ -528,20 +552,13 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
     if (result != null && mounted) {
       final (serviceType, serviceName) = result;
-      widget.onRequestServiceWithType?.call(serviceType, serviceName);
+      widget.onRequestServiceWithType
+          ?.call(serviceType, serviceName, d['fullDesc'] as String);
     }
   }
 
   void _openAllProfessionals() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AllProfessionalsScreen(
-          professionals: widget.professionals,
-          onProfessionalTap: widget.onProfessionalTap,
-          onBack: () => Navigator.of(context).pop(),
-        ),
-      ),
-    );
+    widget.onViewAllProfessionals?.call();
   }
 
   // ── Avatar chip ───────────────────────────────────────────────────────────
@@ -960,17 +977,90 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   // ── SERVICE OFFERS ────────────────────────────────────────────────────────
 
   Widget _buildServiceOffers() {
-    final services = _filteredServices;
+    final allFiltered = _filteredServices;
     final catHasPro = _hasProForCategory(_selectedSkill);
+    final hasSearch = _serviceSearch.trim().isNotEmpty;
+    // Total count before search — used for the badge
+    final totalInCategory = _usingDbOffers
+        ? (_selectedSkill == 'All'
+            ? widget.serviceOffers.length
+            : widget.serviceOffers
+                .where((o) => o.serviceType == _selectedSkill)
+                .length)
+        : (_selectedSkill == 'All'
+            ? _allServices.length
+            : _allServices.where((s) => s.category == _selectedSkill).length);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 0, 8),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Padding(
-          padding: EdgeInsets.only(right: 20),
-          child: SectionHeader(title: 'Service Offers'),
+        // ── Section header with count badge ────────────────────────────
+        Row(
+          children: [
+            const Expanded(child: SectionHeader(title: 'Service Offers')),
+            if (totalInCategory > 0)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '$totalInCategory ${totalInCategory == 1 ? 'service' : 'services'}',
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary),
+                ),
+              ),
+          ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
+
+        // ── Search bar ──────────────────────────────────────────────────
+        Container(
+          height: 42,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE8E8E8)),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2))
+            ],
+          ),
+          child: TextField(
+            controller: _serviceSearchCtrl,
+            onChanged: (v) => setState(() => _serviceSearch = v),
+            style: const TextStyle(fontSize: 13, color: AppColors.textDark),
+            decoration: InputDecoration(
+              hintText: 'Search services…',
+              hintStyle:
+                  const TextStyle(fontSize: 13, color: AppColors.textLight),
+              prefixIcon: const Icon(Icons.search_rounded,
+                  size: 18, color: AppColors.textLight),
+              suffixIcon: hasSearch
+                  ? GestureDetector(
+                      onTap: () => setState(() {
+                        _serviceSearch = '';
+                        _serviceSearchCtrl.clear();
+                      }),
+                      child: const Icon(Icons.close_rounded,
+                          size: 16, color: AppColors.textLight),
+                    )
+                  : null,
+              border: InputBorder.none,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // ── Category filter chips ───────────────────────────────────────
         SizedBox(
           height: 40,
           child: ListView.separated(
@@ -1021,19 +1111,21 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
           ),
         ),
         const SizedBox(height: 10),
-        if (!catHasPro && _selectedSkill != 'All')
+
+        // ── Service list / grid ─────────────────────────────────────────
+        if (!catHasPro && _selectedSkill != 'All' && !hasSearch)
           _buildNoProsForCategory(_selectedSkill)
-        else if (services.isEmpty)
-          _buildNoProsForCategory(_selectedSkill)
+        else if (allFiltered.isEmpty)
+          _buildEmptySearch(hasSearch)
         else
           SizedBox(
             height: 232,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: services.length,
+              itemCount: allFiltered.length,
               padding: const EdgeInsets.only(right: 20),
               itemBuilder: (context, i) {
-                final s = services[i];
+                final s = allFiltered[i];
                 final available = _hasProForCategory(s.category);
                 return _ServiceCard(
                   service: s,
@@ -1047,6 +1139,49 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       ]),
     );
   }
+
+  Widget _buildEmptySearch(bool hasSearch) => Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.08),
+                  shape: BoxShape.circle),
+              child: const Icon(Icons.search_off_rounded,
+                  size: 32, color: AppColors.primary),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              hasSearch
+                  ? 'No results for "$_serviceSearch"'
+                  : 'No services available',
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              hasSearch
+                  ? 'Try a different keyword or category.'
+                  : 'Check back soon — we\'re always adding services.',
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textLight, height: 1.5),
+              textAlign: TextAlign.center,
+            ),
+          ]),
+        ),
+      );
 
   Widget _buildNoProsForCategory(String category) => Padding(
         padding: const EdgeInsets.fromLTRB(0, 8, 20, 24),

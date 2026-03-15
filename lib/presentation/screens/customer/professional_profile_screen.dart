@@ -12,7 +12,7 @@ import '../../widgets/shared_widgets.dart';
 class ProfessionalProfileScreen extends StatefulWidget {
   final ProfessionalEntity professional;
   final List<ReviewEntity> reviews;
-  final VoidCallback? onBookNow;
+  final Function(String serviceType)? onBookNow;
   final VoidCallback? onBack;
 
   const ProfessionalProfileScreen({
@@ -113,7 +113,7 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Skills & Expertise',
+                          'Skill & Expertise',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
@@ -159,86 +159,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
                     ),
                   ),
                 ).animate().fadeIn(delay: 300.ms),
-              ),
-
-              // Price card
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    padding: const EdgeInsets.all(20),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: const Icon(Icons.payments_rounded,
-                              color: Colors.white, size: 24),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Price Range',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.6),
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                pro.priceMin != null && pro.priceMax != null
-                                    ? '₱${pro.priceMin!.toInt()} – ₱${pro.priceMax!.toInt()} / service'
-                                    : pro.priceRange ?? 'Contact for pricing',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF34C759).withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Text(
-                            'Transparent',
-                            style: TextStyle(
-                              color: Color(0xFF34C759),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ).animate().fadeIn(delay: 400.ms),
               ),
 
               // Bio
@@ -364,7 +284,9 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen>
                   // ── Book button — takes remaining width ────────────────
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: widget.onBookNow,
+                      onPressed: _pro.skills.isEmpty
+                          ? null
+                          : () => widget.onBookNow?.call(_pro.skills.first),
                       icon: const Icon(Icons.calendar_today_rounded, size: 18),
                       label: const Text('Book This Professional'),
                       style: ElevatedButton.styleFrom(

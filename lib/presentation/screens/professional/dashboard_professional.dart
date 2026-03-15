@@ -130,9 +130,19 @@ class _ProfessionalDashboardScreenState
   int get _completedCount =>
       widget.bookings.where((b) => b.status == BookingStatus.completed).length;
 
+  /// Returns the price that was actually agreed on for a booking.
+  /// Prefers assessmentPrice (set by the professional during the job) and
+  /// falls back to the customer's initial priceEstimate.
+  /// Mirrors the identical helper in EarningsHandymanScreen.
+  double _effectivePrice(BookingEntity b) {
+    final ap = b.assessmentPrice;
+    if (ap != null && ap > 0) return ap;
+    return b.priceEstimate ?? 0.0;
+  }
+
   double get _totalEarnings => widget.bookings
       .where((b) => b.status == BookingStatus.completed)
-      .fold(0.0, (sum, b) => sum + (b.priceEstimate ?? 0));
+      .fold(0.0, (sum, b) => sum + _effectivePrice(b));
 
   double get _completionRate {
     final total = widget.bookings
