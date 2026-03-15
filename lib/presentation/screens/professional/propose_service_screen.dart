@@ -48,12 +48,11 @@ class ProposeServiceScreen extends StatefulWidget {
 
 class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
   static const _serviceTypes = [
-    'Electrical',
-    'Plumbing',
-    'Carpentry',
-    'Painting',
-    'Appliances',
-    'Cleaning',
+    'Plumber',
+    'Electrician',
+    'Technician',
+    'Carpenter',
+    'Masonry',
   ];
 
   // ── Controllers ───────────────────────────────────────────────────────────

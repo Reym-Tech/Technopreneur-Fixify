@@ -145,31 +145,31 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   // ── Catalogue ──────────────────────────────────────────────
   static const _catalogue = [
     {
-      'type': 'Electrical',
+      'type': 'Electrician',
       'icon': Icons.electrical_services_rounded,
       'color': Color(0xFFFF9500),
       'subtitle': 'Wiring, outlets, fixtures'
     },
     {
-      'type': 'Plumbing',
+      'type': 'Plumber',
       'icon': Icons.water_drop_rounded,
       'color': Color(0xFF007AFF),
       'subtitle': 'Faucets, pipes, water heater'
     },
     {
-      'type': 'Carpentry',
+      'type': 'Carpenter',
       'icon': Icons.handyman_rounded,
       'color': Color(0xFF8B5E3C),
       'subtitle': 'Furniture repair, installations'
     },
     {
-      'type': 'Painting',
+      'type': 'Masonry',
       'icon': Icons.format_paint_rounded,
       'color': Color(0xFF34C759),
       'subtitle': 'Interior & exterior painting'
     },
     {
-      'type': 'Appliances',
+      'type': 'Technician',
       'icon': Icons.kitchen_rounded,
       'color': Color(0xFF5856D6),
       'subtitle': 'AC maintenance, repairs & service'
@@ -184,24 +184,24 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
 
   // ── Service offers (Problem Title dropdown) ──
   static const Map<String, List<_OfferDef>> _offerCatalogue = {
-    'Plumbing': [
+    'Plumber': [
       _OfferDef(title: 'Pipe Leak Repair', priceRange: '₱500 – ₱2,500'),
       _OfferDef(title: 'Drain Cleaning', priceRange: '₱300 – ₱1,800'),
     ],
-    'Electrical': [
+    'Electrician': [
       _OfferDef(title: 'Wiring Repair', priceRange: '₱600 – ₱3,000'),
       _OfferDef(
           title: 'Outlet Installation', priceRange: '₱400 – ₱1,500 per outlet'),
     ],
-    'Appliances': [
+    'Technician': [
       _OfferDef(title: 'Washer Repair', priceRange: '₱500 – ₱3,500'),
       _OfferDef(title: 'Dryer Repair', priceRange: '₱500 – ₱3,000'),
     ],
-    'Carpentry': [
+    'Carpenter': [
       _OfferDef(title: 'Cabinet Installation', priceRange: '₱1,500 – ₱8,000'),
       _OfferDef(title: 'Door Repair', priceRange: '₱300 – ₱2,000'),
     ],
-    'Painting': [
+    'Masonry': [
       _OfferDef(title: 'Wall Painting', priceRange: '₱1,000 – ₱6,000 per room'),
       _OfferDef(
           title: 'Ceiling Painting', priceRange: '₱800 – ₱4,000 per room'),

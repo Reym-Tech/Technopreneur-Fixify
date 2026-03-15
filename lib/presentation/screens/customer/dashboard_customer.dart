@@ -17,6 +17,7 @@ import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/widgets/shared_widgets.dart';
 import 'package:fixify/presentation/screens/customer/serviceoffers/service_detail_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shimmer/shimmer.dart';
 
 class CustomerDashboardScreen extends StatefulWidget {
   final UserEntity? user;
@@ -91,61 +92,61 @@ const _allServices = [
       name: 'Pipe Leak Repair',
       description: 'Fix leaking pipes and faucets',
       image: 'assets/images/pipeleakrepair.png',
-      category: 'Plumbing'),
+      category: 'Plumber'),
   _ServiceDef(
       id: 'p2',
       name: 'Drain Cleaning',
       description: 'Unclog slow and blocked drains',
       image: 'assets/images/draincleaning.png',
-      category: 'Plumbing'),
+      category: 'Plumber'),
   _ServiceDef(
       id: 'e1',
       name: 'Wiring Repair',
       description: 'Fix electrical wiring issues safely',
       image: 'assets/images/wirerepair.png',
-      category: 'Electrical'),
+      category: 'Electrician'),
   _ServiceDef(
       id: 'e2',
       name: 'Outlet Installation',
       description: 'Install new grounded power outlets',
       image: 'assets/images/outletinstallation.png',
-      category: 'Electrical'),
+      category: 'Electrician'),
   _ServiceDef(
       id: 'a1',
       name: 'Washer Repair',
       description: 'Fix washing machine problems',
       image: 'assets/images/washerrepair.png',
-      category: 'Appliances'),
+      category: 'Technician'),
   _ServiceDef(
       id: 'a2',
       name: 'Dryer Repair',
       description: 'Fix dryer not heating or spinning',
       image: 'assets/images/dryerrepair.png',
-      category: 'Appliances'),
+      category: 'Technician'),
   _ServiceDef(
       id: 'c1',
       name: 'Cabinet Installation',
       description: 'Install kitchen & bathroom cabinets',
       image: 'assets/images/cabenitinstallation.png',
-      category: 'Carpentry'),
+      category: 'Carpenter'),
   _ServiceDef(
       id: 'c2',
       name: 'Door Repair',
       description: 'Fix squeaky or misaligned doors',
       image: 'assets/images/doorrepair.png',
-      category: 'Carpentry'),
+      category: 'Carpenter'),
   _ServiceDef(
       id: 'pa1',
       name: 'Wall Painting',
       description: 'Interior wall painting service',
       image: 'assets/images/wallpainting.png',
-      category: 'Painting'),
+      category: 'Masonry'),
   _ServiceDef(
       id: 'pa2',
       name: 'Ceiling Painting',
       description: 'Paint ceilings and trim cleanly',
       image: 'assets/images/ceillingpainting.png',
-      category: 'Painting'),
+      category: 'Masonry'),
 ];
 
 // ── Category meta ─────────────────────────────────────────────────────────────
@@ -162,23 +163,23 @@ const _categories = [
   _CatMeta(
       label: 'All', icon: Icons.grid_view_rounded, color: Color(0xFF0F3D2E)),
   _CatMeta(
-      label: 'Plumbing',
+      label: 'Plumber',
       icon: Icons.water_drop_rounded,
       color: Color(0xFF007AFF)),
   _CatMeta(
-      label: 'Electrical',
+      label: 'Electrician',
       icon: Icons.electrical_services_rounded,
       color: Color(0xFFFF9500)),
   _CatMeta(
-      label: 'Appliances',
+      label: 'Technician',
       icon: Icons.kitchen_rounded,
       color: Color(0xFF5856D6)),
   _CatMeta(
-      label: 'Carpentry',
+      label: 'Carpenter',
       icon: Icons.handyman_rounded,
       color: Color(0xFFFF3B30)),
   _CatMeta(
-      label: 'Painting',
+      label: 'Masonry',
       icon: Icons.format_paint_rounded,
       color: Color(0xFF34C759)),
 ];
@@ -913,64 +914,90 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   Widget _buildRequestCTA() => GestureDetector(
         onTap: widget.onRequestService,
-        child: Container(
-          margin: const EdgeInsets.only(top: 20),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primary.withOpacity(0.35),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              )
-            ],
-          ),
-          child: Row(children: [
-            Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text('⚡ Instant Booking',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600)),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text('Request Service',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.3)),
-                  const SizedBox(height: 4),
-                  Text('Book a verified handyman now',
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.7), fontSize: 13)),
-                ])),
+        child: Stack(
+          children: [
+            // ── Main button ───────────────────────────────────────────────
             Container(
-              width: 52,
-              height: 52,
+              margin: const EdgeInsets.only(top: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
               decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
-                  shape: BoxShape.circle),
-              child: const Icon(Icons.arrow_forward_rounded,
-                  color: Colors.white, size: 24),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.35),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  )
+                ],
+              ),
+              child: Row(children: [
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text('⚡ Instant Booking',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600)),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text('Request Service',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.3)),
+                      const SizedBox(height: 4),
+                      Text('Book a verified handyman now',
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 13)),
+                    ])),
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      shape: BoxShape.circle),
+                  child: const Icon(Icons.arrow_forward_rounded,
+                      color: Colors.white, size: 24),
+                ),
+              ]),
             ),
-          ]),
+
+            // ── Moving light / shimmer overlay ────────────────────────────
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: IgnorePointer(
+                  child: Shimmer.fromColors(
+                    baseColor: Colors.white.withOpacity(0.01),
+                    highlightColor: const Color.fromARGB(255, 182, 230, 27)
+                        .withOpacity(0.6),
+                    period: const Duration(seconds: 4),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.10),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       );
 
@@ -1228,15 +1255,15 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   Color _colorForCategory(String cat) {
     switch (cat) {
-      case 'Plumbing':
+      case 'Plumber':
         return const Color(0xFF007AFF);
-      case 'Electrical':
+      case 'Electrician':
         return const Color(0xFFFF9500);
-      case 'Appliances':
+      case 'Technician':
         return const Color(0xFF5856D6);
-      case 'Carpentry':
+      case 'Carpenter':
         return const Color(0xFFFF3B30);
-      case 'Painting':
+      case 'Masonry':
         return const Color(0xFF34C759);
       default:
         return AppColors.primary;
@@ -1245,15 +1272,15 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   IconData _iconForCategory(String cat) {
     switch (cat) {
-      case 'Plumbing':
+      case 'Plumber':
         return Icons.water_drop_rounded;
-      case 'Electrical':
+      case 'Electrician':
         return Icons.electrical_services_rounded;
-      case 'Appliances':
+      case 'Technician':
         return Icons.kitchen_rounded;
-      case 'Carpentry':
+      case 'Carpenter':
         return Icons.handyman_rounded;
-      case 'Painting':
+      case 'Masonry':
         return Icons.format_paint_rounded;
       default:
         return Icons.engineering_rounded;
@@ -1507,15 +1534,15 @@ class _ServiceCard extends StatelessWidget {
 
   IconData _iconForCat(String cat) {
     switch (cat) {
-      case 'Plumbing':
+      case 'Plumber':
         return Icons.water_drop_rounded;
-      case 'Electrical':
+      case 'Electrician':
         return Icons.electrical_services_rounded;
-      case 'Appliances':
+      case 'Technician':
         return Icons.kitchen_rounded;
-      case 'Carpentry':
+      case 'Carpenter':
         return Icons.handyman_rounded;
-      case 'Painting':
+      case 'Masonry':
         return Icons.format_paint_rounded;
       default:
         return Icons.build_rounded;

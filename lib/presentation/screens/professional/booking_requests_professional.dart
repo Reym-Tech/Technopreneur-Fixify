@@ -34,23 +34,23 @@ import 'package:fixify/domain/entities/entities.dart';
 // estimate or textual range. This mirrors the customer-side catalogue and
 // helps display an estimated range for common offers.
 const Map<String, List<Map<String, String>>> _localOfferCatalogue = {
-  'Plumbing': [
+  'Plumber': [
     {'title': 'Pipe Leak Repair', 'price': '₱500 – ₱2,500'},
     {'title': 'Drain Cleaning', 'price': '₱300 – ₱1,800'},
   ],
-  'Electrical': [
+  'Electrician': [
     {'title': 'Wiring Repair', 'price': '₱600 – ₱3,000'},
     {'title': 'Outlet Installation', 'price': '₱400 – ₱1,500 per outlet'},
   ],
-  'Appliances': [
+  'Technician': [
     {'title': 'Washer Repair', 'price': '₱500 – ₱3,500'},
     {'title': 'Dryer Repair', 'price': '₱500 – ₱3,000'},
   ],
-  'Carpentry': [
+  'Carpenter': [
     {'title': 'Cabinet Installation', 'price': '₱1,500 – ₱8,000'},
     {'title': 'Door Repair', 'price': '₱300 – ₱2,000'},
   ],
-  'Painting': [
+  'Masonry': [
     {'title': 'Wall Painting', 'price': '₱1,000 – ₱6,000 per room'},
     {'title': 'Ceiling Painting', 'price': '₱800 – ₱4,000 per room'},
   ],

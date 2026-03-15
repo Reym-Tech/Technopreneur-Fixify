@@ -59,25 +59,22 @@ class _ApplyScreenState extends State<ApplyScreen> {
   File? _credentialFile;
   File? _validIdFile;
   final _yearsCtrl = TextEditingController(text: '0');
-  final _priceCtrl = TextEditingController();
   final _bioCtrl = TextEditingController();
   bool _submitting = false;
   bool _pickingCred = false;
   bool _pickingId = false;
 
   static const _serviceTypes = [
-    'Electrical',
-    'Plumbing',
-    'Carpentry',
-    'Painting',
-    'Appliances',
-    'Cleaning',
+    'Plumber',
+    'Electrician',
+    'Technician',
+    'Carpenter',
+    'Masonry',
   ];
 
   @override
   void dispose() {
     _yearsCtrl.dispose();
-    _priceCtrl.dispose();
     _bioCtrl.dispose();
     super.dispose();
   }
@@ -135,7 +132,7 @@ class _ApplyScreenState extends State<ApplyScreen> {
       credentialFile: _credentialFile!,
       validIdFile: _validIdFile!,
       yearsExp: years,
-      priceMin: double.tryParse(_priceCtrl.text.trim()),
+      priceMin: null,
       bio: _bioCtrl.text.trim().isEmpty ? null : _bioCtrl.text.trim(),
     ));
     if (mounted) setState(() => _submitting = false);
@@ -271,19 +268,6 @@ class _ApplyScreenState extends State<ApplyScreen> {
             ).animate().fadeIn(delay: 240.ms),
             const SizedBox(height: 20),
 
-            // Price per hour
-            _sectionLabel('Rate per Hour (₱)  — optional'),
-            const SizedBox(height: 10),
-            _textField(
-              controller: _priceCtrl,
-              hint: 'e.g. 350',
-              icon: Icons.payments_rounded,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              prefix: '₱',
-            ).animate().fadeIn(delay: 280.ms),
-            const SizedBox(height: 20),
-
             // Bio
             _sectionLabel('Short Bio  — optional'),
             const SizedBox(height: 10),
@@ -292,7 +276,7 @@ class _ApplyScreenState extends State<ApplyScreen> {
               hint: 'Tell customers about your experience and skills...',
               icon: Icons.person_outline_rounded,
               maxLines: 4,
-            ).animate().fadeIn(delay: 320.ms),
+            ).animate().fadeIn(delay: 280.ms),
             const SizedBox(height: 32),
 
             // Submit button
