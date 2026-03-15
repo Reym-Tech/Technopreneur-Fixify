@@ -8,6 +8,7 @@
 
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
+import 'package:fixify/data/models/models.dart';
 import 'package:fixify/presentation/screens/customer/all_professionals_screen.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
 import 'package:flutter/material.dart';
@@ -39,6 +40,12 @@ class CustomerDashboardScreen extends StatefulWidget {
   /// bookings, etc. in the parent (_MainAppState) and call setState there.
   final Future<void> Function()? onRefresh;
 
+  // ── MODEL: DB-backed service offers (approved proposals) ──────────────────
+  /// Approved service proposals from Supabase, passed in by the Controller
+  /// (_MainAppState). When non-empty, these replace the hardcoded _allServices
+  /// list so the Service Offers section reflects live database content.
+  final List<ServiceOfferModel> serviceOffers;
+
   const CustomerDashboardScreen({
     super.key,
     this.user,
@@ -56,6 +63,7 @@ class CustomerDashboardScreen extends StatefulWidget {
     this.onProfileTap,
     this.onNotificationsViewed,
     this.onRefresh,
+    this.serviceOffers = const [],
   });
 
   @override
@@ -413,12 +421,90 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     return _availableCategories.contains(category);
   }
 
+  // ── MODEL: resolve which service list to display ──────────────────────────
+  // When the Controller passes DB-backed serviceOffers, use them.
+  // Fall back to the hardcoded _allServices list if the DB list is empty
+  // (e.g. during migration or if no proposals have been approved yet).
+
+  bool get _usingDbOffers => widget.serviceOffers.isNotEmpty;
+
+  /// Unique category labels present in the current DB offers list.
+  Set<String> get _dbOfferCategories =>
+      widget.serviceOffers.map((o) => o.serviceType).toSet();
+
+  /// Returns the display list after applying the selected category filter.
+  /// In DB mode: filters [widget.serviceOffers].
+  /// In legacy mode: filters the hardcoded [_allServices].
   List<_ServiceDef> get _filteredServices {
+    if (_usingDbOffers) {
+      // Map approved ServiceOfferModel rows → _ServiceDef so the existing
+      // _ServiceCard widget keeps working without modification.
+      final filtered = _selectedSkill == 'All'
+          ? widget.serviceOffers
+          : widget.serviceOffers
+              .where((o) => o.serviceType == _selectedSkill)
+              .toList();
+      return filtered
+          .map((o) => _ServiceDef(
+                id: o.id,
+                name: o.serviceName,
+                description: o.description ?? '',
+                // imageUrl stored in the image field; _ServiceCard renders
+                // it via Image.network when it starts with 'http'.
+                image: o.imageUrl ?? '',
+                category: o.serviceType,
+              ))
+          .toList();
+    }
+    // Legacy hardcoded path
     if (_selectedSkill == 'All') return _allServices.toList();
     return _allServices.where((s) => s.category == _selectedSkill).toList();
   }
 
+  // ── CONTROLLER: navigate to ServiceDetailScreen ───────────────────────────
+  // Looks up detail data from DB offers first; falls back to the legacy
+  // _serviceDetails map for hardcoded entries.
+
   void _openServiceDetail(_ServiceDef service) async {
+    if (_usingDbOffers) {
+      // Find the matching DB offer by id (set in _filteredServices above)
+      ServiceOfferModel? offer;
+      for (final o in widget.serviceOffers) {
+        if (o.id == service.id) {
+          offer = o;
+          break;
+        }
+      }
+      if (offer == null) return;
+
+      final accentColor = _colorForCategory(offer.serviceType);
+      final icon = _iconForCategory(offer.serviceType);
+
+      final result = await Navigator.of(context).push<(String, String)>(
+        MaterialPageRoute(
+          builder: (_) => ServiceDetailScreen(
+            serviceName: offer!.serviceName,
+            serviceType: offer.serviceType,
+            description: offer.description ?? '',
+            imageUrl: offer.imageUrl,
+            accentColor: accentColor,
+            icon: icon,
+            priceRange: offer.priceRange ?? '',
+            duration: offer.duration ?? '',
+            includes: offer.includes,
+            tips: offer.tips,
+            onBookNow: (type, name) => Navigator.of(context).pop((type, name)),
+          ),
+        ),
+      );
+      if (result != null && mounted) {
+        final (serviceType, serviceName) = result;
+        widget.onRequestServiceWithType?.call(serviceType, serviceName);
+      }
+      return;
+    }
+
+    // Legacy hardcoded path
     final d = _serviceDetails[service.id];
     if (d == null) return;
 
@@ -1192,15 +1278,41 @@ class _ServiceCard extends StatelessWidget {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      Image.asset(
-                        service.image,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          color: accentColor.withOpacity(0.1),
-                          child: Icon(_iconForCat(service.category),
-                              size: 40, color: accentColor),
+                      // VIEW: render network URL (DB offer) or local asset
+                      // (hardcoded legacy). The `image` field holds whichever
+                      // is relevant for the current service source.
+                      if (service.image.startsWith('http'))
+                        Image.network(
+                          service.image,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (_, child, progress) =>
+                              progress == null
+                                  ? child
+                                  : Container(
+                                      color: accentColor.withOpacity(0.08),
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: accentColor,
+                                        ),
+                                      ),
+                                    ),
+                          errorBuilder: (_, __, ___) => Container(
+                            color: accentColor.withOpacity(0.1),
+                            child: Icon(_iconForCat(service.category),
+                                size: 40, color: accentColor),
+                          ),
+                        )
+                      else
+                        Image.asset(
+                          service.image,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: accentColor.withOpacity(0.1),
+                            child: Icon(_iconForCat(service.category),
+                                size: 40, color: accentColor),
+                          ),
                         ),
-                      ),
                       if (!available)
                         Container(
                           color: Colors.black.withOpacity(0.5),

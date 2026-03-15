@@ -2030,6 +2030,9 @@ class _MainAppState extends State<MainApp> {
         user: _user?.toEntity(),
         professionals: _professionals.map((p) => p.toEntity()).toList(),
         recentBookings: _bookings.map((b) => b.toEntity()).toList(),
+        // CONTROLLER → VIEW: pass approved DB offers so the dashboard renders
+        // live data instead of the hardcoded _allServices fallback list.
+        serviceOffers: _serviceOffers,
         currentNavIndex: _navIndex,
         onNavTap: (i) => setState(() {
           _navIndex = i;
@@ -2099,6 +2102,9 @@ class _MainAppState extends State<MainApp> {
           });
         },
         onNotificationsViewed: () => setState(() => _unreadNotifCount = 0),
+        // CONTROLLER: pull-to-refresh reloads professionals, bookings,
+        // AND service offers so the customer always sees live data.
+        onRefresh: _refreshCustomerDashboard,
       );
 
   // ══════════════════════════════════════════════════════════════════════════

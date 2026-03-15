@@ -167,6 +167,9 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
     // form data type is consistent — the datasource will use existingImageUrl.
     final imageFile = _imageFile ?? File('');
 
+    // Normalize before sending so DB stores a consistent, peso-prefixed value.
+    final normalizedPrice = _normalizePriceRange(_priceCtrl.text.trim());
+
     setState(() => _submitting = true);
     await widget.onSubmit?.call(ProposeServiceFormData(
       serviceType: _serviceType!,
@@ -174,7 +177,7 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
       description: _descCtrl.text.trim(),
       imageFile: imageFile,
       includes: includes,
-      priceRange: _priceCtrl.text.trim(),
+      priceRange: normalizedPrice,
       duration: _durationCtrl.text.trim(),
       tips: _tipsCtrl.text.trim().isEmpty ? null : _tipsCtrl.text.trim(),
     ));
@@ -188,6 +191,24 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
+
+  // Normalize the textual price range so we always store a consistent
+  // currency-formatted string in the DB (e.g. "₱500 – ₱1,800").
+  String _normalizePriceRange(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return s;
+
+    // Extract numeric parts (allow commas and decimal points).
+    final parts =
+        RegExp(r"(\d[\d.,]*)").allMatches(s).map((m) => m.group(1)!).toList();
+    if (parts.isEmpty) {
+      return s.startsWith('₱') ? s : '₱$s';
+    }
+    if (parts.length == 1) return '₱${parts[0]}';
+
+    // Use en-dash with spaces between amounts for consistency.
+    return '₱${parts[0]} – ₱${parts[1]}';
+  }
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
