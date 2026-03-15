@@ -78,6 +78,7 @@ import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:fixify/data/models/models.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/screens/shared/splash_screen.dart';
+import 'package:fixify/presentation/screens/shared/onboarding_screen.dart';
 import 'package:fixify/presentation/screens/auth/login_screen.dart';
 import 'package:fixify/presentation/screens/auth/register_screen.dart';
 import 'package:fixify/presentation/screens/customer/dashboard_customer.dart';
@@ -144,13 +145,17 @@ class _AppNavigatorState extends State<AppNavigator> {
   bool _isLoggedIn = false;
   bool _initialCheckDone = false;
 
+  /// Set to true when the guest taps "Sign Up" so AuthFlow opens on
+  /// RegisterScreen instead of LoginScreen. Reset after use.
+  bool _showRegisterFirst = false;
+
+  /// Stable key so AuthFlow's internal state (_showRegister, _prefillEmail)
+  /// survives AppNavigator rebuilds triggered by auth state changes.
   final _authFlowKey = GlobalKey();
-  late final Widget _authFlow;
 
   @override
   void initState() {
     super.initState();
-    _authFlow = AuthFlow(key: _authFlowKey);
     final session = Supabase.instance.client.auth.currentSession;
     _isLoggedIn = session != null;
     _initialCheckDone = true;
@@ -174,60 +179,143 @@ class _AppNavigatorState extends State<AppNavigator> {
                 valueColor: AlwaysStoppedAnimation(AppColors.primary))),
       );
     }
-    return _isLoggedIn ? const MainApp() : _authFlow;
+    if (_isLoggedIn)
+      return MainApp(
+        onSignUpFromGuest: () {
+          setState(() => _showRegisterFirst = true);
+        },
+      );
+    return AuthFlow(
+      key: _authFlowKey,
+      showRegisterFirst: _showRegisterFirst,
+    );
   }
 }
 
 // ── AUTH ──────────────────────────────────────────────
 
 class AuthFlow extends StatefulWidget {
-  const AuthFlow({super.key});
+  /// When true, opens RegisterScreen immediately instead of LoginScreen.
+  /// Used when the guest taps "Sign Up" from the booking prompt.
+  final bool showRegisterFirst;
+
+  const AuthFlow({super.key, this.showRegisterFirst = false});
   @override
   State<AuthFlow> createState() => _AuthFlowState();
 }
 
 class _AuthFlowState extends State<AuthFlow> {
   bool _showSplash = true;
-  bool _showRegister = false;
+  late bool _showRegister;
   String? _prefillEmail;
+
+  // null = not yet loaded from prefs; true/false = loaded
+  bool? _hasSeenOnboarding;
+
+  static const _onboardingKey = 'has_seen_onboarding';
 
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) setState(() => _showSplash = false);
+    _showRegister = widget.showRegisterFirst;
+    Future.delayed(const Duration(seconds: 3), () async {
+      if (!mounted) return;
+      // Load the onboarding flag while the splash is still showing
+      final prefs = await SharedPreferences.getInstance();
+      final seen = prefs.getBool(_onboardingKey) ?? false;
+      if (mounted) {
+        setState(() {
+          _hasSeenOnboarding = seen;
+          _showSplash = false;
+        });
+      }
     });
+  }
+
+  Future<void> _markOnboardingDone() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_onboardingKey, true);
+    if (mounted) setState(() => _hasSeenOnboarding = true);
+  }
+
+  /// Called externally (via GlobalKey) when the guest taps "Sign Up".
+  void _goToRegister() {
+    if (mounted) setState(() => _showRegister = true);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_showSplash) return SplashScreen();
+    // Show splash until both the delay AND the prefs read are done
+    if (_showSplash || _hasSeenOnboarding == null) return SplashScreen();
 
-    if (_showRegister) {
-      return RegisterScreen(
-        onNavigateToLogin: () => setState(() {
-          _showRegister = false;
-          _prefillEmail = null;
-        }),
-        onSuccess: (email) => setState(() {
-          _showRegister = false;
-          _prefillEmail = email;
-        }),
+    // First-time user — show onboarding slides
+    if (!_hasSeenOnboarding!) {
+      return OnboardingScreen(
+        onDone: () async {
+          await _markOnboardingDone();
+          // onboarding → login (state update above triggers rebuild)
+        },
       );
     }
 
-    return LoginScreen(
-      onNavigateToRegister: () => setState(() {
-        _showRegister = true;
-        _prefillEmail = null;
-      }),
-      initialEmail: _prefillEmail,
-      onLogin: (email, password) async {
-        debugPrint('🔐 Attempting login for: $email');
-        await Supabase.instance.client.auth
-            .signInWithPassword(email: email, password: password);
-        debugPrint('✅ Login successful');
+    // Show login/register flow
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_showRegister) {
+          setState(() {
+            _showRegister = false;
+            _prefillEmail = null;
+          });
+        }
+        // On LoginScreen: swallow the back press — nowhere to go back to
       },
+      child: _showRegister
+          ? RegisterScreen(
+              onNavigateToLogin: () => setState(() {
+                _showRegister = false;
+                _prefillEmail = null;
+              }),
+              onSuccess: (email) => setState(() {
+                _showRegister = false;
+                _prefillEmail = email;
+              }),
+            )
+          : LoginScreen(
+              onNavigateToRegister: () => setState(() {
+                _showRegister = true;
+                _prefillEmail = null;
+              }),
+              initialEmail: _prefillEmail,
+              onLogin: (email, password) async {
+                debugPrint('🔐 Attempting login for: $email');
+                await Supabase.instance.client.auth
+                    .signInWithPassword(email: email, password: password);
+                debugPrint('✅ Login successful');
+              },
+              onContinueAsGuest: () async {
+                debugPrint('👤 Signing in anonymously as guest');
+                try {
+                  await Supabase.instance.client.auth.signInAnonymously();
+                  debugPrint('✅ Anonymous sign-in successful');
+                } catch (e) {
+                  debugPrint('❌ Anonymous sign-in failed: $e');
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text(
+                            'Guest browsing is currently unavailable. Please sign in.'),
+                        backgroundColor: AppColors.primary,
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    );
+                  }
+                }
+              },
+            ),
     );
   }
 }
@@ -268,7 +356,10 @@ class _LoadingOverlay extends StatelessWidget {
 // ── MAIN APP ──────────────────────────────────────────────
 
 class MainApp extends StatefulWidget {
-  const MainApp({super.key});
+  /// Called when the guest taps "Sign Up" from the booking prompt.
+  /// Tells AppNavigator to open RegisterScreen when the anonymous session ends.
+  final VoidCallback? onSignUpFromGuest;
+  const MainApp({super.key, this.onSignUpFromGuest});
   @override
   State<MainApp> createState() => _MainAppState();
 }
@@ -286,6 +377,11 @@ class _MainAppState extends State<MainApp> {
   String? _preselectedServiceType;
   String? _preselectedProblemTitle;
   String? _preselectedDescription;
+
+  /// True when the current Supabase session is anonymous (guest browsing).
+  /// Guests see the customer dashboard but cannot book — restricted actions
+  /// show a sign-up prompt instead.
+  bool _isGuest = false;
 
   // ── Model state (data held by Controller for View consumption) ────────────
   UserModel? _user;
@@ -728,6 +824,22 @@ class _MainAppState extends State<MainApp> {
 
   Future<void> _init() async {
     try {
+      // ── Guest detection ──────────────────────────────────────────────────
+      // Supabase anonymous sign-in creates a real session but no row in the
+      // users table. If currentUser exists but has isAnonymous == true we
+      // treat this as a guest session — load professionals for browsing only.
+      final authUser = Supabase.instance.client.auth.currentUser;
+      if (authUser != null && authUser.isAnonymous) {
+        _professionals = await _ds.getProfessionals();
+        _serviceOffers = await _ds.getServiceOffers();
+        if (mounted)
+          setState(() {
+            _isGuest = true;
+            _loading = false;
+          });
+        return;
+      }
+
       _user = await _ds.getCurrentUser();
       if (_user != null) {
         _professionals = await _ds.getProfessionals();
@@ -1046,6 +1158,10 @@ class _MainAppState extends State<MainApp> {
           body: Center(
               child: CircularProgressIndicator(
                   valueColor: AlwaysStoppedAnimation(AppColors.primary))));
+
+    // Guest session — anonymous Supabase auth, no users table row
+    if (_isGuest) return _guestFlow();
+
     if (_user == null) return const AuthFlow();
 
     return PopScope(
@@ -1807,6 +1923,230 @@ class _MainAppState extends State<MainApp> {
   // ══════════════════════════════════════════════════════════════════════════
   // VIEW — CUSTOMER FLOW
   // ══════════════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // VIEW — GUEST FLOW
+  // ══════════════════════════════════════════════════════════════════════════
+  // Guests can browse the customer dashboard, view professionals and their
+  // profiles, and use the All Professionals screen. Every action that requires
+  // an account (booking, profile, bookings tab) shows _showGuestPrompt().
+
+  void _showGuestPrompt(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFDDDDDD),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Icon
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.08),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.lock_outline_rounded,
+                color: AppColors.primary, size: 32),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Create a Free Account',
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: AppColors.textDark,
+                letterSpacing: -0.3),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Sign up to book a service, track your jobs,\nand manage your profile.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 13, color: AppColors.textMedium, height: 1.5),
+          ),
+          const SizedBox(height: 24),
+          // Sign Up — primary
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                // Tell AppNavigator to open RegisterScreen after sign-out
+                widget.onSignUpFromGuest?.call();
+                await Supabase.instance.client.auth.signOut();
+                if (mounted) setState(() => _isGuest = false);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+                elevation: 0,
+              ),
+              child: const Text('Sign Up — It\'s Free',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Log In — secondary
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await Supabase.instance.client.auth.signOut();
+                if (mounted) setState(() => _isGuest = false);
+              },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: BorderSide(color: AppColors.primary.withOpacity(0.4)),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+              ),
+              child: const Text('Already have an account? Log In',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _guestFlow() {
+    // Guest _screen state — only 'home', 'professional_profile',
+    // and 'all_professionals' are reachable.
+    if (_screen == 'all_professionals') {
+      return AllProfessionalsScreen(
+        professionals: _professionals.map((p) => p.toEntity()).toList(),
+        onBack: () => setState(() => _screen = 'home'),
+        onProfessionalTap: (entity) {
+          final model = _professionals.firstWhere((p) => p.id == entity.id);
+          setState(() {
+            _selectedPro = model;
+            _selectedProFresh = null;
+            _proReviews = [];
+            _profileReturnScreen = 'all_professionals';
+            _screen = 'professional_profile';
+          });
+          _ds.getProfessionalById(entity.id).then((freshPro) {
+            if (!mounted) return;
+            if (freshPro != null) setState(() => _selectedProFresh = freshPro);
+          }).catchError((e) {
+            debugPrint('Could not load fresh professional: $e');
+          });
+          _ds.getProfessionalReviewsById(entity.id).then((reviews) {
+            if (!mounted) return;
+            setState(() => _proReviews = reviews);
+          }).catchError((e) {
+            debugPrint('Could not load pro reviews: $e');
+          });
+        },
+      );
+    }
+
+    if (_screen == 'professional_profile' && _selectedPro != null) {
+      return customer.ProfessionalProfileScreen(
+        professional: (_selectedProFresh ?? _selectedPro!).toEntity(),
+        reviews: _proReviews.map((r) => r.toEntity()).toList(),
+        onBack: () => setState(() {
+          _screen = _profileReturnScreen;
+          _proReviews = [];
+          _selectedProFresh = null;
+        }),
+        // Booking is restricted for guests — show sign-up prompt
+        onBookNow: (_) => _showGuestPrompt(context),
+      );
+    }
+
+    // Default: guest customer dashboard
+    return CustomerDashboardScreen(
+      user: null, // guest has no user record
+      professionals: _professionals.map((p) => p.toEntity()).toList(),
+      recentBookings: const [],
+      serviceOffers: _serviceOffers,
+      currentNavIndex: 0,
+      onNavTap: (i) {
+        if (i == 1 || i == 2) {
+          // Bookings and Profile tabs require an account
+          _showGuestPrompt(context);
+        }
+        // Index 0 (Home) is always allowed
+      },
+      onRequestService: () => _showGuestPrompt(context),
+      onRequestServiceWithType: (_, __, ___) => _showGuestPrompt(context),
+      onViewBookings: () => _showGuestPrompt(context),
+      onBookingTap: (_) => _showGuestPrompt(context),
+      onFilterBySkill: (skill) async {
+        // Filtering is allowed for guests
+        try {
+          final list = skill == 'All'
+              ? await _ds.getProfessionals()
+              : await _ds.getProfessionals(skill: skill);
+          setState(() => _professionals = list);
+        } catch (e) {
+          debugPrint('Guest filter error: $e');
+        }
+      },
+      onProfessionalTap: (entity) {
+        final model = _professionals.firstWhere((p) => p.id == entity.id);
+        setState(() {
+          _selectedPro = model;
+          _selectedProFresh = null;
+          _proReviews = [];
+          _profileReturnScreen = 'home';
+          _screen = 'professional_profile';
+        });
+        _ds.getProfessionalById(entity.id).then((freshPro) {
+          if (!mounted) return;
+          if (freshPro != null) setState(() => _selectedProFresh = freshPro);
+        }).catchError((e) {
+          debugPrint('Could not load fresh professional: $e');
+        });
+        _ds.getProfessionalReviewsById(entity.id).then((reviews) {
+          if (!mounted) return;
+          setState(() => _proReviews = reviews);
+        }).catchError((e) {
+          debugPrint('Could not load pro reviews: $e');
+        });
+      },
+      onViewAllProfessionals: () =>
+          setState(() => _screen = 'all_professionals'),
+      onProfileTap: () => _showGuestPrompt(context),
+      onRefresh: () async {
+        try {
+          final pros = await _ds.getProfessionals();
+          final offers = await _ds.getServiceOffers();
+          if (mounted)
+            setState(() {
+              _professionals = pros;
+              _serviceOffers = offers;
+            });
+        } catch (e) {
+          debugPrint('Guest refresh error: $e');
+        }
+      },
+    );
+  }
 
   Widget _customerFlow() {
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();

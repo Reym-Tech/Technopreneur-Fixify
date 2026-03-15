@@ -1156,7 +1156,7 @@ class _ProfessionalDashboardScreenState
     const items = [
       {'icon': Icons.dashboard_rounded, 'label': 'Dashboard'},
       {'icon': Icons.calendar_month_rounded, 'label': 'Requests'},
-      {'icon': Icons.payments_rounded, 'label': 'Earnings'},
+      {'icon': Icons.monetization_on_rounded, 'label': 'Earnings'},
       {'icon': Icons.person_rounded, 'label': 'Profile'},
     ];
     return Container(

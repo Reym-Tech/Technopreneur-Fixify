@@ -17,6 +17,7 @@ import '../../widgets/shared_widgets.dart';
 class LoginScreen extends StatefulWidget {
   final VoidCallback? onNavigateToRegister;
   final Function(String email, String password)? onLogin;
+  final VoidCallback? onContinueAsGuest;
 
   /// When set, pre-fills the email field. Passed from AuthFlow after a
   /// successful registration so the user doesn't have to retype their email.
@@ -26,6 +27,7 @@ class LoginScreen extends StatefulWidget {
     super.key,
     this.onNavigateToRegister,
     this.onLogin,
+    this.onContinueAsGuest,
     this.initialEmail, // <-- NEW
   });
 
@@ -413,6 +415,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             _buildDivider(),
                             const SizedBox(height: 24),
                             _buildSocialLogin(),
+                            const SizedBox(height: 12),
+                            _buildGuestButton(),
                           ],
                         ),
                       ),
@@ -467,6 +471,29 @@ class _LoginScreenState extends State<LoginScreen> {
         _resendConfirmation();
         break;
     }
+  }
+
+  Widget _buildGuestButton() {
+    if (widget.onContinueAsGuest == null) return const SizedBox.shrink();
+    return TextButton(
+      onPressed: widget.onContinueAsGuest,
+      style: TextButton.styleFrom(
+        minimumSize: const Size(double.infinity, 48),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side:
+              BorderSide(color: AppColors.textLight.withOpacity(0.3), width: 1),
+        ),
+      ),
+      child: const Text(
+        'Browse as Guest',
+        style: TextStyle(
+          color: AppColors.textLight,
+          fontWeight: FontWeight.w600,
+          fontSize: 14,
+        ),
+      ),
+    );
   }
 
   Widget _buildDivider() {
