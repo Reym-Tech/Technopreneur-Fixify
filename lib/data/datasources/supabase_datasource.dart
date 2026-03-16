@@ -671,31 +671,44 @@ class SupabaseDataSource {
         .eq('id', bookingId)
         .single();
 
-    final proField = current['professional_id'];
-    final statusField = current['status']?.toString() ?? '';
+    final existingProId = current['professional_id'] as String?;
 
-    // Treat null or empty string as unassigned. Some Supabase responses may
-    // include an empty string instead of null for unassigned professional_id,
-    // which would otherwise trigger a false-positive "already claimed" error.
-    final isAssigned = proField != null && proField.toString().trim().isNotEmpty;
-    if (isAssigned) {
+    // If professional_id is set to a DIFFERENT professional, the booking
+    // has already been claimed — reject.
+    // If professional_id is set to THIS professional, this is a direct
+    // booking assigned to them — allow it to proceed.
+    if (existingProId != null && existingProId != professionalId) {
       throw const BookingAlreadyClaimedException(
           'This request was already accepted by another handyman.');
     }
-    if (statusField != 'pending') {
+    if (current['status'] != 'pending') {
       throw const BookingAlreadyClaimedException(
           'This request is no longer available.');
     }
 
-    await _client
-        .from(AppConfig.bookingsTable)
-        .update({
-          'professional_id': professionalId,
-          'status': 'accepted',
-        })
-        .eq('id', bookingId)
-        .eq('status', 'pending')
-        .isFilter('professional_id', null);
+    // For direct bookings (professional_id already set to this pro),
+    // we only need to update status. For open requests (professional_id null),
+    // we set both professional_id and status atomically.
+    if (existingProId == professionalId) {
+      // Direct booking — just flip status to accepted
+      await _client
+          .from(AppConfig.bookingsTable)
+          .update({'status': 'accepted'})
+          .eq('id', bookingId)
+          .eq('status', 'pending')
+          .eq('professional_id', professionalId);
+    } else {
+      // Open request — claim it atomically (first-accept-wins)
+      await _client
+          .from(AppConfig.bookingsTable)
+          .update({
+            'professional_id': professionalId,
+            'status': 'accepted',
+          })
+          .eq('id', bookingId)
+          .eq('status', 'pending')
+          .isFilter('professional_id', null);
+    }
 
     final data = await _client
         .from(AppConfig.bookingsTable)
@@ -1449,6 +1462,37 @@ class SupabaseDataSource {
         (response as List).map((row) => row['photo_url'] as String).toList();
     debugPrint('[Supabase] getCompletionPhotos: ${urls.length} photos');
     return urls;
+  }
+
+  // ── Service selection request helpers ───────────────────────────────────────
+
+  /// Returns the auth user_id for a given professionals.id row.
+  /// Used in main.dart to push notifications to the handyman after the admin
+  /// approves or rejects their service selection request.
+  Future<String?> getUserIdFromProfessionalId(String professionalId) async {
+    try {
+      final row = await _client
+          .from('professionals')
+          .select('user_id')
+          .eq('id', professionalId)
+          .maybeSingle();
+      return row?['user_id'] as String?;
+    } catch (e) {
+      debugPrint('[getUserIdFromProfessionalId] error: $e');
+      return null;
+    }
+  }
+
+  /// Returns all admin user IDs for notification fanout.
+  /// Used in main.dart to notify admins of new service selection requests.
+  Future<List<String>> getAdminUserIds() async {
+    try {
+      final rows = await _client.from('users').select('id').eq('role', 'admin');
+      return (rows as List).map((r) => r['id'] as String).toList();
+    } catch (e) {
+      debugPrint('[getAdminUserIds] error: $e');
+      return [];
+    }
   }
 
   Future<String> uploadAvatar(

@@ -4,6 +4,18 @@
 // services they offer. Only shows services matching their approved skill type.
 // They can also tap "Propose New Service" to submit a service that doesn't
 // exist yet in the catalogue.
+//
+// SERVICE SELECTION APPROVAL PATCH:
+//   Toggling a service (on or off) no longer takes effect immediately.
+//   Instead it submits a request for admin review. While the request is
+//   pending, the tile shows an amber "Pending Approval" badge and the
+//   checkbox is replaced with a pending indicator. The _selectedIds set
+//   is NOT optimistically updated — actual selection state only changes
+//   once the admin approves the request (handled in main.dart via realtime).
+//
+//   New constructor param:
+//     pendingRequests — Map<serviceOfferId, action ('select'|'deselect')>
+//                       for requests currently awaiting admin review.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -33,6 +45,11 @@ class MyServicesScreen extends StatefulWidget {
   /// they proposed themselves (shown with a "Your Proposal" badge).
   final String? myProfessionalId;
 
+  /// Map of serviceOfferId → action ('select' | 'deselect') for requests
+  /// that are currently awaiting admin approval. Tiles in this map show an
+  /// amber "Pending Approval" badge and cannot be re-toggled until resolved.
+  final Map<String, String> pendingRequests;
+
   const MyServicesScreen({
     super.key,
     required this.availableServices,
@@ -42,6 +59,7 @@ class MyServicesScreen extends StatefulWidget {
     this.onBack,
     required this.skillType,
     this.myProfessionalId,
+    this.pendingRequests = const {},
   });
 
   @override
@@ -61,33 +79,25 @@ class _MyServicesScreenState extends State<MyServicesScreen> {
   Future<void> _toggle(ServiceOfferModel offer) async {
     if (_loading.contains(offer.id)) return;
 
-    // Proposed services are permanently selected — cannot be deselected
+    // Proposed services are permanently selected — cannot be deselected.
     final isOwnProposal = widget.myProfessionalId != null &&
         offer.professionalId == widget.myProfessionalId;
     if (isOwnProposal && _selectedIds.contains(offer.id)) return;
+
+    // A pending request is already awaiting admin review for this service —
+    // block re-toggling until the admin approves or rejects it.
+    if (widget.pendingRequests.containsKey(offer.id)) return;
+
     final nowSelected = !_selectedIds.contains(offer.id);
-    setState(() {
-      _loading.add(offer.id);
-      if (nowSelected) {
-        _selectedIds.add(offer.id);
-      } else {
-        _selectedIds.remove(offer.id);
-      }
-    });
+    setState(() => _loading.add(offer.id));
     try {
+      // Submits a selection request for admin review. Does NOT optimistically
+      // update _selectedIds — actual state only changes on admin approval.
       await widget.onToggleService(offer.id, nowSelected);
     } catch (e) {
-      // Revert on error
-      setState(() {
-        if (nowSelected) {
-          _selectedIds.remove(offer.id);
-        } else {
-          _selectedIds.add(offer.id);
-        }
-      });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Failed to update: $e'),
+          content: Text('Failed to submit request: $e'),
           backgroundColor: const Color(0xFFFF3B30),
           behavior: SnackBarBehavior.floating,
         ));
@@ -113,7 +123,7 @@ class _MyServicesScreenState extends State<MyServicesScreen> {
                         padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
                         child: Text(
                           'Select the services you offer as a ${widget.skillType}. '
-                          'Customers booking these exact services will be matched to you.',
+                          'Changes require admin approval before taking effect.',
                           style: const TextStyle(
                               fontSize: 13,
                               color: AppColors.textMedium,
@@ -130,11 +140,14 @@ class _MyServicesScreenState extends State<MyServicesScreen> {
                             final isOwnProposal = widget.myProfessionalId !=
                                     null &&
                                 offer.professionalId == widget.myProfessionalId;
+                            final pendingAction =
+                                widget.pendingRequests[offer.id];
                             return _ServiceTile(
                               offer: offer,
                               selected: _selectedIds.contains(offer.id),
                               loading: _loading.contains(offer.id),
                               isOwnProposal: isOwnProposal,
+                              pendingAction: pendingAction,
                               onTap: () => _toggle(offer),
                             )
                                 .animate()
@@ -293,6 +306,11 @@ class _ServiceTile extends StatelessWidget {
   final bool selected;
   final bool loading;
   final bool isOwnProposal;
+
+  /// Non-null when a selection request for this service is pending admin
+  /// review. Value is either 'select' or 'deselect'.
+  final String? pendingAction;
+
   final VoidCallback onTap;
 
   const _ServiceTile({
@@ -301,10 +319,27 @@ class _ServiceTile extends StatelessWidget {
     required this.loading,
     required this.onTap,
     this.isOwnProposal = false,
+    this.pendingAction,
   });
+
+  // Amber used consistently for all pending-approval UI across the app.
+  static const _pendingColor = Color(0xFFFF9500);
 
   @override
   Widget build(BuildContext context) {
+    final isPending = pendingAction != null;
+    // Border colour: pending → amber, selected → primary, default → grey.
+    final borderColor = isPending
+        ? _pendingColor.withOpacity(0.45)
+        : selected
+            ? AppColors.primary.withOpacity(0.4)
+            : const Color(0xFFEEEEEE);
+    final bgColor = isPending
+        ? _pendingColor.withOpacity(0.04)
+        : selected
+            ? AppColors.primary.withOpacity(0.06)
+            : Colors.white;
+
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -312,13 +347,11 @@ class _ServiceTile extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: selected ? AppColors.primary.withOpacity(0.06) : Colors.white,
+          color: bgColor,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: selected
-                ? AppColors.primary.withOpacity(0.4)
-                : const Color(0xFFEEEEEE),
-            width: selected ? 1.5 : 1,
+            color: borderColor,
+            width: isPending || selected ? 1.5 : 1,
           ),
           boxShadow: [
             BoxShadow(
@@ -352,12 +385,35 @@ class _ServiceTile extends StatelessWidget {
                       style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: selected
-                              ? AppColors.primary
-                              : AppColors.textDark)),
+                          color: isPending
+                              ? _pendingColor
+                              : selected
+                                  ? AppColors.primary
+                                  : AppColors.textDark)),
                 ),
-                // "Your Proposal" badge
-                if (isOwnProposal) ...[
+                // "Pending Approval" badge — shown while awaiting admin review.
+                if (isPending) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _pendingColor.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: _pendingColor.withOpacity(0.4)),
+                    ),
+                    child: Text(
+                        pendingAction == 'deselect'
+                            ? 'Removal Pending'
+                            : 'Pending Approval',
+                        style: const TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: _pendingColor)),
+                  ),
+                ],
+                // "Your Proposal" badge — only shown when not also pending.
+                if (isOwnProposal && !isPending) ...[
                   const SizedBox(width: 6),
                   Container(
                     padding:
@@ -393,8 +449,20 @@ class _ServiceTile extends StatelessWidget {
                           fontSize: 11, color: AppColors.textLight)),
                 ]),
               ],
-              // Lock hint for own proposals
-              if (isOwnProposal) ...[
+              // Pending hint — awaiting admin review.
+              if (isPending) ...[
+                const SizedBox(height: 4),
+                Row(children: [
+                  Icon(Icons.hourglass_top_rounded,
+                      size: 11, color: _pendingColor.withOpacity(0.8)),
+                  const SizedBox(width: 3),
+                  Text('Awaiting admin approval',
+                      style: TextStyle(
+                          fontSize: 10, color: _pendingColor.withOpacity(0.8))),
+                ]),
+              ],
+              // Lock hint for own proposals (only when not pending).
+              if (isOwnProposal && !isPending) ...[
                 const SizedBox(height: 4),
                 Row(children: [
                   Icon(Icons.lock_outline_rounded,
@@ -408,7 +476,8 @@ class _ServiceTile extends StatelessWidget {
               ],
             ]),
           ),
-          // Checkbox / loader
+          // Right-hand indicator: spinner while submitting, pending clock,
+          // or the standard selected/deselected checkbox.
           if (loading)
             const SizedBox(
               width: 24,
@@ -416,6 +485,19 @@ class _ServiceTile extends StatelessWidget {
               child: CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation(AppColors.primary)),
+            )
+          else if (isPending)
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: _pendingColor.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border:
+                    Border.all(color: _pendingColor.withOpacity(0.5), width: 2),
+              ),
+              child: const Icon(Icons.hourglass_top_rounded,
+                  color: _pendingColor, size: 13),
             )
           else
             AnimatedContainer(

@@ -108,6 +108,7 @@ import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
 import 'package:fixify/presentation/screens/admin/admin_booking_overview_screen.dart';
 import 'package:fixify/presentation/screens/admin/admin_catalogue_screen.dart';
 import 'package:fixify/presentation/screens/professional/my_services_screen.dart';
+import 'package:fixify/data/datasources/service_selection_request_datasource.dart';
 import 'package:fixify/presentation/screens/professional/propose_service_screen.dart';
 import 'package:fixify/presentation/screens/customer/privacy_policy_screen.dart';
 
@@ -373,6 +374,7 @@ class _MainAppState extends State<MainApp> {
   late final ApplicationDataSource _appDs;
   late final NotificationDataSource _notifDs;
   late final ServiceProposalDatasource _proposalDs;
+  late final ServiceSelectionRequestDatasource _selectionDs;
 
   // ── Controller state ──────────────────────────────────────────────────────
   DateTime? _lastBackPress;
@@ -408,6 +410,15 @@ class _MainAppState extends State<MainApp> {
 
   /// IDs of service_proposals this professional has selected to offer.
   Set<String> _myServiceIds = {};
+
+  /// All service selection requests — populated for admin (all requests)
+  /// and for professionals (their own pending requests only).
+  List<ServiceSelectionRequestModel> _serviceSelectionRequests = [];
+
+  /// For the professional flow: maps serviceOfferId → action ('select'|'deselect')
+  /// for requests currently pending admin approval.
+  /// Drives the pending-state indicators in MyServicesScreen.
+  Map<String, String> _pendingServiceRequestMap = {};
 
   // MODEL — per-professional skip persistence key.
   // Scoped to the professional's ID so that different handymen on the same
@@ -815,6 +826,7 @@ class _MainAppState extends State<MainApp> {
     _appDs = ApplicationDataSource(Supabase.instance.client);
     _notifDs = NotificationDataSource(Supabase.instance.client);
     _proposalDs = ServiceProposalDatasource(Supabase.instance.client);
+    _selectionDs = ServiceSelectionRequestDatasource(Supabase.instance.client);
     _init();
   }
 
@@ -896,6 +908,18 @@ class _MainAppState extends State<MainApp> {
             _reviews = await _ds.getProfessionalReviews(_pro!.id);
             _myServiceIds = await _ds.getMyProfessionalServices(_pro!.id);
 
+            // Load pending service selection requests for this professional
+            // so MyServicesScreen can show the pending-state badge on init.
+            try {
+              final pending =
+                  await _selectionDs.getPendingForProfessional(_pro!.id);
+              _pendingServiceRequestMap = {
+                for (final r in pending) r.serviceOfferId: r.action
+              };
+            } catch (e) {
+              debugPrint('[MyServices] Could not load pending requests: $e');
+            }
+
             _openRequestsChannel = _ds.subscribeToOpenBookingRequests(
               skills: _pro!.skills,
               professionalId: _pro!.id,
@@ -955,10 +979,68 @@ class _MainAppState extends State<MainApp> {
                   _notify('"${p.serviceName}" proposal was reviewed.');
               },
             );
+
+            // Subscribe to status changes on this professional's service
+            // selection requests so the UI updates in real-time when the
+            // admin approves or rejects without requiring a full reload.
+            _selectionDs.subscribeToMyRequests(
+              professionalId: _pro!.id,
+              onUpdate: (r) async {
+                if (!mounted) return;
+                if (r.status == 'approved') {
+                  // Apply the approved change to professional_services and
+                  // refresh local state so the checkbox reflects reality.
+                  try {
+                    await _ds.toggleProfessionalService(
+                      professionalId: _pro!.id,
+                      serviceOfferId: r.serviceOfferId,
+                      selected: r.action == 'select',
+                    );
+                    final updated =
+                        await _ds.getMyProfessionalServices(_pro!.id);
+                    if (mounted) {
+                      setState(() {
+                        _myServiceIds = updated;
+                        _pendingServiceRequestMap.remove(r.serviceOfferId);
+                      });
+                    }
+                  } catch (e) {
+                    debugPrint(
+                        '[MyServices] Could not apply approved change: $e');
+                  }
+                  _notify(r.action == 'select'
+                      ? '"${r.serviceName ?? 'Service'}" has been added to your profile ✅'
+                      : '"${r.serviceName ?? 'Service'}" has been removed from your profile.');
+                } else if (r.status == 'rejected') {
+                  if (mounted) {
+                    setState(() =>
+                        _pendingServiceRequestMap.remove(r.serviceOfferId));
+                  }
+                  final note = r.adminNote != null && r.adminNote!.isNotEmpty
+                      ? ' Feedback: ${r.adminNote}'
+                      : '';
+                  _notify(
+                      '"${r.serviceName ?? 'Service'}" request was not approved.$note');
+                }
+              },
+            );
           }
         } else if (_user!.role == 'admin') {
-          _applications = await _appDs.getAllApplications();
-          _proposals = await _proposalDs.getAllProposals();
+          try {
+            _applications = await _appDs.getAllApplications();
+          } catch (e) {
+            debugPrint('[Admin] Could not load applications: $e');
+          }
+          try {
+            _proposals = await _proposalDs.getAllProposals();
+          } catch (e) {
+            debugPrint('[Admin] Could not load proposals: $e');
+          }
+          try {
+            _serviceSelectionRequests = await _selectionDs.getAllRequests();
+          } catch (e) {
+            debugPrint('[Admin] Could not load service selection requests: $e');
+          }
           try {
             _adminBookings = await _ds.getAllBookings();
           } catch (e) {
@@ -1314,6 +1396,7 @@ class _MainAppState extends State<MainApp> {
       return ApprovalsScreen(
         applications: _applications,
         proposals: _proposals,
+        serviceRequests: _serviceSelectionRequests,
         onBack: () => setState(() => _navIndex = 0),
         onApprove: (app) async {
           try {
@@ -1362,6 +1445,68 @@ class _MainAppState extends State<MainApp> {
             _notify('Proposal rejected.');
           } catch (e) {
             _notify('Error: $e');
+          }
+        },
+        onApproveServiceRequest: (req) async {
+          try {
+            await _selectionDs.approveRequest(req.id);
+            // Apply the actual professional_services change.
+            await _ds.toggleProfessionalService(
+              professionalId: req.professionalId,
+              serviceOfferId: req.serviceOfferId,
+              selected: req.action == 'select',
+            );
+            // Notify the handyman.
+            final proUserId =
+                await _ds.getUserIdFromProfessionalId(req.professionalId);
+            if (proUserId != null) {
+              await _notifDs.pushToUser(
+                targetUserId: proUserId,
+                role: 'professional',
+                type: NotificationTypeStrings.bookingAccepted,
+                title: req.action == 'select'
+                    ? 'Service Request Approved ✅'
+                    : 'Service Removal Approved',
+                message: req.action == 'select'
+                    ? '"${req.serviceName ?? 'Service'}" has been added to your profile.'
+                    : '"${req.serviceName ?? 'Service'}" has been removed from your profile.',
+                referenceId: req.id,
+                referenceType: 'service_selection_request',
+              );
+            }
+            _serviceSelectionRequests = await _selectionDs.getAllRequests();
+            setState(() {});
+            _notify(req.action == 'select'
+                ? '"${req.serviceName ?? 'Service'}" approved and added to handyman profile ✅'
+                : '"${req.serviceName ?? 'Service'}" removal approved.');
+          } catch (e) {
+            _notify('Error approving service request: $e');
+          }
+        },
+        onRejectServiceRequest: (req, note) async {
+          try {
+            await _selectionDs.rejectRequest(req.id, adminNote: note);
+            // Notify the handyman.
+            final proUserId =
+                await _ds.getUserIdFromProfessionalId(req.professionalId);
+            if (proUserId != null) {
+              await _notifDs.pushToUser(
+                targetUserId: proUserId,
+                role: 'professional',
+                type: NotificationTypeStrings.bookingCancelled,
+                title: 'Service Request Not Approved',
+                message: note != null && note.isNotEmpty
+                    ? '"${req.serviceName ?? 'Service'}" request was not approved. Feedback: $note'
+                    : '"${req.serviceName ?? 'Service'}" request was not approved.',
+                referenceId: req.id,
+                referenceType: 'service_selection_request',
+              );
+            }
+            _serviceSelectionRequests = await _selectionDs.getAllRequests();
+            setState(() {});
+            _notify('Service request rejected.');
+          } catch (e) {
+            _notify('Error rejecting service request: $e');
           }
         },
         onNavTap: (i) => setState(() => _navIndex = i),
@@ -1557,7 +1702,9 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
-    final pending = _applications.where((a) => a.status == 'pending').length;
+    final pending = _applications.where((a) => a.status == 'pending').length +
+        _proposals.where((p) => p.status == 'pending').length +
+        _serviceSelectionRequests.where((r) => r.status == 'pending').length;
     // Use _adminBookings for accurate stats; fall back to _bookings if empty.
     final statsSource = _adminBookings.isNotEmpty ? _adminBookings : _bookings;
     return AdminDashboardScreen(
@@ -1842,15 +1989,51 @@ class _MainAppState extends State<MainApp> {
             selectedIds: _myServiceIds,
             skillType: skillType,
             myProfessionalId: _pro?.id,
+            pendingRequests: _pendingServiceRequestMap,
             onBack: () => setState(() => _screen = 'home'),
             onToggleService: (serviceOfferId, selected) async {
-              await _ds.toggleProfessionalService(
+              // Look up the service name for the admin card display.
+              final offer = available.firstWhere(
+                (o) => o.id == serviceOfferId,
+                orElse: () => available.first,
+              );
+              final action = selected ? 'select' : 'deselect';
+              // Submit the request for admin review — do NOT write to
+              // professional_services directly. The pending badge in the UI
+              // and the actual professional_services write both happen only
+              // after admin approval (via realtime subscription above).
+              await _selectionDs.submitRequest(
                 professionalId: proId,
                 serviceOfferId: serviceOfferId,
-                selected: selected,
+                action: action,
+                handymanName: _user?.name,
+                serviceName: offer.serviceName,
+                skillType: skillType,
               );
-              final updated = await _ds.getMyProfessionalServices(proId);
-              if (mounted) setState(() => _myServiceIds = updated);
+              // Notify the admin that a new request is pending review.
+              try {
+                final adminUsers = await _ds.getAdminUserIds();
+                for (final adminId in adminUsers) {
+                  await _notifDs.pushToUser(
+                    targetUserId: adminId,
+                    role: 'admin',
+                    type: NotificationTypeStrings.bookingAccepted,
+                    title: 'New Service Request',
+                    message: '${_user?.name ?? 'A handyman'} has requested to '
+                        '${selected ? 'add' : 'remove'} '
+                        '"${offer.serviceName}" from their profile.',
+                    referenceId: serviceOfferId,
+                    referenceType: 'service_selection_request',
+                  );
+                }
+              } catch (e) {
+                debugPrint('[MyServices] Could not notify admin: $e');
+              }
+              // Update the local pending map so the badge appears immediately.
+              if (mounted) {
+                setState(
+                    () => _pendingServiceRequestMap[serviceOfferId] = action);
+              }
             },
             onProposeNew: () => setState(() => _screen = 'propose_service'),
           );
