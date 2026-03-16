@@ -380,6 +380,15 @@ class _MainAppState extends State<MainApp> {
   String? _preselectedProblemTitle;
   String? _preselectedDescription;
 
+  /// Professional IDs who have selected the currently preselected service.
+  /// Empty = no filter (show all matching professionals).
+  /// Populated before navigating to request_service so matchedPros is exact.
+  Set<String> _qualifiedProfessionalIds = {};
+
+  /// Services offered by a specific professional for direct booking.
+  /// Empty = not a direct booking (show all services for the skill type).
+  List<ServiceOfferModel> _directBookingOffers = [];
+
   /// True when the current Supabase session is anonymous (guest browsing).
   /// Guests see the customer dashboard but cannot book — restricted actions
   /// show a sign-up prompt instead.
@@ -1051,8 +1060,83 @@ class _MainAppState extends State<MainApp> {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // CONTROLLER — refresh helpers (Model re-fetch → View setState)
+  // CONTROLLER — service request navigation helper
   // ══════════════════════════════════════════════════════════════════════════
+
+  /// Navigates to RequestServiceScreen pre-filled with [serviceType] and
+  /// [serviceName]. Fetches qualifiedProfessionalIds first so only
+  /// professionals who have selected that exact service are matched.
+  Future<void> _navigateToRequestServiceWithOffer({
+    required String serviceType,
+    required String serviceName,
+    String? description,
+  }) async {
+    // Fetch before navigating so the screen has the right pros from the start
+    try {
+      final ids = await _ds.getProfessionalsOfferingService(
+        serviceType: serviceType,
+        serviceName: serviceName,
+      );
+      if (mounted) {
+        setState(() {
+          _preselectedServiceType = serviceType;
+          _preselectedProblemTitle = serviceName;
+          _preselectedDescription = description;
+          _selectedPro = null;
+          _qualifiedProfessionalIds = ids;
+          _screen = 'request_service';
+        });
+      }
+    } catch (e) {
+      debugPrint('[navigateToRequestService] error: $e');
+      // Navigate anyway with empty filter as fallback
+      setState(() {
+        _preselectedServiceType = serviceType;
+        _preselectedProblemTitle = serviceName;
+        _preselectedDescription = description;
+        _selectedPro = null;
+        _qualifiedProfessionalIds = {};
+        _screen = 'request_service';
+      });
+    }
+  }
+
+  /// Navigates to RequestServiceScreen for a DIRECT booking against a
+  /// specific professional. Fetches only the services that professional
+  /// has selected so the customer can only choose from what they actually offer.
+  Future<void> _navigateToDirectBooking(ProfessionalModel pro) async {
+    final skillType = pro.skills.isNotEmpty
+        ? '${pro.skills.first[0].toUpperCase()}'
+            '${pro.skills.first.substring(1).toLowerCase()}'
+        : '';
+    try {
+      final offers = await _ds.getMyProfessionalServiceOffers(pro.id);
+      if (mounted) {
+        setState(() {
+          _selectedPro = pro;
+          _preselectedServiceType = skillType;
+          _preselectedProblemTitle = null;
+          _preselectedDescription = null;
+          // Direct booking: qualified set = just this professional
+          _qualifiedProfessionalIds = {pro.id};
+          _directBookingOffers = offers;
+          _screen = 'request_service';
+        });
+      }
+    } catch (e) {
+      debugPrint('[navigateToDirectBooking] error: $e');
+      // Navigate anyway — offers list will be empty, falls back to full catalogue
+      setState(() {
+        _selectedPro = pro;
+        _preselectedServiceType = skillType;
+        _preselectedProblemTitle = null;
+        _preselectedDescription = null;
+        _qualifiedProfessionalIds = {pro.id};
+        _directBookingOffers = [];
+        _screen = 'request_service';
+      });
+    }
+  }
 
   Future<void> _refreshBookings() async {
     try {
@@ -1255,6 +1339,14 @@ class _MainAppState extends State<MainApp> {
         onApproveProposal: (prop) async {
           try {
             await _proposalDs.approveProposal(prop);
+            // Auto-select the approved service for the professional who proposed it
+            final proId = await _ds.getProfessionalIdFromProposal(prop.id);
+            if (proId != null) {
+              await _ds.autoSelectServiceForProfessional(
+                professionalId: proId,
+                serviceOfferId: prop.id,
+              );
+            }
             _proposals = await _proposalDs.getAllProposals();
             setState(() {});
             _notify('"${prop.serviceName}" is now live in Service Offers!');
@@ -1436,6 +1528,14 @@ class _MainAppState extends State<MainApp> {
         },
         onApproveProposal: (ServiceProposalModel prop) async {
           await _proposalDs.approveProposal(prop);
+          // Auto-select the approved service for the professional who proposed it
+          final proId = await _ds.getProfessionalIdFromProposal(prop.id);
+          if (proId != null) {
+            await _ds.autoSelectServiceForProfessional(
+              professionalId: proId,
+              serviceOfferId: prop.id,
+            );
+          }
           final offers = await _ds.getServiceOffers();
           final proposals = await _proposalDs.getAllProposals();
           if (mounted) {
@@ -1725,8 +1825,14 @@ class _MainAppState extends State<MainApp> {
 
     if (_screen == 'my_services') {
       if (proId == null) return _home();
-      final skillType =
+      // Normalize to title case so 'plumber' → 'Plumber' matches DB values.
+      final rawSkill =
           _pro?.skills.isNotEmpty == true ? _pro!.skills.first : 'Professional';
+      final skillType = rawSkill.isEmpty
+          ? 'Professional'
+          : rawSkill[0].toUpperCase() + rawSkill.substring(1).toLowerCase();
+      debugPrint(
+          '[MyServices] pro skills: ${_pro?.skills}, using skillType: "$skillType"');
       return FutureBuilder<List<ServiceOfferModel>>(
         future: _ds.getServiceOffersByType(skillType),
         builder: (context, snap) {
@@ -1735,6 +1841,7 @@ class _MainAppState extends State<MainApp> {
             availableServices: available,
             selectedIds: _myServiceIds,
             skillType: skillType,
+            myProfessionalId: _pro?.id,
             onBack: () => setState(() => _screen = 'home'),
             onToggleService: (serviceOfferId, selected) async {
               await _ds.toggleProfessionalService(
@@ -2343,12 +2450,16 @@ class _MainAppState extends State<MainApp> {
           initialProblemTitle: _preselectedProblemTitle,
           initialDescription: _preselectedDescription,
           targetProfessionalId: _selectedPro?.id,
+          qualifiedProfessionalIds: _qualifiedProfessionalIds,
+          directBookingOffers: _directBookingOffers,
           onBack: () => setState(() {
             _screen = 'home';
             _preselectedServiceType = null;
             _preselectedProblemTitle = null;
             _preselectedDescription = null;
             _selectedPro = null;
+            _qualifiedProfessionalIds = {};
+            _directBookingOffers = [];
           }),
           onSubmit: (result) async {
             try {
@@ -2474,12 +2585,10 @@ class _MainAppState extends State<MainApp> {
             _proReviews = [];
             _selectedProFresh = null;
           }),
-          onBookNow: (serviceType) => setState(() {
-            _preselectedServiceType = serviceType;
-            _preselectedProblemTitle = null;
-            _preselectedDescription = null;
-            _screen = 'request_service';
-          }),
+          onBookNow: (serviceType) {
+            final pro = _selectedProFresh ?? _selectedPro;
+            if (pro != null) _navigateToDirectBooking(pro);
+          },
         );
 
       case 'booking':
@@ -2548,14 +2657,7 @@ class _MainAppState extends State<MainApp> {
                   final pro = _professionals.firstWhereOrNull(
                       (p) => p.id == _selectedBooking!.professionalId);
                   if (pro == null) return;
-                  setState(() {
-                    _selectedPro = pro;
-                    _selectedProFresh = null;
-                    _preselectedServiceType = serviceType;
-                    _preselectedProblemTitle = null;
-                    _preselectedDescription = null;
-                    _screen = 'request_service';
-                  });
+                  _navigateToDirectBooking(pro);
                 }
               : null,
           onCancel: (_selectedBooking!.status == BookingStatus.pending ||
@@ -2740,16 +2842,16 @@ class _MainAppState extends State<MainApp> {
           _preselectedProblemTitle = null;
           _preselectedDescription = null;
           _selectedPro = null;
+          _qualifiedProfessionalIds = {};
+          _directBookingOffers = [];
           _screen = 'request_service';
         }),
         onRequestServiceWithType: (serviceType, serviceName, description) =>
-            setState(() {
-          _preselectedServiceType = serviceType;
-          _preselectedProblemTitle = serviceName;
-          _preselectedDescription = description.isNotEmpty ? description : null;
-          _selectedPro = null;
-          _screen = 'request_service';
-        }),
+            _navigateToRequestServiceWithOffer(
+          serviceType: serviceType,
+          serviceName: serviceName,
+          description: description.isNotEmpty ? description : null,
+        ),
         onViewBookings: () => setState(() {
           _navIndex = 1;
           _screen = 'home';

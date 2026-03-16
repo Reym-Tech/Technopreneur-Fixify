@@ -29,6 +29,10 @@ class MyServicesScreen extends StatefulWidget {
   /// The professional's skill type label (e.g. 'Plumber') — shown in header.
   final String skillType;
 
+  /// The professional's own user ID — used to identify which services
+  /// they proposed themselves (shown with a "Your Proposal" badge).
+  final String? myProfessionalId;
+
   const MyServicesScreen({
     super.key,
     required this.availableServices,
@@ -37,6 +41,7 @@ class MyServicesScreen extends StatefulWidget {
     this.onProposeNew,
     this.onBack,
     required this.skillType,
+    this.myProfessionalId,
   });
 
   @override
@@ -55,6 +60,11 @@ class _MyServicesScreenState extends State<MyServicesScreen> {
 
   Future<void> _toggle(ServiceOfferModel offer) async {
     if (_loading.contains(offer.id)) return;
+
+    // Proposed services are permanently selected — cannot be deselected
+    final isOwnProposal = widget.myProfessionalId != null &&
+        offer.professionalId == widget.myProfessionalId;
+    if (isOwnProposal && _selectedIds.contains(offer.id)) return;
     final nowSelected = !_selectedIds.contains(offer.id);
     setState(() {
       _loading.add(offer.id);
@@ -115,17 +125,22 @@ class _MyServicesScreenState extends State<MyServicesScreen> {
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                       sliver: SliverList(
                         delegate: SliverChildBuilderDelegate(
-                          (context, i) => _ServiceTile(
-                            offer: widget.availableServices[i],
-                            selected: _selectedIds
-                                .contains(widget.availableServices[i].id),
-                            loading: _loading
-                                .contains(widget.availableServices[i].id),
-                            onTap: () => _toggle(widget.availableServices[i]),
-                          )
-                              .animate()
-                              .fadeIn(delay: (i * 40).ms)
-                              .slideX(begin: 0.03, end: 0),
+                          (context, i) {
+                            final offer = widget.availableServices[i];
+                            final isOwnProposal = widget.myProfessionalId !=
+                                    null &&
+                                offer.professionalId == widget.myProfessionalId;
+                            return _ServiceTile(
+                              offer: offer,
+                              selected: _selectedIds.contains(offer.id),
+                              loading: _loading.contains(offer.id),
+                              isOwnProposal: isOwnProposal,
+                              onTap: () => _toggle(offer),
+                            )
+                                .animate()
+                                .fadeIn(delay: (i * 40).ms)
+                                .slideX(begin: 0.03, end: 0);
+                          },
                           childCount: widget.availableServices.length,
                         ),
                       ),
@@ -277,6 +292,7 @@ class _ServiceTile extends StatelessWidget {
   final ServiceOfferModel offer;
   final bool selected;
   final bool loading;
+  final bool isOwnProposal;
   final VoidCallback onTap;
 
   const _ServiceTile({
@@ -284,6 +300,7 @@ class _ServiceTile extends StatelessWidget {
     required this.selected,
     required this.loading,
     required this.onTap,
+    this.isOwnProposal = false,
   });
 
   @override
@@ -329,12 +346,36 @@ class _ServiceTile extends StatelessWidget {
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(offer.serviceName,
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color:
-                          selected ? AppColors.primary : AppColors.textDark)),
+              Row(children: [
+                Flexible(
+                  child: Text(offer.serviceName,
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: selected
+                              ? AppColors.primary
+                              : AppColors.textDark)),
+                ),
+                // "Your Proposal" badge
+                if (isOwnProposal) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD4A843).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                          color: const Color(0xFFD4A843).withOpacity(0.4)),
+                    ),
+                    child: const Text('Your Proposal',
+                        style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFD4A843))),
+                  ),
+                ],
+              ]),
               if (offer.priceRange != null) ...[
                 const SizedBox(height: 3),
                 Text(offer.priceRange!,
@@ -350,6 +391,19 @@ class _ServiceTile extends StatelessWidget {
                   Text(offer.duration!,
                       style: const TextStyle(
                           fontSize: 11, color: AppColors.textLight)),
+                ]),
+              ],
+              // Lock hint for own proposals
+              if (isOwnProposal) ...[
+                const SizedBox(height: 4),
+                Row(children: [
+                  Icon(Icons.lock_outline_rounded,
+                      size: 11, color: AppColors.textLight.withOpacity(0.7)),
+                  const SizedBox(width: 3),
+                  Text('Cannot be deselected',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textLight.withOpacity(0.7))),
                 ]),
               ],
             ]),

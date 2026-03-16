@@ -500,15 +500,30 @@ class _RequestCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(booking.serviceType,
+                    // serviceTitle is the specific service (e.g. 'Drain Declogging').
+                    // Fall back to serviceType if not set (older bookings).
+                    Text(
+                        booking.serviceTitle?.isNotEmpty == true
+                            ? booking.serviceTitle!
+                            : booking.serviceType,
                         style: const TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w700,
                             color: AppColors.textDark)),
                     const SizedBox(height: 2),
-                    // Problem title — first line of booking.description.
-                    // Gives the handyman instant context without expanding.
-                    if (_problemTitle(booking.description) != null) ...[
+                    // Show serviceType as a secondary label when serviceTitle
+                    // is present so the handyman sees both the specific service
+                    // and the skill category.
+                    if (booking.serviceTitle?.isNotEmpty == true) ...[
+                      Text(
+                        booking.serviceType,
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.primary),
+                      ),
+                      const SizedBox(height: 2),
+                    ] else if (_problemTitle(booking.description) != null) ...[
                       Text(
                         _problemTitle(booking.description)!,
                         maxLines: 1,

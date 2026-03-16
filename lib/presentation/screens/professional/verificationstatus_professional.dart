@@ -122,10 +122,11 @@ class VerificationStatusScreen extends StatelessWidget {
     }
   }
 
-  // ── Proposal FAB — shown when the handyman is verified and no pending proposal ──
-  // Approved → can propose a new service.
-  // Rejected proposal → shows "Update & Resubmit".
+  // ── Proposal FAB — shown when the handyman is verified ────────────────────
   // Pending proposal  → hidden (under review).
+  // Approved proposal → hidden (already in catalogue; use My Services to select).
+  // Rejected proposal → shows "Update & Resubmit".
+  // No proposals      → shows "Propose a Service".
   _FabConfig? get _proposalFabConfig {
     final isVerified = applications.any((a) => a.status == 'approved');
     if (!isVerified) return null; // must be verified first
@@ -136,6 +137,7 @@ class VerificationStatusScreen extends StatelessWidget {
         icon: Icons.storefront_rounded,
       );
     }
+    // Check the most recent proposal's status
     switch (proposals.first.status) {
       case 'rejected':
         return const _FabConfig(
@@ -143,11 +145,9 @@ class VerificationStatusScreen extends StatelessWidget {
           icon: Icons.edit_rounded,
         );
       case 'approved':
-        // Already have an approved proposal — allow proposing another only
-        // if the system is extended to multi-skill. For now, keep hidden.
-        return null;
       case 'pending':
       default:
+        // Under review or already approved — no action here
         return null;
     }
   }
@@ -200,8 +200,8 @@ class VerificationStatusScreen extends StatelessWidget {
                   icon: Icons.storefront_outlined,
                   title: 'No proposals yet',
                   subtitle: applications.any((a) => a.status == 'approved')
-                      ? 'Propose a service to list your offering in the customer marketplace.'
-                      : 'Get verified first, then you can propose services to customers.',
+                      ? 'Don\'t see a service you offer? Propose a new one for admin review. Once approved, it will be added to your My Services list automatically.'
+                      : 'Get verified first, then you can propose new services. Admin-seeded services are already available to select from My Services.',
                 )
               else
                 ...proposals
@@ -590,7 +590,8 @@ class VerificationStatusScreen extends StatelessWidget {
             ]),
           ),
         ],
-        // Approval note
+        // Approval note — tells the professional the service is live and
+        // has been automatically added to their My Services list.
         if (prop.status == 'approved') ...[
           const SizedBox(height: 12),
           Container(
@@ -601,15 +602,19 @@ class VerificationStatusScreen extends StatelessWidget {
               border:
                   Border.all(color: const Color(0xFF34C759).withOpacity(0.2)),
             ),
-            child: const Row(children: [
-              Icon(Icons.check_circle_outline_rounded,
-                  color: Color(0xFF34C759), size: 16),
-              SizedBox(width: 8),
-              Expanded(
-                  child: Text('Your service is live and visible to customers.',
-                      style:
-                          TextStyle(fontSize: 12, color: Color(0xFF34C759)))),
-            ]),
+            child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.check_circle_outline_rounded,
+                      color: Color(0xFF34C759), size: 16),
+                  SizedBox(width: 8),
+                  Expanded(
+                      child: Text(
+                    'Your service is live and visible to customers. '
+                    'It has been automatically added to your My Services list.',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF34C759)),
+                  )),
+                ]),
           ),
         ],
         // Submitted documents thumbnails

@@ -87,6 +87,18 @@ class RequestServiceScreen extends StatefulWidget {
   final String? initialDescription;
   final String? targetProfessionalId;
 
+  /// When non-empty, only professionals whose ID is in this set will be
+  /// included in matchedPros. Populated by the Controller with the result
+  /// of getProfessionalsOfferingService() so notifications go only to
+  /// professionals who have selected the exact service the customer chose.
+  final Set<String> qualifiedProfessionalIds;
+
+  /// When set (direct booking), limits the service picker to only the
+  /// services this specific professional has selected in My Services.
+  /// Overrides the full serviceOffers list for the picker step so the
+  /// customer only sees what this handyman can actually perform.
+  final List<ServiceOfferModel> directBookingOffers;
+
   const RequestServiceScreen({
     super.key,
     this.professionals = const [],
@@ -97,6 +109,8 @@ class RequestServiceScreen extends StatefulWidget {
     this.initialProblemTitle,
     this.initialDescription,
     this.targetProfessionalId,
+    this.qualifiedProfessionalIds = const {},
+    this.directBookingOffers = const [],
   });
 
   @override
@@ -232,6 +246,19 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
   List<_OfferDef> _offersForType(String type) {
     if (type.trim().isEmpty) return const [];
 
+    // ── Direct booking: only show services this professional has selected ──
+    if (widget.directBookingOffers.isNotEmpty) {
+      final proOffers = widget.directBookingOffers
+          .where((o) => o.serviceType.toLowerCase() == type.toLowerCase())
+          .map((o) => _OfferDef(
+                title: o.serviceName,
+                priceRange: o.priceRange ?? 'Price to be assessed',
+              ))
+          .toList();
+      if (proOffers.isNotEmpty) return proOffers;
+      // If somehow empty, fall through to full catalogue
+    }
+
     // ── DB offers take priority — build from approved ServiceOfferModel rows
     // that match the selected service type.
     final dbMatches = widget.serviceOffers
@@ -276,7 +303,12 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
         .where((p) =>
             p.verified &&
             p.available &&
-            p.skills.any((s) => s.toLowerCase() == _serviceType!.toLowerCase()))
+            p.skills
+                .any((s) => s.toLowerCase() == _serviceType!.toLowerCase()) &&
+            // If qualifiedProfessionalIds is provided, only include
+            // professionals who have selected this exact service.
+            (widget.qualifiedProfessionalIds.isEmpty ||
+                widget.qualifiedProfessionalIds.contains(p.id)))
         .toList();
   }
 

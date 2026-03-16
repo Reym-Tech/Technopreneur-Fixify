@@ -289,15 +289,19 @@ class SupabaseDataSource {
   /// that match their approved skill — e.g. a Plumber only sees Plumber offers.
   Future<List<ServiceOfferModel>> getServiceOffersByType(
       String serviceType) async {
-    debugPrint('[Supabase] getServiceOffersByType: $serviceType');
+    debugPrint('[Supabase] getServiceOffersByType: "$serviceType"');
     try {
+      // Use ilike for case-insensitive match so skills stored as 'plumber'
+      // correctly match service_type stored as 'Plumber'.
       final data = await _client
           .from('service_proposals')
           .select()
           .eq('status', 'approved')
-          .eq('service_type', serviceType)
+          .ilike('service_type', serviceType)
           .order('service_name', ascending: true);
-      return (data as List).map((j) => ServiceOfferModel.fromJson(j)).toList();
+      debugPrint(
+          '[getServiceOffersByType] found ${(data as List).length} offers for "$serviceType"');
+      return data.map((j) => ServiceOfferModel.fromJson(j)).toList();
     } catch (e) {
       debugPrint('[getServiceOffersByType] error: $e');
       return [];
@@ -381,8 +385,78 @@ class SupabaseDataSource {
     await _client.from('service_proposals').delete().eq('id', id);
   }
 
-  /// Fetches the set of service_offer_ids this professional has selected.
-  /// Returns a Set<String> for O(1) membership checks in the UI.
+  /// Returns the professional_id stored on a service_proposals row.
+  /// Used after approval to auto-select the service for the proposing professional.
+  Future<String?> getProfessionalIdFromProposal(String proposalId) async {
+    try {
+      final data = await _client
+          .from('service_proposals')
+          .select('professional_id')
+          .eq('id', proposalId)
+          .maybeSingle();
+      return data?['professional_id'] as String?;
+    } catch (e) {
+      debugPrint('[getProfessionalIdFromProposal] error: $e');
+      return null;
+    }
+  }
+
+  /// Called after a professional's service proposal is approved.
+  /// Automatically inserts a professional_services row so the service
+  /// is immediately selected for them without requiring a manual tap
+  /// in "My Services". Silently no-ops if already selected.
+  Future<void> autoSelectServiceForProfessional({
+    required String professionalId,
+    required String serviceOfferId,
+  }) async {
+    debugPrint('[Supabase] autoSelectServiceForProfessional: '
+        'pro=$professionalId offer=$serviceOfferId');
+    try {
+      await _client.from('professional_services').upsert({
+        'professional_id': professionalId,
+        'service_offer_id': serviceOfferId,
+      }, onConflict: 'professional_id,service_offer_id');
+      debugPrint('[Supabase] autoSelectServiceForProfessional: done ✅');
+    } catch (e) {
+      // Non-fatal — the professional can always select it manually
+      debugPrint('[autoSelectServiceForProfessional] error: $e');
+    }
+  }
+
+  /// Returns the Set of professional IDs who have selected a specific
+  /// service offer (by service name + type). Used by RequestServiceScreen
+  /// to filter matchedPros to only those who actually offer the service.
+  Future<Set<String>> getProfessionalsOfferingService({
+    required String serviceType,
+    required String serviceName,
+  }) async {
+    debugPrint('[Supabase] getProfessionalsOfferingService: '
+        '$serviceType / $serviceName');
+    try {
+      final proposals = await _client
+          .from('service_proposals')
+          .select('id')
+          .eq('status', 'approved')
+          .ilike('service_type', serviceType)
+          .ilike('service_name', serviceName);
+
+      if ((proposals as List).isEmpty) return {};
+
+      final offerIds = proposals.map((p) => p['id'].toString()).toList();
+
+      final rows = await _client
+          .from('professional_services')
+          .select('professional_id')
+          .inFilter('service_offer_id', offerIds);
+
+      return (rows as List).map((r) => r['professional_id'].toString()).toSet();
+    } catch (e) {
+      debugPrint('[getProfessionalsOfferingService] error: $e');
+      return {};
+    }
+  }
+
+  /// Returns the set of service_offer_ids this professional has selected.
   Future<Set<String>> getMyProfessionalServices(String professionalId) async {
     debugPrint('[Supabase] getMyProfessionalServices: pro=$professionalId');
     try {
@@ -597,11 +671,18 @@ class SupabaseDataSource {
         .eq('id', bookingId)
         .single();
 
-    if (current['professional_id'] != null) {
+    final proField = current['professional_id'];
+    final statusField = current['status']?.toString() ?? '';
+
+    // Treat null or empty string as unassigned. Some Supabase responses may
+    // include an empty string instead of null for unassigned professional_id,
+    // which would otherwise trigger a false-positive "already claimed" error.
+    final isAssigned = proField != null && proField.toString().trim().isNotEmpty;
+    if (isAssigned) {
       throw const BookingAlreadyClaimedException(
           'This request was already accepted by another handyman.');
     }
-    if (current['status'] != 'pending') {
+    if (statusField != 'pending') {
       throw const BookingAlreadyClaimedException(
           'This request is no longer available.');
     }
@@ -885,15 +966,10 @@ class SupabaseDataSource {
         .map((j) => BookingModel.fromJson(j as Map<String, dynamic>))
         .toList();
 
-    // If the professional hasn't selected any services yet, fall back to
-    // the old skills-array matching so they still see requests during the
-    // transition period before they've set up their service list.
-    if (offeredServiceIds.isEmpty) {
-      final normalizedSkills = skills.map((s) => s.toLowerCase()).toSet();
-      return all
-          .where((b) => normalizedSkills.contains(b.serviceType.toLowerCase()))
-          .toList();
-    }
+    // If the professional has no services selected, they receive nothing.
+    // There is no fallback to skills-array matching — a professional must
+    // explicitly select services before receiving booking requests.
+    if (offeredServiceIds.isEmpty) return [];
 
     // Fetch the service_proposals rows for the offered IDs so we can
     // match on both serviceType AND serviceName.
@@ -902,15 +978,19 @@ class SupabaseDataSource {
     return all.where((booking) {
       // Direct bookings assigned to this professional always pass through.
       if (booking.professionalId == professionalId) return true;
-      // Open requests: match on serviceType + serviceTitle.
-      // Falls back to notes then serviceType for bookings created before
-      // the service_title column was added.
+
+      // Open requests: must match on BOTH serviceType AND serviceTitle.
+      // If serviceTitle is null (old booking before the column was added),
+      // we skip it rather than falling back to serviceType — a loose match
+      // would send the booking to every professional of that skill type,
+      // which is exactly the bug we're fixing.
+      final bookingTitle = booking.serviceTitle ?? booking.notes;
+      if (bookingTitle == null || bookingTitle.trim().isEmpty) return false;
+
       return offeredOffers.any((offer) =>
           offer.serviceType.toLowerCase() ==
               booking.serviceType.toLowerCase() &&
-          offer.serviceName.toLowerCase() ==
-              (booking.serviceTitle ?? booking.notes ?? booking.serviceType)
-                  .toLowerCase());
+          offer.serviceName.toLowerCase() == bookingTitle.toLowerCase());
     }).toList();
   }
 
@@ -1051,15 +1131,18 @@ class SupabaseDataSource {
             final serviceType =
                 (record['service_type'] as String?)?.toLowerCase() ?? '';
             // service_title is the specific service name (e.g. 'Faucet/Bidet Install').
-            // Falls back to notes then serviceType for older bookings.
+            // Falls back to notes only — never to serviceType, as that would
+            // match every professional of that skill regardless of their services.
             final serviceTitle =
                 (record['service_title'] as String?)?.toLowerCase() ??
-                    (record['notes'] as String?)?.toLowerCase() ??
-                    serviceType;
+                    (record['notes'] as String?)?.toLowerCase();
 
-            // Step 1 — quick serviceType gate using skills array
-            // (avoids DB round-trip for clearly non-matching requests)
+            // Step 1 — quick serviceType gate
             if (!normalizedSkills.contains(serviceType)) return;
+
+            // If no serviceTitle, we can't do exact matching — skip to avoid
+            // sending the booking to the wrong professional.
+            if (serviceTitle == null || serviceTitle.trim().isEmpty) return;
 
             // Step 2 — check professional_services for exact match
             try {
@@ -1068,8 +1151,8 @@ class SupabaseDataSource {
 
               bool shouldAccept = false;
               if (offeredIds.isEmpty) {
-                // No services selected yet — fall back to skills-only match
-                shouldAccept = true;
+                // No services selected yet — skip, don't fall back loosely
+                shouldAccept = false;
               } else {
                 final offeredOffers =
                     await _fetchServiceOffersByIds(offeredIds);
