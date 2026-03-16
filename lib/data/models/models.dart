@@ -257,6 +257,13 @@ class BookingModel extends Equatable {
   final String customerId;
   final String professionalId;
   final String serviceType;
+
+  /// The specific service name selected by the customer (e.g. 'Faucet/Bidet Install').
+  /// Stored in bookings.service_title. Used for exact matching against
+  /// professional_services so only handymen who offer this exact service
+  /// receive the booking request.
+  final String? serviceTitle;
+
   final String? description;
   final double? priceEstimate;
   final BookingStatus status;
@@ -285,6 +292,7 @@ class BookingModel extends Equatable {
     required this.customerId,
     required this.professionalId,
     required this.serviceType,
+    this.serviceTitle,
     this.description,
     this.priceEstimate,
     required this.status,
@@ -311,6 +319,7 @@ class BookingModel extends Equatable {
       final customerId = json['customer_id']?.toString() ?? '';
       final professionalId = json['professional_id']?.toString() ?? '';
       final serviceType = json['service_type']?.toString() ?? '';
+      final serviceTitle = json['service_title'] as String?;
       final description = json['description'] as String?;
       final priceEstimate = (json['price_estimate'] as num?)?.toDouble();
       final status = _parseStatus(json['status']?.toString() ?? 'pending');
@@ -353,6 +362,7 @@ class BookingModel extends Equatable {
         customerId: customerId,
         professionalId: professionalId,
         serviceType: serviceType,
+        serviceTitle: serviceTitle,
         description: description,
         priceEstimate: priceEstimate,
         status: status,
@@ -435,6 +445,7 @@ class BookingModel extends Equatable {
         customerId: customerId,
         professionalId: professionalId,
         serviceType: serviceType,
+        serviceTitle: serviceTitle,
         description: description,
         priceEstimate: priceEstimate,
         status: status,
@@ -457,6 +468,7 @@ class BookingModel extends Equatable {
         customerId: customerId,
         professionalId: professionalId,
         serviceType: serviceType,
+        serviceTitle: serviceTitle,
         description: description,
         priceEstimate: priceEstimate,
         status: newStatus,
@@ -479,6 +491,7 @@ class BookingModel extends Equatable {
         customerId: customerId,
         professionalId: professionalId,
         serviceType: serviceType,
+        serviceTitle: serviceTitle,
         description: description,
         priceEstimate: priceEstimate,
         status: status,
@@ -500,6 +513,7 @@ class BookingModel extends Equatable {
         'customer_id': customerId,
         'professional_id': professionalId,
         'service_type': serviceType,
+        'service_title': serviceTitle,
         'description': description,
         'price_estimate': priceEstimate,
         'status': statusToString(status),

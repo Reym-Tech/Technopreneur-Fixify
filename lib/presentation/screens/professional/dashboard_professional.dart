@@ -39,6 +39,7 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   final VoidCallback? onApplyCredentials;
   final VoidCallback? onViewVerification;
   final VoidCallback? onViewReviews;
+  final VoidCallback? onManageServices;
   final List<ReviewEntity> reviews;
   final Function(bool)? onToggleAvailability;
   final Function(int)? onNavTap;
@@ -62,6 +63,7 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.onApplyCredentials,
     this.onViewVerification,
     this.onViewReviews,
+    this.onManageServices,
     this.reviews = const [],
     this.onToggleAvailability,
     this.onNavTap,
@@ -800,6 +802,13 @@ class _ProfessionalDashboardScreenState
           badge: widget.pendingApplications > 0 ? 'Pending' : null,
           badgeColor: const Color(0xFFFF9500),
           onTap: widget.onViewVerification,
+        ),
+        const SizedBox(height: 12),
+        _menuCard(
+          icon: Icons.home_repair_service_rounded,
+          title: 'My Services',
+          subtitle: 'Select the services you offer to customers',
+          onTap: widget.onManageServices,
         ),
       ],
     );

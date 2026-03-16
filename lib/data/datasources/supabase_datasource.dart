@@ -284,6 +284,165 @@ class SupabaseDataSource {
     return ServiceOfferModel.fromJson(maybe);
   }
 
+  /// Fetches all approved service proposals for a given service type.
+  /// Used by the professional's "My Services" screen to show only offers
+  /// that match their approved skill — e.g. a Plumber only sees Plumber offers.
+  Future<List<ServiceOfferModel>> getServiceOffersByType(
+      String serviceType) async {
+    debugPrint('[Supabase] getServiceOffersByType: $serviceType');
+    try {
+      final data = await _client
+          .from('service_proposals')
+          .select()
+          .eq('status', 'approved')
+          .eq('service_type', serviceType)
+          .order('service_name', ascending: true);
+      return (data as List).map((j) => ServiceOfferModel.fromJson(j)).toList();
+    } catch (e) {
+      debugPrint('[getServiceOffersByType] error: $e');
+      return [];
+    }
+  }
+
+  /// Admin creates a new service offer — inserted directly as 'approved'
+  /// so it is immediately live in the catalogue without a review step.
+  Future<ServiceOfferModel> adminSeedService({
+    required String serviceName,
+    required String serviceType,
+    required String description,
+    required List<String> includes,
+    required String priceRange,
+    required String duration,
+    String? tips,
+    String? imageUrl,
+  }) async {
+    debugPrint('[Supabase] adminSeedService: $serviceName ($serviceType)');
+    try {
+      final data = await _client
+          .from('service_proposals')
+          .insert({
+            'service_name': serviceName,
+            'service_type': serviceType,
+            'description': description,
+            'includes': includes,
+            'price_range': priceRange,
+            'duration': duration,
+            if (tips != null) 'tips': tips,
+            if (imageUrl != null) 'image_url': imageUrl,
+            'status': 'approved',
+          })
+          .select()
+          .single();
+      debugPrint('[Supabase] adminSeedService: done ✅');
+      return ServiceOfferModel.fromJson(data);
+    } catch (e, st) {
+      debugPrint('[Supabase] adminSeedService: ERROR $e');
+      debugPrint(st.toString());
+      rethrow;
+    }
+  }
+
+  /// Admin updates an existing service offer.
+  Future<ServiceOfferModel> adminUpdateService({
+    required String id,
+    String? serviceName,
+    String? serviceType,
+    String? description,
+    List<String>? includes,
+    String? priceRange,
+    String? duration,
+    String? tips,
+    String? imageUrl,
+  }) async {
+    debugPrint('[Supabase] adminUpdateService: $id');
+    final updates = <String, dynamic>{
+      if (serviceName != null) 'service_name': serviceName,
+      if (serviceType != null) 'service_type': serviceType,
+      if (description != null) 'description': description,
+      if (includes != null) 'includes': includes,
+      if (priceRange != null) 'price_range': priceRange,
+      if (duration != null) 'duration': duration,
+      if (tips != null) 'tips': tips,
+      if (imageUrl != null) 'image_url': imageUrl,
+    };
+    final data = await _client
+        .from('service_proposals')
+        .update(updates)
+        .eq('id', id)
+        .select()
+        .single();
+    return ServiceOfferModel.fromJson(data);
+  }
+
+  /// Admin deletes a service offer.
+  /// Also removes all professional_services rows referencing it (CASCADE).
+  Future<void> adminDeleteService(String id) async {
+    debugPrint('[Supabase] adminDeleteService: $id');
+    await _client.from('service_proposals').delete().eq('id', id);
+  }
+
+  /// Fetches the set of service_offer_ids this professional has selected.
+  /// Returns a Set<String> for O(1) membership checks in the UI.
+  Future<Set<String>> getMyProfessionalServices(String professionalId) async {
+    debugPrint('[Supabase] getMyProfessionalServices: pro=$professionalId');
+    try {
+      final data = await _client
+          .from('professional_services')
+          .select('service_offer_id')
+          .eq('professional_id', professionalId);
+      return (data as List)
+          .map((j) => j['service_offer_id'].toString())
+          .toSet();
+    } catch (e) {
+      debugPrint('[getMyProfessionalServices] error: $e');
+      return {};
+    }
+  }
+
+  /// Fetches the full ServiceOfferModel list for a professional's selected
+  /// services. Used to display their active offering on their profile.
+  Future<List<ServiceOfferModel>> getMyProfessionalServiceOffers(
+      String professionalId) async {
+    debugPrint(
+        '[Supabase] getMyProfessionalServiceOffers: pro=$professionalId');
+    try {
+      final data = await _client
+          .from('professional_services')
+          .select('service_proposals(*)')
+          .eq('professional_id', professionalId);
+      return (data as List)
+          .map((j) => ServiceOfferModel.fromJson(
+              j['service_proposals'] as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[getMyProfessionalServiceOffers] error: $e');
+      return [];
+    }
+  }
+
+  /// Adds or removes a service from a professional's offering.
+  /// [selected] = true → INSERT; false → DELETE.
+  Future<void> toggleProfessionalService({
+    required String professionalId,
+    required String serviceOfferId,
+    required bool selected,
+  }) async {
+    debugPrint('[Supabase] toggleProfessionalService: pro=$professionalId '
+        'offer=$serviceOfferId selected=$selected');
+    if (selected) {
+      await _client.from('professional_services').insert({
+        'professional_id': professionalId,
+        'service_offer_id': serviceOfferId,
+      });
+    } else {
+      await _client
+          .from('professional_services')
+          .delete()
+          .eq('professional_id', professionalId)
+          .eq('service_offer_id', serviceOfferId);
+    }
+  }
+
   // ── PROFESSIONALS REALTIME ────────────────────────────────
 
   RealtimeChannel subscribeToProfessionalsUpdates({
@@ -327,6 +486,7 @@ class SupabaseDataSource {
     required String customerId,
     String? professionalId,
     required String serviceType,
+    String? serviceTitle,
     required DateTime scheduledDate,
     String? description,
     String? address,
@@ -334,9 +494,6 @@ class SupabaseDataSource {
     double? priceEstimate,
     double? latitude,
     double? longitude,
-    // Local file path of the photo selected by the customer in Step 2.
-    // When provided, the file is uploaded to Supabase Storage and the
-    // returned public URL is stored in bookings.photo_url.
     String? photoPath,
   }) async {
     // ── Validation: reject dates in the past ──────────────────────────────
@@ -391,6 +548,7 @@ class SupabaseDataSource {
       'customer_id': customerId,
       if (professionalId != null) 'professional_id': professionalId,
       'service_type': serviceType,
+      if (serviceTitle != null) 'service_title': serviceTitle,
       'description': description,
       'price_estimate': priceEstimate,
       'status': 'pending',
@@ -711,11 +869,11 @@ class SupabaseDataSource {
   }) async {
     if (skills.isEmpty) return [];
 
-    // Fetch both:
-    //   1. Open (unassigned) pending bookings — visible to all matching pros.
-    //   2. Directly-assigned pending bookings for this specific professional —
-    //      created when a customer books via "Book This Professional".
-    // Supabase .or() maps to: WHERE (professional_id IS NULL OR professional_id = ?)
+    // Fetch the service offer IDs this professional has selected.
+    // These represent the exact (serviceType + serviceName) pairs they offer.
+    final offeredServiceIds = await getMyProfessionalServices(professionalId);
+
+    // Fetch open + directly-assigned pending bookings.
     final response = await _client
         .from(AppConfig.bookingsTable)
         .select('*, users!customer_id(id, name, avatar_url, phone)')
@@ -723,12 +881,53 @@ class SupabaseDataSource {
         .or('professional_id.is.null,professional_id.eq.$professionalId')
         .order('created_at', ascending: false);
 
-    final normalizedSkills = skills.map((s) => s.toLowerCase()).toSet();
-
-    return (response as List)
+    final all = (response as List)
         .map((j) => BookingModel.fromJson(j as Map<String, dynamic>))
-        .where((b) => normalizedSkills.contains(b.serviceType.toLowerCase()))
         .toList();
+
+    // If the professional hasn't selected any services yet, fall back to
+    // the old skills-array matching so they still see requests during the
+    // transition period before they've set up their service list.
+    if (offeredServiceIds.isEmpty) {
+      final normalizedSkills = skills.map((s) => s.toLowerCase()).toSet();
+      return all
+          .where((b) => normalizedSkills.contains(b.serviceType.toLowerCase()))
+          .toList();
+    }
+
+    // Fetch the service_proposals rows for the offered IDs so we can
+    // match on both serviceType AND serviceName.
+    final offeredOffers = await _fetchServiceOffersByIds(offeredServiceIds);
+
+    return all.where((booking) {
+      // Direct bookings assigned to this professional always pass through.
+      if (booking.professionalId == professionalId) return true;
+      // Open requests: match on serviceType + serviceTitle.
+      // Falls back to notes then serviceType for bookings created before
+      // the service_title column was added.
+      return offeredOffers.any((offer) =>
+          offer.serviceType.toLowerCase() ==
+              booking.serviceType.toLowerCase() &&
+          offer.serviceName.toLowerCase() ==
+              (booking.serviceTitle ?? booking.notes ?? booking.serviceType)
+                  .toLowerCase());
+    }).toList();
+  }
+
+  /// Helper — fetches service_proposals rows for a set of IDs.
+  Future<List<ServiceOfferModel>> _fetchServiceOffersByIds(
+      Set<String> ids) async {
+    if (ids.isEmpty) return [];
+    try {
+      final data = await _client
+          .from('service_proposals')
+          .select()
+          .inFilter('id', ids.toList());
+      return (data as List).map((j) => ServiceOfferModel.fromJson(j)).toList();
+    } catch (e) {
+      debugPrint('[_fetchServiceOffersByIds] error: $e');
+      return [];
+    }
   }
 
   Future<List<BookingModel>> getCustomerBookings(String customerId) async {
@@ -846,16 +1045,41 @@ class SupabaseDataSource {
           table: AppConfig.bookingsTable,
           callback: (payload) async {
             final record = payload.newRecord;
-            // Accept the booking if it is either:
-            //   • an open request (professional_id is null), or
-            //   • a direct booking assigned specifically to this professional.
             final recordProId = record['professional_id'] as String?;
             if (recordProId != null && recordProId != professionalId) return;
+
             final serviceType =
                 (record['service_type'] as String?)?.toLowerCase() ?? '';
+            // service_title is the specific service name (e.g. 'Faucet/Bidet Install').
+            // Falls back to notes then serviceType for older bookings.
+            final serviceTitle =
+                (record['service_title'] as String?)?.toLowerCase() ??
+                    (record['notes'] as String?)?.toLowerCase() ??
+                    serviceType;
+
+            // Step 1 — quick serviceType gate using skills array
+            // (avoids DB round-trip for clearly non-matching requests)
             if (!normalizedSkills.contains(serviceType)) return;
 
+            // Step 2 — check professional_services for exact match
             try {
+              final offeredIds =
+                  await getMyProfessionalServices(professionalId);
+
+              bool shouldAccept = false;
+              if (offeredIds.isEmpty) {
+                // No services selected yet — fall back to skills-only match
+                shouldAccept = true;
+              } else {
+                final offeredOffers =
+                    await _fetchServiceOffersByIds(offeredIds);
+                shouldAccept = offeredOffers.any((offer) =>
+                    offer.serviceType.toLowerCase() == serviceType &&
+                    offer.serviceName.toLowerCase() == serviceTitle);
+              }
+
+              if (!shouldAccept) return;
+
               final data = await _client
                   .from(AppConfig.bookingsTable)
                   .select('*, users!customer_id(id, name, avatar_url, phone)')

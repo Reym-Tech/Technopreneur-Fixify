@@ -122,6 +122,11 @@ class BookingEntity extends Equatable {
   final String customerId;
   final String professionalId;
   final String serviceType;
+
+  /// The specific service name selected by the customer (e.g. 'Faucet/Bidet Install').
+  /// Used for exact matching against professional_services join table.
+  final String? serviceTitle;
+
   final String? description;
   final double? priceEstimate;
   final BookingStatus status;
@@ -157,6 +162,7 @@ class BookingEntity extends Equatable {
     required this.customerId,
     required this.professionalId,
     required this.serviceType,
+    this.serviceTitle,
     this.description,
     this.priceEstimate,
     required this.status,

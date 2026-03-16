@@ -26,6 +26,11 @@ import 'package:fixify/data/models/models.dart';
 
 class RequestServiceResult {
   final String serviceType;
+
+  /// The specific service name the customer selected (e.g. 'Faucet/Bidet Install').
+  /// Stored as service_title on the booking for precise professional matching.
+  final String? serviceName;
+
   final String problemTitle;
   final String description;
   final String address;
@@ -39,11 +44,11 @@ class RequestServiceResult {
   final List<ProfessionalModel> matchedPros;
 
   /// Customer's preferred service date/time.
-  /// Replaces the old hardcoded DateTime.now().add(days:1) in main.dart.
   final DateTime preferredDate;
 
   const RequestServiceResult({
     required this.serviceType,
+    this.serviceName,
     required this.problemTitle,
     required this.description,
     required this.address,
@@ -767,6 +772,7 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     setState(() => _submitting = true);
     await widget.onSubmit?.call(RequestServiceResult(
       serviceType: _serviceType!,
+      serviceName: _problemTitle?.trim(),
       problemTitle: _problemTitle?.trim() ?? '',
       description: _descCtrl.text.trim(),
       address: _fullAddress,

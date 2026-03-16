@@ -18,6 +18,7 @@ class AdminDashboardScreen extends StatefulWidget {
   final VoidCallback? onAnalytics;
   final VoidCallback? onUserManagement;
   final VoidCallback? onBookingOverview;
+  final VoidCallback? onManageCatalogue;
   final Function(int)? onNavTap;
   final int currentNavIndex;
 
@@ -33,6 +34,7 @@ class AdminDashboardScreen extends StatefulWidget {
     this.onAnalytics,
     this.onUserManagement,
     this.onBookingOverview,
+    this.onManageCatalogue,
     this.onNavTap,
     this.currentNavIndex = 0,
   });
@@ -133,6 +135,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   subtitle: 'View and manage all platform bookings',
                   onTap: widget.onBookingOverview,
                   delay: 410,
+                ),
+                const SizedBox(height: 12),
+                _menuCard(
+                  icon: Icons.home_repair_service_rounded,
+                  iconColor: const Color(0xFF34C759),
+                  title: 'Service Catalogue',
+                  subtitle: 'Seed and manage platform service offers',
+                  onTap: widget.onManageCatalogue,
+                  delay: 460,
                 ),
               ]),
             ),

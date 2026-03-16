@@ -106,6 +106,8 @@ import 'package:fixify/presentation/screens/admin/profile_admin.dart';
 import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
 import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
 import 'package:fixify/presentation/screens/admin/admin_booking_overview_screen.dart';
+import 'package:fixify/presentation/screens/admin/admin_catalogue_screen.dart';
+import 'package:fixify/presentation/screens/professional/my_services_screen.dart';
 import 'package:fixify/presentation/screens/professional/propose_service_screen.dart';
 import 'package:fixify/presentation/screens/customer/privacy_policy_screen.dart';
 
@@ -394,6 +396,9 @@ class _MainAppState extends State<MainApp> {
 
   /// All platform bookings — loaded for the admin flow only.
   List<BookingModel> _adminBookings = [];
+
+  /// IDs of service_proposals this professional has selected to offer.
+  Set<String> _myServiceIds = {};
 
   // MODEL — per-professional skip persistence key.
   // Scoped to the professional's ID so that different handymen on the same
@@ -880,6 +885,7 @@ class _MainAppState extends State<MainApp> {
             _applications = await _appDs.getMyApplications(_pro!.id);
             _proposals = await _proposalDs.getMyProposals(_pro!.id);
             _reviews = await _ds.getProfessionalReviews(_pro!.id);
+            _myServiceIds = await _ds.getMyProfessionalServices(_pro!.id);
 
             _openRequestsChannel = _ds.subscribeToOpenBookingRequests(
               skills: _pro!.skills,
@@ -1339,7 +1345,6 @@ class _MainAppState extends State<MainApp> {
         onLoadCompletionPhotos: (bookingId) =>
             _ds.getCompletionPhotos(bookingId),
         onBack: () async {
-          // Refresh admin bookings when returning so the list is up to date
           try {
             final fresh = await _ds.getAllBookings();
             if (mounted)
@@ -1357,6 +1362,96 @@ class _MainAppState extends State<MainApp> {
             if (mounted) setState(() => _adminBookings = fresh);
           } catch (e) {
             debugPrint('[Admin] Refresh bookings error: $e');
+          }
+        },
+      );
+    }
+
+    if (_screen == 'admin_catalogue') {
+      // Explicit cast ensures callbacks receive ServiceProposalModel not Object?
+      final pending = _proposals
+          .where((p) => p.status == 'pending')
+          .cast<ServiceProposalModel>()
+          .toList();
+      return AdminCatalogueScreen(
+        services: _serviceOffers,
+        pendingProposals: pending,
+        onBack: () async {
+          // Refresh both service offers and proposals on return
+          try {
+            final offers = await _ds.getServiceOffers();
+            final proposals = await _proposalDs.getAllProposals();
+            if (mounted)
+              setState(() {
+                _serviceOffers = offers;
+                _proposals = proposals;
+                _screen = 'home';
+              });
+          } catch (_) {
+            setState(() => _screen = 'home');
+          }
+        },
+        onRefresh: () async {
+          try {
+            final offers = await _ds.getServiceOffers();
+            final proposals = await _proposalDs.getAllProposals();
+            if (mounted)
+              setState(() {
+                _serviceOffers = offers;
+                _proposals = proposals;
+              });
+          } catch (e) {
+            debugPrint('[Admin] Catalogue refresh error: $e');
+          }
+        },
+        onCreateService: (data) async {
+          try {
+            final result = await _ds.adminSeedService(
+              serviceName: data.serviceName,
+              serviceType: data.serviceType,
+              description: data.description,
+              includes: data.includes,
+              priceRange: data.priceRange,
+              duration: data.duration,
+              tips: data.tips,
+              imageUrl: data.imageUrl,
+            );
+            final updated = await _ds.getServiceOffers();
+            if (mounted) {
+              setState(() => _serviceOffers = updated);
+              _notify('"${result.serviceName}" added to the catalogue ✅');
+            }
+          } catch (e) {
+            debugPrint('[Admin] createService error: $e');
+            _notify('Failed to create service: $e');
+          }
+        },
+        onDeleteService: (id) async {
+          await _ds.adminDeleteService(id);
+          final updated = await _ds.getServiceOffers();
+          if (mounted) {
+            setState(() => _serviceOffers = updated);
+            _notify('Service deleted.');
+          }
+        },
+        onApproveProposal: (ServiceProposalModel prop) async {
+          await _proposalDs.approveProposal(prop);
+          final offers = await _ds.getServiceOffers();
+          final proposals = await _proposalDs.getAllProposals();
+          if (mounted) {
+            setState(() {
+              _serviceOffers = offers;
+              _proposals = proposals;
+            });
+            _notify('"${prop.serviceName}" approved and now live ✅');
+          }
+        },
+        onRejectProposal: (ServiceProposalModel prop, String? note) async {
+          await _proposalDs.rejectProposal(prop, note: note);
+          final proposals = await _proposalDs.getAllProposals();
+          if (mounted) {
+            setState(() => _proposals = proposals);
+            _notify('Proposal rejected.');
           }
         },
       );
@@ -1383,7 +1478,6 @@ class _MainAppState extends State<MainApp> {
       onHandymanApprovals: () => setState(() => _navIndex = 1),
       onAnalytics: () => setState(() => _navIndex = 2),
       onBookingOverview: () async {
-        // Load/refresh admin bookings before navigating
         try {
           final fresh = await _ds.getAllBookings();
           if (mounted)
@@ -1393,6 +1487,18 @@ class _MainAppState extends State<MainApp> {
             });
         } catch (e) {
           _notify('Could not load bookings: $e');
+        }
+      },
+      onManageCatalogue: () async {
+        try {
+          final fresh = await _ds.getServiceOffers();
+          if (mounted)
+            setState(() {
+              _serviceOffers = fresh;
+              _screen = 'admin_catalogue';
+            });
+        } catch (e) {
+          _notify('Could not load catalogue: $e');
         }
       },
     );
@@ -1405,6 +1511,10 @@ class _MainAppState extends State<MainApp> {
   Widget _professionalFlow() {
     final u = _user!.toEntity();
     final proEntity = _pro?.toEntity();
+    // proId is defined here so all screen cases (apply, my_services,
+    // propose_service, verification_status) can reference it without
+    // redeclaring inside each if block.
+    final proId = _pro?.id;
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
     final openRequestEntities = _openRequests
         .where((r) => !_skippedRequestIds.contains(r.id))
@@ -1533,7 +1643,6 @@ class _MainAppState extends State<MainApp> {
     }
 
     if (_screen == 'apply') {
-      final proId = _pro?.id;
       if (proId == null) {
         return Scaffold(
           backgroundColor: AppColors.backgroundLight,
@@ -1614,8 +1723,35 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
+    if (_screen == 'my_services') {
+      if (proId == null) return _home();
+      final skillType =
+          _pro?.skills.isNotEmpty == true ? _pro!.skills.first : 'Professional';
+      return FutureBuilder<List<ServiceOfferModel>>(
+        future: _ds.getServiceOffersByType(skillType),
+        builder: (context, snap) {
+          final available = snap.data ?? [];
+          return MyServicesScreen(
+            availableServices: available,
+            selectedIds: _myServiceIds,
+            skillType: skillType,
+            onBack: () => setState(() => _screen = 'home'),
+            onToggleService: (serviceOfferId, selected) async {
+              await _ds.toggleProfessionalService(
+                professionalId: proId,
+                serviceOfferId: serviceOfferId,
+                selected: selected,
+              );
+              final updated = await _ds.getMyProfessionalServices(proId);
+              if (mounted) setState(() => _myServiceIds = updated);
+            },
+            onProposeNew: () => setState(() => _screen = 'propose_service'),
+          );
+        },
+      );
+    }
+
     if (_screen == 'propose_service') {
-      final proId = _pro?.id;
       if (proId == null) return _home();
       // Find existing proposal if this is a resubmission.
       final existing =
@@ -1901,6 +2037,7 @@ class _MainAppState extends State<MainApp> {
       onViewReviews: () => setState(() => _screen = 'reviews'),
       onApplyCredentials: () => setState(() => _screen = 'apply'),
       onViewVerification: () => setState(() => _screen = 'verification_status'),
+      onManageServices: () => setState(() => _screen = 'my_services'),
       onToggleAvailability: (isAvailable) async {
         if (_pro == null) return;
         try {
@@ -2263,18 +2400,14 @@ class _MainAppState extends State<MainApp> {
                 customerId: _user!.id,
                 professionalId: isDirectBooking ? _selectedPro!.id : null,
                 serviceType: result.serviceType,
+                serviceTitle: result.serviceName,
                 scheduledDate: result.preferredDate,
-                // Issue title + customer's description stored here — shown as
-                // "Issue Details" on the handyman's ProBookingDetailScreen.
                 description: issueDescription.isEmpty ? null : issueDescription,
-                // Customer's optional P.S. notes only — no price info mixed in.
                 notes: customerNotes,
                 address: result.address,
                 priceEstimate: lowestPrice ?? parsedMinFromRange,
                 latitude: result.latitude,
                 longitude: result.longitude,
-                // Forward the customer's chosen photo so it is uploaded to
-                // Supabase Storage and its public URL saved in bookings.photo_url.
                 photoPath: result.photoPath,
               );
 
