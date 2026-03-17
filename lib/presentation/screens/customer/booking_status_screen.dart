@@ -226,15 +226,18 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       case BookingStatus.scheduled:
         return 'Job Scheduled';
       case BookingStatus.pendingArrivalConfirmation:
-        return 'Handyman Arrived!';
+        return 'Handyman Arrived';
       case BookingStatus.assessment:
         return 'Assessment In Progress';
       case BookingStatus.inProgress:
         return 'In Progress';
       case BookingStatus.pendingCustomerConfirmation:
-        return 'Job Done — Confirm?';
+        return 'Confirm Completion';
       case BookingStatus.completed:
-        return 'Completed';
+        return booking.warrantyExpiresAt != null &&
+                DateTime.now().isBefore(booking.warrantyExpiresAt!)
+            ? 'Completed — Covered'
+            : 'Completed';
       case BookingStatus.cancelled:
         return 'Cancelled';
     }
@@ -242,33 +245,67 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
 
   String get _statusMessage {
     // ── Backjob / warranty override for pending state ─────────────────────
-    // When a warranty claim is pending, the booking is already assigned to
+    // When a warranty claim is pending the booking is already assigned to
     // the original handyman — it is NOT an open broadcast. Show a specific
     // message so the customer knows their claim was received and directed
     // to the right person rather than the generic "finding a handyman" copy.
     if (booking.isBackjob && booking.status == BookingStatus.pending) {
-      return 'Your warranty claim has been sent directly to your original handyman. '
-          'They will review it and confirm the schedule shortly — usually within 24 hours.';
+      return 'Your warranty claim has been sent directly to your original '
+          'handyman. They will review it and confirm the schedule — '
+          'usually within 24 hours.';
     }
+
+    // ── Completed state — warranty-aware loyalty message ─────────────────
+    // When the job is done and the service carried a warranty, tell the
+    // customer their work is covered and how to claim it. This is the
+    // key retention moment: before they leave the app, they should know
+    // there is still value here if the issue returns.
+    if (booking.status == BookingStatus.completed) {
+      if (booking.warrantyExpiresAt != null &&
+          DateTime.now().isBefore(booking.warrantyExpiresAt!)) {
+        final days =
+            booking.warrantyExpiresAt!.difference(DateTime.now()).inDays;
+        final periodLabel = days >= 30
+            ? '${(days / 30).floor()} month${(days / 30).floor() == 1 ? '' : 's'}'
+            : '$days day${days == 1 ? '' : 's'}';
+        return 'Your service is complete and covered by AYO\'s guarantee '
+            'for another $periodLabel. If the same issue returns, tap '
+            '"File a Backjob" below — your handyman will come back at '
+            'no extra charge.';
+      }
+      return 'Your service is complete. Book through AYO again anytime '
+          'to keep a full record of your home services and stay covered '
+          'by our guarantee.';
+    }
+
     switch (booking.status) {
       case BookingStatus.pending:
-        return 'We\'re matching you with an available handyman. This usually takes just a few minutes.';
+        return 'We\'re matching you with an available handyman. '
+            'This usually takes just a few minutes.';
       case BookingStatus.accepted:
-        return 'A handyman has accepted your request and confirmed your preferred schedule.';
+        return 'A handyman has accepted your request and confirmed '
+            'your preferred schedule.';
       case BookingStatus.scheduleProposed:
-        return 'Your handyman has requested a reschedule. Please review the new proposed time below.';
+        return 'Your handyman has requested a reschedule. Please '
+            'review the new proposed time below.';
       case BookingStatus.scheduled:
-        return 'Your handyman is on the way. You\'ll be notified when they arrive.';
+        return 'Your handyman is on the way. '
+            'You\'ll be notified when they arrive.';
       case BookingStatus.pendingArrivalConfirmation:
-        return 'Your handyman has arrived! Please confirm their arrival below so they can begin the assessment.';
+        return 'Your handyman has arrived. Please confirm their arrival '
+            'below so they can begin the assessment.';
       case BookingStatus.assessment:
-        return 'Your handyman is assessing the job and will send you a price shortly.';
+        return 'Your handyman is assessing the job and will send '
+            'you a price shortly.';
       case BookingStatus.inProgress:
         return 'Your handyman is currently working on the job.';
       case BookingStatus.pendingCustomerConfirmation:
-        return 'Your handyman has marked the job as done. Please confirm below once you\'re satisfied with the work.';
+        return 'Your handyman has marked the job as done. Please '
+            'confirm below once you\'re satisfied with the work.';
       case BookingStatus.completed:
-        return 'Your job has been completed. Thank you for using Fixify!';
+        // Handled by the early-return block above. This case is
+        // unreachable but required for exhaustive switch coverage.
+        return 'Your service is complete.';
       case BookingStatus.cancelled:
         return 'This booking has been cancelled.';
     }
@@ -318,17 +355,28 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildStatusCard()
-                        .animate()
-                        .fadeIn(delay: 80.ms)
-                        .slideY(begin: 0.06, end: 0),
-                    const SizedBox(height: 16),
-
-                    _buildTimeline()
-                        .animate()
-                        .fadeIn(delay: 150.ms)
-                        .slideY(begin: 0.06, end: 0),
-                    const SizedBox(height: 16),
+                    // ── For completed bookings use a service record card
+                    // instead of the status card + timeline combination.
+                    // The timeline is a progress tracker — irrelevant once
+                    // the job is done. The record card reads like a document.
+                    if (booking.status == BookingStatus.completed) ...[
+                      _buildServiceRecordCard()
+                          .animate()
+                          .fadeIn(delay: 80.ms)
+                          .slideY(begin: 0.06, end: 0),
+                      const SizedBox(height: 16),
+                    ] else ...[
+                      _buildStatusCard()
+                          .animate()
+                          .fadeIn(delay: 80.ms)
+                          .slideY(begin: 0.06, end: 0),
+                      const SizedBox(height: 16),
+                      _buildTimeline()
+                          .animate()
+                          .fadeIn(delay: 150.ms)
+                          .slideY(begin: 0.06, end: 0),
+                      const SizedBox(height: 16),
+                    ],
 
                     // ── Handyman Info Card ───────────────────────────────
                     // Shown from 'accepted' onwards whenever a professional
@@ -550,13 +598,21 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Booking Status',
-                          style: TextStyle(
+                      // Completed bookings are surfaced as service records,
+                      // not status trackers — the title reflects that shift.
+                      Text(
+                          booking.status == BookingStatus.completed
+                              ? 'Service Record'
+                              : 'Booking Status',
+                          style: const TextStyle(
                               color: Colors.white,
                               fontSize: 20,
                               fontWeight: FontWeight.w800,
                               letterSpacing: -0.3)),
-                      Text(booking.serviceType,
+                      Text(
+                          booking.serviceTitle?.isNotEmpty == true
+                              ? booking.serviceTitle!
+                              : booking.serviceType,
                           style: TextStyle(
                               color: Colors.white.withOpacity(0.6),
                               fontSize: 13)),
@@ -579,6 +635,204 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
           ),
         ),
       );
+
+  // ── VIEW — Service Record Card (completed bookings only) ─────────────────
+  // Replaces the status card + timeline for completed bookings.
+  // Reads like a document header: what was done, when, by whom, at what cost,
+  // and whether the AYO Guarantee is still active.
+
+  Widget _buildServiceRecordCard() {
+    final serviceTitle = booking.serviceTitle?.isNotEmpty == true
+        ? booking.serviceTitle!
+        : booking.serviceType;
+    final proName = booking.professional?.name;
+    final hasPrice = booking.assessmentPrice != null;
+    final isWarrantied = booking.warrantyExpiresAt != null;
+    final isCovered = booking.isUnderWarranty;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isCovered
+              ? const Color(0xFF30B0C7).withOpacity(0.25)
+              : const Color(0xFF34C759).withOpacity(0.25),
+        ),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Record header ──────────────────────────────────────────────
+        Row(children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: const Color(0xFF34C759).withOpacity(0.10),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.check_circle_rounded,
+                color: Color(0xFF34C759), size: 26),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(serviceTitle,
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textDark,
+                      letterSpacing: -0.2)),
+              const SizedBox(height: 2),
+              if (booking.serviceTitle?.isNotEmpty == true &&
+                  booking.serviceTitle != booking.serviceType)
+                Text(booking.serviceType,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.primary)),
+            ]),
+          ),
+          // Guarantee pill — prominent only when still active
+          if (isWarrantied)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: isCovered
+                    ? const Color(0xFF30B0C7).withOpacity(0.10)
+                    : const Color(0xFFEEEEEE),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: isCovered
+                      ? const Color(0xFF30B0C7).withOpacity(0.35)
+                      : const Color(0xFFDDDDDD),
+                ),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.verified_user_rounded,
+                    size: 11,
+                    color: isCovered
+                        ? const Color(0xFF1D8A9E)
+                        : AppColors.textLight),
+                const SizedBox(width: 4),
+                Text(
+                  isCovered ? 'Covered' : 'Expired',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: isCovered
+                          ? const Color(0xFF1D8A9E)
+                          : AppColors.textLight),
+                ),
+              ]),
+            ),
+        ]),
+
+        const SizedBox(height: 18),
+        const Divider(height: 1, color: Color(0xFFF0F0F0)),
+        const SizedBox(height: 16),
+
+        // ── Record data rows ───────────────────────────────────────────
+        if (proName != null && proName.isNotEmpty)
+          _recordRow(Icons.person_outline_rounded, 'Handyman', proName),
+        const SizedBox(height: 12),
+        _recordRow(
+          Icons.calendar_today_outlined,
+          'Completed on',
+          _formatRecordDate(booking.scheduledDate),
+        ),
+        if (hasPrice) ...[
+          const SizedBox(height: 12),
+          _recordRow(
+            Icons.payments_outlined,
+            'Amount Paid',
+            '₱${booking.assessmentPrice!.toStringAsFixed(0)}',
+            valueStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary),
+          ),
+        ],
+        if (booking.address != null && booking.address!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _recordRow(Icons.location_on_outlined, 'Location', booking.address!),
+        ],
+
+        // ── Guarantee row — key loyalty data point ─────────────────────
+        if (isWarrantied) ...[
+          const SizedBox(height: 12),
+          _recordRow(
+            Icons.verified_user_outlined,
+            'AYO Guarantee',
+            isCovered
+                ? 'Active until ${_formatRecordDate(booking.warrantyExpiresAt!)}'
+                : 'Expired ${_formatRecordDate(booking.warrantyExpiresAt!)}',
+            valueStyle: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color:
+                    isCovered ? const Color(0xFF1D8A9E) : AppColors.textLight),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  // ── Record row helper — icon · label · value (right-aligned) ─────────────
+  Widget _recordRow(
+    IconData icon,
+    String label,
+    String value, {
+    TextStyle? valueStyle,
+  }) =>
+      Row(children: [
+        Icon(icon, size: 15, color: AppColors.textLight),
+        const SizedBox(width: 10),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.textLight,
+                fontWeight: FontWeight.w500)),
+        const Spacer(),
+        Flexible(
+          child: Text(value,
+              style: valueStyle ??
+                  const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textDark),
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis),
+        ),
+      ]);
+
+  // Formats a DateTime as "Sep 14, 2025"
+  String _formatRecordDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    final l = dt.toLocal();
+    return '${months[l.month - 1]} ${l.day}, ${l.year}';
+  }
 
   // ── VIEW — Status Card ─────────────────────────────────────────────────────
 
@@ -676,7 +930,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                   const Icon(Icons.verified_user_rounded,
                       size: 12, color: Color(0xFF1D8A9E)),
                   const SizedBox(width: 5),
-                  const Text('Warranty Claim — Covered at No Charge',
+                  const Text('AYO Guarantee — No Extra Charge',
                       style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -814,8 +1068,11 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
           ],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Booking Details',
-              style: TextStyle(
+          Text(
+              booking.status == BookingStatus.completed
+                  ? 'Additional Notes'
+                  : 'Booking Details',
+              style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
                   color: AppColors.textDark)),
@@ -2156,7 +2413,7 @@ class _BookAgainCTA extends StatelessWidget {
                       fontWeight: FontWeight.w800)),
               SizedBox(height: 3),
               Text(
-                'Request the same professional for a new job.',
+                'Request the same handyman for a new job.',
                 style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ]),
@@ -2226,14 +2483,14 @@ class _BackjobCTA extends StatelessWidget {
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('File a Backjob',
+              const Text('Request a Backjob',
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 15,
                       fontWeight: FontWeight.w800)),
               const SizedBox(height: 3),
               Text(
-                'Same issue? File a warranty claim. ${_expiryLabel()}.',
+                'Same issue? Your AYO guarantee covers it. ${_expiryLabel()}.',
                 style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ]),
@@ -2305,7 +2562,7 @@ class _ReviewCTA extends StatelessWidget {
                       fontWeight: FontWeight.w800)),
               SizedBox(height: 3),
               Text(
-                'How was your experience? Let others know!',
+                'How was your experience? Your review helps others find trusted handymen.',
                 style: TextStyle(color: Colors.white, fontSize: 12),
               ),
             ]),

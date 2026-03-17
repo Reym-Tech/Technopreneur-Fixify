@@ -133,7 +133,7 @@ class FixifyApp extends StatelessWidget {
   const FixifyApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-      title: 'Fixify',
+      title: 'AYO',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       home: const AppNavigator());
@@ -574,7 +574,7 @@ class _MainAppState extends State<MainApp> {
           targetUserId: proUserId,
           role: 'professional',
           type: NotificationTypeStrings.bookingAccepted,
-          title: 'Schedule Confirmed!',
+          title: 'Schedule Confirmed',
           message:
               '${_user?.name ?? 'The customer'} has confirmed your proposed schedule.',
           referenceId: updated.id,
@@ -632,7 +632,7 @@ class _MainAppState extends State<MainApp> {
         targetUserId: updated.customerId,
         role: 'customer',
         type: NotificationTypeStrings.bookingAccepted,
-        title: 'Booking Confirmed!',
+        title: 'Booking Confirmed',
         message:
             '${_pro?.name ?? 'Your handyman'} has confirmed your ${updated.serviceType} booking for your preferred time.',
         referenceId: updated.id,
@@ -656,7 +656,7 @@ class _MainAppState extends State<MainApp> {
         targetUserId: updated.customerId,
         role: 'customer',
         type: NotificationTypeStrings.bookingAccepted,
-        title: 'Your Handyman Has Arrived!',
+        title: 'Your Handyman Has Arrived',
         message:
             '${_pro?.name ?? 'Your handyman'} is at your location. Please confirm their arrival in the app.',
         referenceId: updated.id,
@@ -679,14 +679,14 @@ class _MainAppState extends State<MainApp> {
         _selectedBooking = updated;
         _screen = 'booking_status';
       });
-      _notify('Arrival confirmed! Your handyman will now assess the job. 🔧');
+      _notify('Arrival confirmed. Your handyman will now assess the job.');
       final proUserId = updated.professional?.userId;
       if (proUserId != null) {
         await _notifDs.pushToUser(
           targetUserId: proUserId,
           role: 'professional',
           type: NotificationTypeStrings.bookingAccepted,
-          title: 'Arrival Confirmed!',
+          title: 'Arrival Confirmed',
           message:
               '${_user?.name ?? 'The customer'} confirmed your arrival. You can now set the assessment price.',
           referenceId: updated.id,
@@ -816,7 +816,7 @@ class _MainAppState extends State<MainApp> {
         _selectedBooking = updated;
         _screen = 'booking_status';
       });
-      _notify('Job confirmed as complete! Thank you. ✅');
+      _notify('Job confirmed as complete. Thank you for using AYO.');
       // Model: notify the professional.
       final proUserId = updated.professional?.userId;
       if (proUserId != null) {
@@ -824,9 +824,9 @@ class _MainAppState extends State<MainApp> {
           targetUserId: proUserId,
           role: 'professional',
           type: NotificationTypeStrings.bookingAccepted,
-          title: 'Job Confirmed Complete!',
+          title: 'Job Confirmed Complete',
           message:
-              '${_user?.name ?? 'The customer'} has confirmed your job is done. Great work!',
+              '${_user?.name ?? 'The customer'} has confirmed your job is done.',
           referenceId: updated.id,
           referenceType: 'booking',
         );
@@ -881,7 +881,7 @@ class _MainAppState extends State<MainApp> {
             targetUserId: proUserId,
             role: 'professional',
             type: NotificationTypeStrings.bookingRequest,
-            title: '🛡️ Warranty Claim — Action Required',
+            title: 'Warranty Claim — Action Required',
             message:
                 '${_user?.name ?? 'A customer'} has filed a warranty claim '
                 'for "${data.serviceTitle}". This is covered under your '
@@ -905,7 +905,7 @@ class _MainAppState extends State<MainApp> {
       // Snackbar gives the customer a clear expectation: handyman will
       // confirm within 24 hours — matches the notification message above.
       _notify(
-          'Warranty claim submitted! Your handyman will confirm within 24 hours. 🛡️');
+          'Warranty claim submitted. Your handyman will confirm within 24 hours.');
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1035,7 +1035,7 @@ class _MainAppState extends State<MainApp> {
                     !_skippedRequestIds.contains(newRequest.id)) {
                   setState(
                       () => _openRequests = [newRequest, ..._openRequests]);
-                  _notify('New booking request!');
+                  _notify('New booking request.');
                 }
               },
             );
@@ -1063,7 +1063,7 @@ class _MainAppState extends State<MainApp> {
                 setState(() => _applications =
                     _applications.map((x) => x.id == a.id ? a : x).toList());
                 if (a.status == 'approved')
-                  _notify('Your ${a.serviceType} application was approved!');
+                  _notify('Your ${a.serviceType} application was approved.');
                 if (a.status == 'rejected')
                   _notify('Your ${a.serviceType} application was reviewed.');
                 _ds
@@ -1080,7 +1080,7 @@ class _MainAppState extends State<MainApp> {
                     _proposals.map((x) => x.id == p.id ? p : x).toList());
                 if (p.status == 'approved')
                   _notify(
-                      '"${p.serviceName}" proposal was approved and is now live!');
+                      '"${p.serviceName}" proposal was approved and is now live.');
                 if (p.status == 'rejected')
                   _notify('"${p.serviceName}" proposal was reviewed.');
               },
@@ -1115,7 +1115,7 @@ class _MainAppState extends State<MainApp> {
                         '[MyServices] Could not apply approved change: $e');
                   }
                   _notify(r.action == 'select'
-                      ? '"${r.serviceName ?? 'Service'}" has been added to your profile ✅'
+                      ? '"${r.serviceName ?? 'Service'}" has been added to your profile.'
                       : '"${r.serviceName ?? 'Service'}" has been removed from your profile.');
                 } else if (r.status == 'rejected') {
                   if (mounted) {
@@ -1510,7 +1510,7 @@ class _MainAppState extends State<MainApp> {
             _applications = await _appDs.getAllApplications();
             _professionals = await _ds.getProfessionals();
             setState(() {});
-            _notify('${app.applicantName} approved for ${app.serviceType}!');
+            _notify('${app.applicantName} approved for ${app.serviceType}.');
           } catch (e) {
             _notify('Error: $e');
           }
@@ -1538,7 +1538,7 @@ class _MainAppState extends State<MainApp> {
             }
             _proposals = await _proposalDs.getAllProposals();
             setState(() {});
-            _notify('"${prop.serviceName}" is now live in Service Offers!');
+            _notify('"${prop.serviceName}" is now live in Service Offers.');
           } catch (e) {
             _notify('Error: $e');
           }
@@ -1571,7 +1571,7 @@ class _MainAppState extends State<MainApp> {
                 role: 'professional',
                 type: NotificationTypeStrings.bookingAccepted,
                 title: req.action == 'select'
-                    ? 'Service Request Approved ✅'
+                    ? 'Service Request Approved'
                     : 'Service Removal Approved',
                 message: req.action == 'select'
                     ? '"${req.serviceName ?? 'Service'}" has been added to your profile.'
@@ -1583,7 +1583,7 @@ class _MainAppState extends State<MainApp> {
             _serviceSelectionRequests = await _selectionDs.getAllRequests();
             setState(() {});
             _notify(req.action == 'select'
-                ? '"${req.serviceName ?? 'Service'}" approved and added to handyman profile ✅'
+                ? '"${req.serviceName ?? 'Service'}" approved and added to handyman profile.'
                 : '"${req.serviceName ?? 'Service'}" removal approved.');
           } catch (e) {
             _notify('Error approving service request: $e');
@@ -1662,7 +1662,7 @@ class _MainAppState extends State<MainApp> {
             _applications = await _appDs.getAllApplications();
             _professionals = await _ds.getProfessionals();
             setState(() {});
-            _notify('${app.applicantName} approved for ${app.serviceType}!');
+            _notify('${app.applicantName} approved for ${app.serviceType}.');
           } catch (e) {
             _notify('Error: $e');
           }
@@ -1763,7 +1763,7 @@ class _MainAppState extends State<MainApp> {
             final updated = await _ds.getServiceOffers();
             if (mounted) {
               setState(() => _serviceOffers = updated);
-              _notify('"${result.serviceName}" added to the catalogue ✅');
+              _notify('"${result.serviceName}" added to the catalogue.');
             }
           } catch (e) {
             debugPrint('[Admin] createService error: $e');
@@ -1795,7 +1795,7 @@ class _MainAppState extends State<MainApp> {
               _serviceOffers = offers;
               _proposals = proposals;
             });
-            _notify('"${prop.serviceName}" approved and now live ✅');
+            _notify('"${prop.serviceName}" approved and now live.');
           }
         },
         onRejectProposal: (ServiceProposalModel prop, String? note) async {
@@ -1908,7 +1908,7 @@ class _MainAppState extends State<MainApp> {
             if (mounted) {
               setState(() => _selectedProBooking = updated.toEntity());
             }
-            _notify('Job marked as done! Waiting for customer confirmation. ✅');
+            _notify('Job marked as done. Waiting for customer confirmation.');
           } catch (e) {
             _notify('Error updating status: $e');
             rethrow;
@@ -1939,7 +1939,7 @@ class _MainAppState extends State<MainApp> {
             if (mounted) {
               setState(() => _selectedProBooking = updated.toEntity());
             }
-            _notify('Proof uploaded! Waiting for customer confirmation. ✅');
+            _notify('Proof uploaded. Waiting for customer confirmation.');
           } catch (e) {
             _notify('Failed to upload proof: $e');
             rethrow;
@@ -2188,7 +2188,8 @@ class _MainAppState extends State<MainApp> {
                 _screen = 'home';
               });
             }
-            _notify('Proposal submitted! We\'ll review it within 24–48 hours.');
+            _notify(
+                'Proposal submitted. We will review it within 24–48 hours.');
           } catch (e) {
             if (mounted)
               ScaffoldMessenger.of(context).showSnackBar(
@@ -2283,7 +2284,7 @@ class _MainAppState extends State<MainApp> {
               }
             } catch (e) {
               debugPrint('Could not compute/send ETA: $e');
-              _notify('Booking accepted! Customer has been notified. ✅');
+              _notify('Booking accepted. Customer has been notified.');
             }
           } on BookingAlreadyClaimedException catch (e) {
             setState(
@@ -3018,7 +3019,7 @@ class _MainAppState extends State<MainApp> {
                 _selectedBooking = updated;
                 _screen = 'booking_status';
               });
-              _notify('Service started! Your handyman is on the way. 🔧');
+              _notify('Service started. Your handyman is on the way.');
             } catch (e) {
               _notify('Error: $e');
             }
@@ -3268,7 +3269,7 @@ class _MainAppState extends State<MainApp> {
         _reviewedBookingIds.add(_selectedBooking!.id);
         _screen = 'booking_status';
       });
-      _notify('Review submitted! Thank you. ⭐');
+      _notify('Review submitted. Thank you.');
       try {
         final updated = await _ds.getProfessionals();
         if (mounted) setState(() => _professionals = updated);

@@ -83,16 +83,16 @@ class ServiceDetailScreen extends StatelessWidget {
   });
 
   // ── WARRANTY LABEL HELPER ─────────────────────────────────────────────────
-  // Converts raw days to a human-readable label displayed in the chip.
-  // Whole months are shown as months (30 → "1-Month", 90 → "3-Month").
-  // Partial-month values are shown as days (45 → "45-Day").
+  // Converts raw days to a human-readable guarantee label displayed in the
+  // chip and info box. Uses "Guarantee" language instead of "Warranty" to
+  // frame it as a proactive benefit rather than a reactive safety net.
   String _warrantyLabel() {
     if (warrantyDays <= 0) return '';
     if (warrantyDays % 30 == 0) {
       final months = warrantyDays ~/ 30;
-      return '$months-Month Warranty';
+      return '$months-Month Guarantee';
     }
-    return '$warrantyDays-Day Warranty';
+    return '$warrantyDays-Day Guarantee';
   }
 
   @override
@@ -293,8 +293,9 @@ class ServiceDetailScreen extends StatelessWidget {
         ]).animate().fadeIn(delay: (150 + index * 50).ms).slideX(begin: 0.05),
       );
 
-  /// Info box shown when the service carries a warranty.
-  /// Explains what the Backjob feature means to the customer in plain language.
+  /// Info box shown when the service carries a guarantee.
+  /// Uses loyalty framing — positions the guarantee as a benefit of
+  /// booking through AYO, not just a fallback for when things go wrong.
   Widget _warrantyBox() => Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -318,7 +319,7 @@ class ServiceDetailScreen extends StatelessWidget {
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(
-                '${_warrantyLabel()} Included',
+                '${_warrantyLabel()} — Only with AYO',
                 style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -326,9 +327,10 @@ class ServiceDetailScreen extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'If the same issue reoccurs within the warranty period, '
-                'you can file a Backjob request free of charge. '
-                'The original handyman will be notified to return and fix it.',
+                'When you book through AYO, your service is guaranteed. '
+                'If the same issue returns within the guarantee period, '
+                'your handyman comes back at no extra charge. '
+                'This protection only applies to bookings made through the app.',
                 style: const TextStyle(
                     fontSize: 12, color: AppColors.textMedium, height: 1.5),
               ),

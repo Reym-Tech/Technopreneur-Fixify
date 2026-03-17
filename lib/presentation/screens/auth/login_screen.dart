@@ -195,6 +195,11 @@ class _LoginScreenState extends State<LoginScreen> {
       body: LoadingOverlay(
         isLoading: _isLoading,
         child: Container(
+          // Ensure the background fills the viewport so the screen
+          // renders as full-height rather than collapsing to content.
+          constraints: BoxConstraints(
+            minHeight: MediaQuery.of(context).size.height,
+          ),
           decoration: const BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
@@ -202,12 +207,14 @@ class _LoginScreenState extends State<LoginScreen> {
               colors: [Color(0xFFE8F2EE), Color(0xFFF5F5F3)],
             ),
           ),
-          child: SafeArea(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  // ── Header ─────────────────────────────────────────────
-                  Container(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Header ─────────────────────────────────────────────
+                SafeArea(
+                  bottom: false,
+                  child: Container(
                     height: 260,
                     decoration: const BoxDecoration(
                       gradient: LinearGradient(
@@ -299,158 +306,153 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                     ),
                   ),
+                ),
 
-                  // ── Form card ──────────────────────────────────────────
-                  Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: GlassCard(
-                      padding: const EdgeInsets.all(24),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // General error banner
-                            if (_generalError != null) ...[
-                              _GeneralErrorBanner(
-                                message: _generalError!,
-                                actionLabel: _generalAction != null
-                                    ? _getActionLabel(_generalAction!)
-                                    : null,
-                                onAction: _generalAction != null
-                                    ? () =>
-                                        _handleGeneralAction(_generalAction!)
-                                    : null,
-                              ),
-                              const SizedBox(height: 16),
-                            ],
-
-                            // Email field
-                            _FieldWithError(
-                              errorText: _emailError,
-                              child: FixifyTextField(
-                                controller: _emailController,
-                                hint: 'Enter your email',
-                                label: 'Email Address',
-                                prefixIcon: Icons.email_outlined,
-                                keyboardType: TextInputType.emailAddress,
-                                validator: (v) {
-                                  if (v == null || v.isEmpty)
-                                    return 'Email is required';
-                                  if (!v.contains('@'))
-                                    return 'Enter a valid email';
-                                  return null;
-                                },
-                              ),
+                // ── Form card ──────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: GlassCard(
+                    padding: const EdgeInsets.all(24),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // General error banner
+                          if (_generalError != null) ...[
+                            _GeneralErrorBanner(
+                              message: _generalError!,
+                              actionLabel: _generalAction != null
+                                  ? _getActionLabel(_generalAction!)
+                                  : null,
+                              onAction: _generalAction != null
+                                  ? () => _handleGeneralAction(_generalAction!)
+                                  : null,
                             ),
-                            const SizedBox(height: 20),
-
-                            // Password field
-                            _FieldWithError(
-                              errorText: _passwordError,
-                              child: FixifyTextField(
-                                controller: _passwordController,
-                                hint: 'Enter your password',
-                                label: 'Password',
-                                prefixIcon: Icons.lock_outline_rounded,
-                                obscureText: _obscurePassword,
-                                suffix: IconButton(
-                                  icon: Icon(
-                                    _obscurePassword
-                                        ? Icons.visibility_outlined
-                                        : Icons.visibility_off_outlined,
-                                    color: AppColors.textLight,
-                                    size: 20,
-                                  ),
-                                  onPressed: () => setState(() =>
-                                      _obscurePassword = !_obscurePassword),
-                                ),
-                                validator: (v) {
-                                  if (v == null || v.isEmpty)
-                                    return 'Password is required';
-                                  if (v.length < 6)
-                                    return 'At least 6 characters';
-                                  return null;
-                                },
-                              ),
-                            ),
-
-                            const SizedBox(height: 12),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: TextButton(
-                                onPressed: () {},
-                                child: const Text(
-                                  'Forgot Password?',
-                                  style: TextStyle(
-                                    color: AppColors.primary,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            ElevatedButton(
-                              onPressed: _handleLogin,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.primary,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                minimumSize: const Size(double.infinity, 56),
-                              ),
-                              child: const Text(
-                                'Sign In',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                            _buildDivider(),
-                            const SizedBox(height: 24),
-                            _buildSocialLogin(),
-                            const SizedBox(height: 12),
-                            _buildGuestButton(),
+                            const SizedBox(height: 16),
                           ],
-                        ),
-                      ),
-                    )
-                        .animate()
-                        .fadeIn(delay: 200.ms)
-                        .slideY(begin: 0.1, end: 0),
-                  ),
 
-                  // ── Register link ──────────────────────────────────────
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text(
-                          "Don't have an account? ",
-                          style: TextStyle(color: AppColors.textMedium),
-                        ),
-                        GestureDetector(
-                          onTap: widget.onNavigateToRegister,
-                          child: const Text(
-                            'Sign Up',
-                            style: TextStyle(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w700,
+                          // Email field
+                          _FieldWithError(
+                            errorText: _emailError,
+                            child: FixifyTextField(
+                              controller: _emailController,
+                              hint: 'Enter your email',
+                              label: 'Email Address',
+                              prefixIcon: Icons.email_outlined,
+                              keyboardType: TextInputType.emailAddress,
+                              validator: (v) {
+                                if (v == null || v.isEmpty)
+                                  return 'Email is required';
+                                if (!v.contains('@'))
+                                  return 'Enter a valid email';
+                                return null;
+                              },
                             ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 20),
+
+                          // Password field
+                          _FieldWithError(
+                            errorText: _passwordError,
+                            child: FixifyTextField(
+                              controller: _passwordController,
+                              hint: 'Enter your password',
+                              label: 'Password',
+                              prefixIcon: Icons.lock_outline_rounded,
+                              obscureText: _obscurePassword,
+                              suffix: IconButton(
+                                icon: Icon(
+                                  _obscurePassword
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  color: AppColors.textLight,
+                                  size: 20,
+                                ),
+                                onPressed: () => setState(
+                                    () => _obscurePassword = !_obscurePassword),
+                              ),
+                              validator: (v) {
+                                if (v == null || v.isEmpty)
+                                  return 'Password is required';
+                                if (v.length < 6)
+                                  return 'At least 6 characters';
+                                return null;
+                              },
+                            ),
+                          ),
+
+                          const SizedBox(height: 12),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: () {},
+                              child: const Text(
+                                'Forgot Password?',
+                                style: TextStyle(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ElevatedButton(
+                            onPressed: _handleLogin,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              minimumSize: const Size(double.infinity, 56),
+                            ),
+                            child: const Text(
+                              'Sign In',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          _buildDivider(),
+                          const SizedBox(height: 24),
+                          _buildSocialLogin(),
+                          const SizedBox(height: 12),
+                          _buildGuestButton(),
+                        ],
+                      ),
                     ),
+                  ).animate().fadeIn(delay: 200.ms).slideY(begin: 0.1, end: 0),
+                ),
+
+                // ── Register link ──────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text(
+                        "Don't have an account? ",
+                        style: TextStyle(color: AppColors.textMedium),
+                      ),
+                      GestureDetector(
+                        onTap: widget.onNavigateToRegister,
+                        child: const Text(
+                          'Sign Up',
+                          style: TextStyle(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

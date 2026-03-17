@@ -168,7 +168,7 @@ class _CustomerBookingsScreenState extends State<CustomerBookingsScreen>
                       _statChip(
                           Icons.check_circle_rounded,
                           '${widget.bookings.where((b) => b.status == BookingStatus.completed).length}',
-                          'Done',
+                          'Records',
                           const Color(0xFF34C759)),
                     ]),
                   ]),
@@ -337,14 +337,330 @@ class _BookingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isCompleted = booking.status == BookingStatus.completed;
+
+    // Completed cards use a richer service-record layout.
+    // All other statuses keep the original compact card layout.
+    return isCompleted ? _buildCompletedCard() : _buildActiveCard();
+  }
+
+  // ── Completed booking — service record card ───────────────────────────────
+  // Shows the specific service performed, handyman, date, final price, and
+  // warranty status. Reads like a document entry, not a status tracker.
+  Widget _buildCompletedCard() {
+    final showBackjob = booking.isUnderWarranty && onBackjob != null;
+    final icon = _serviceIcon(booking.serviceType);
+    final serviceTitle = booking.serviceTitle?.isNotEmpty == true
+        ? booking.serviceTitle!
+        : booking.serviceType;
+    final hasPrice = booking.assessmentPrice != null;
+    final proName = booking.professional?.name;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: showBackjob
+              ? Border.all(
+                  color: const Color(0xFF30B0C7).withOpacity(0.3), width: 1.5)
+              : null,
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4))
+          ],
+        ),
+        child: Column(children: [
+          // ── Record header ─────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Service icon — uses a soft green tint for completed jobs
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF34C759).withOpacity(0.09),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: const Color(0xFF34C759), size: 24),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Specific service title — the key record identifier
+                      Text(serviceTitle,
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textDark)),
+                      // Service category below when title differs from type
+                      if (booking.serviceTitle?.isNotEmpty == true &&
+                          booking.serviceTitle != booking.serviceType) ...[
+                        const SizedBox(height: 2),
+                        Text(booking.serviceType,
+                            style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.primary)),
+                      ],
+                    ],
+                  ),
+                ),
+                // Completed badge + warranty indicator stacked vertically
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF34C759).withOpacity(0.10),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text('Completed',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF34C759))),
+                    ),
+                    if (showBackjob) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF30B0C7).withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color: const Color(0xFF30B0C7).withOpacity(0.35)),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.verified_user_rounded,
+                              size: 9, color: Color(0xFF30B0C7)),
+                          const SizedBox(width: 3),
+                          const Text('Covered',
+                              style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF30B0C7))),
+                        ]),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // ── Record detail rows ────────────────────────────────────────
+          // Minimal divider then compact key-value rows. Each row shows
+          // one data point the customer would reference as a service record.
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            child: Column(children: [
+              const Divider(height: 1, color: Color(0xFFF2F2F2)),
+              const SizedBox(height: 12),
+              // Handyman row
+              if (proName != null && proName.isNotEmpty)
+                _recordRow(
+                  Icons.person_outline_rounded,
+                  'Handyman',
+                  proName,
+                ),
+              // Date row — formatted as a record date, not "scheduled date"
+              _recordRow(
+                Icons.calendar_today_outlined,
+                'Date',
+                _formatRecordDate(booking.scheduledDate),
+                topPad: proName != null ? 8 : 0,
+              ),
+              // Final price — most important data point for a record
+              if (hasPrice)
+                _recordRow(
+                  Icons.payments_outlined,
+                  'Amount Paid',
+                  '₱${booking.assessmentPrice!.toStringAsFixed(0)}',
+                  topPad: 8,
+                  valueStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary),
+                ),
+              // Warranty expiry — surfaces the coverage end date at a glance
+              if (booking.warrantyExpiresAt != null) ...[
+                const SizedBox(height: 8),
+                _recordRow(
+                  Icons.verified_user_outlined,
+                  'Guarantee',
+                  booking.isUnderWarranty
+                      ? 'Active until ${_formatRecordDate(booking.warrantyExpiresAt!)}'
+                      : 'Expired ${_formatRecordDate(booking.warrantyExpiresAt!)}',
+                  valueStyle: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: booking.isUnderWarranty
+                          ? const Color(0xFF1D8A9E)
+                          : AppColors.textLight),
+                ),
+              ],
+            ]),
+          ),
+
+          // ── Tap hint footer ───────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F8F8),
+              borderRadius: BorderRadius.vertical(
+                bottom: showBackjob ? Radius.zero : const Radius.circular(20),
+              ),
+            ),
+            child: Row(children: [
+              const Icon(Icons.open_in_new_rounded,
+                  size: 12, color: AppColors.textLight),
+              const SizedBox(width: 6),
+              const Text('View full record',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textLight,
+                      fontWeight: FontWeight.w500)),
+              const Spacer(),
+              if (booking.address != null && booking.address!.isNotEmpty) ...[
+                const Icon(Icons.location_on_outlined,
+                    size: 12, color: AppColors.textLight),
+                const SizedBox(width: 3),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 160),
+                  child: Text(booking.address!,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppColors.textLight),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ),
+              ],
+            ]),
+          ),
+
+          // ── AYO Guarantee action row ───────────────────────────────────
+          if (showBackjob)
+            GestureDetector(
+              onTap: onBackjob,
+              child: Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF0A2E3F), Color(0xFF1D8A9E)],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                  borderRadius:
+                      BorderRadius.vertical(bottom: Radius.circular(18)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.verified_user_rounded,
+                      size: 14, color: Colors.white),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('Request a Backjob',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white)),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('FREE',
+                        style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                            letterSpacing: 0.4)),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.arrow_forward_ios_rounded,
+                      size: 11, color: Colors.white70),
+                ]),
+              ),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  // ── Compact record detail row helper ─────────────────────────────────────
+  Widget _recordRow(
+    IconData icon,
+    String label,
+    String value, {
+    double topPad = 0,
+    TextStyle? valueStyle,
+  }) =>
+      Padding(
+        padding: EdgeInsets.only(top: topPad),
+        child: Row(children: [
+          Icon(icon, size: 13, color: AppColors.textLight),
+          const SizedBox(width: 8),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textLight,
+                  fontWeight: FontWeight.w500)),
+          const Spacer(),
+          Flexible(
+            child: Text(value,
+                style: valueStyle ??
+                    const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textDark),
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+        ]),
+      );
+
+  // Formats a DateTime as a clean record date string, e.g. "Sep 14, 2025"
+  String _formatRecordDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    final l = dt.toLocal();
+    return '${months[l.month - 1]} ${l.day}, ${l.year}';
+  }
+
+  // ── Active booking — original compact card layout (unchanged) ─────────────
+  Widget _buildActiveCard() {
     final color = _statusColor(booking.status);
     final label = _statusLabel(booking.status);
     final icon = _serviceIcon(booking.serviceType);
-
-    // Show Backjob button only for completed, in-warranty bookings.
-    final showBackjob = booking.status == BookingStatus.completed &&
-        booking.isUnderWarranty &&
-        onBackjob != null;
 
     return GestureDetector(
       onTap: onTap,
@@ -365,7 +681,6 @@ class _BookingCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Row(children: [
-              // Service icon
               Container(
                 width: 48,
                 height: 48,
@@ -390,59 +705,27 @@ class _BookingCard extends StatelessWidget {
                         style: const TextStyle(
                             fontSize: 12, color: AppColors.textLight)),
                   ])),
-              // Status badge — shows WARRANTY chip for completed in-warranty
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: color.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(label,
-                        style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: color)),
-                  ),
-                  // Warranty badge — shown below the status badge
-                  if (showBackjob) ...[
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF30B0C7).withOpacity(0.10),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: const Color(0xFF30B0C7).withOpacity(0.35)),
-                      ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.verified_user_rounded,
-                            size: 9, color: Color(0xFF30B0C7)),
-                        const SizedBox(width: 3),
-                        const Text('Warranty',
-                            style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF30B0C7))),
-                      ]),
-                    ),
-                  ],
-                ],
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(label,
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: color)),
               ),
             ]),
           ),
-          // Divider + footer
+          // Footer
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8F8F8),
-              borderRadius: BorderRadius.vertical(
-                bottom: showBackjob ? Radius.zero : const Radius.circular(20),
-              ),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF8F8F8),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
             ),
             child: Row(children: [
               const Icon(Icons.calendar_today_outlined,
@@ -472,56 +755,6 @@ class _BookingCard extends StatelessWidget {
                   size: 18, color: AppColors.textLight),
             ]),
           ),
-
-          // ── Backjob action row ──────────────────────────────────────────
-          // Rendered only for completed, in-warranty bookings.
-          if (showBackjob)
-            GestureDetector(
-              onTap: onBackjob,
-              child: Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF0A2E3F), Color(0xFF1D8A9E)],
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                  ),
-                  borderRadius:
-                      BorderRadius.vertical(bottom: Radius.circular(20)),
-                ),
-                child: Row(children: [
-                  const Icon(Icons.verified_user_rounded,
-                      size: 15, color: Colors.white),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text('File a Backjob (Warranty Claim)',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white)),
-                  ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.18),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Text('FREE',
-                        style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                            letterSpacing: 0.4)),
-                  ),
-                  const SizedBox(width: 6),
-                  const Icon(Icons.arrow_forward_ios_rounded,
-                      size: 12, color: Colors.white70),
-                ]),
-              ),
-            ),
         ]),
       ),
     );

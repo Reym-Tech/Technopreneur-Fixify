@@ -10,8 +10,8 @@
 // still within its warranty period.
 //
 // The screen shows:
-//   1. A summary card of the original booking (service, date, pro name).
-//   2. A warranty status banner with expiry date.
+//   1. A warranty status banner with expiry date.
+//   2. A summary card of the original booking (service, date, pro name).
 //   3. An issue description text field.
 //   4. A preferred date picker.
 //   5. A "Submit Backjob Request" button.
@@ -20,6 +20,11 @@
 //   booking         → BookingEntity    — the completed booking being claimed
 //   onSubmit        → Function(BackjobSubmitData) — fires on tap of submit btn
 //   onBack          → VoidCallback?
+//
+// DESIGN: Minimalist — dark green gradient header matches BookingStatusScreen
+// and CustomerBookingsScreen. White cards on #F2F2F7 background. Teal accent
+// used only for warranty-specific elements so it reads as a semantic signal,
+// not a full-screen theme. Consistent with the rest of the AYO customer flow.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -70,16 +75,20 @@ class _BackjobScreenState extends State<BackjobScreen> {
 
   BookingEntity get _b => widget.booking;
 
+  // Teal used exclusively for warranty-related accents throughout the screen.
+  static const _teal = Color(0xFF30B0C7);
+  static const _tealDark = Color(0xFF1D8A9E);
+  static const _tealBg = Color(0xFFE8F8FB);
+
   @override
   void dispose() {
     _descCtrl.dispose();
     super.dispose();
   }
 
-  // ── WARRANTY LABEL ────────────────────────────────────────────────────────
+  // ── WARRANTY HELPERS ──────────────────────────────────────────────────────
 
-  /// Returns a human-readable remaining-warranty string.
-  /// Safe when warrantyExpiresAt is null — returns a generic active label.
+  /// Human-readable remaining warranty time. Null-safe.
   String _warrantyLabel() {
     final exp = _b.warrantyExpiresAt;
     if (exp == null) return 'Warranty active';
@@ -92,9 +101,7 @@ class _BackjobScreenState extends State<BackjobScreen> {
     return '$months month${months > 1 ? 's' : ''} remaining';
   }
 
-  /// Formats the warranty expiry date for display.
-  /// Returns 'Unknown' safely when warrantyExpiresAt is null, which happens
-  /// on old completed bookings that pre-date the warranty system.
+  /// Formatted expiry date. Returns 'Unknown' safely when null.
   String _warrantyExpiry() {
     final exp = _b.warrantyExpiresAt;
     if (exp == null) return 'Unknown';
@@ -112,7 +119,7 @@ class _BackjobScreenState extends State<BackjobScreen> {
       lastDate: today.add(const Duration(days: 60)),
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
-          colorScheme: ColorScheme.light(
+          colorScheme: const ColorScheme.light(
             primary: AppColors.primary,
             onPrimary: Colors.white,
             surface: Colors.white,
@@ -134,9 +141,7 @@ class _BackjobScreenState extends State<BackjobScreen> {
       _snack('Please describe the issue you are experiencing.');
       return;
     }
-
     final serviceTitle = _b.serviceTitle ?? _b.serviceType;
-
     setState(() => _submitting = true);
     try {
       await widget.onSubmit?.call(BackjobSubmitData(
@@ -172,87 +177,50 @@ class _BackjobScreenState extends State<BackjobScreen> {
         if (!didPop) widget.onBack?.call();
       },
       child: Scaffold(
-        backgroundColor: AppColors.backgroundLight,
+        backgroundColor: const Color(0xFFF2F2F7),
         body: Column(children: [
           _buildHeader(),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // ── Warranty status banner ──────────────────────────────
-                    _buildWarrantyBanner()
-                        .animate()
-                        .fadeIn(delay: 80.ms)
-                        .slideY(begin: 0.06, end: 0),
-                    const SizedBox(height: 16),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ── Warranty status banner ──────────────────────────────
+                  _buildWarrantyBanner()
+                      .animate()
+                      .fadeIn(delay: 60.ms)
+                      .slideY(begin: 0.05, end: 0),
+                  const SizedBox(height: 14),
 
-                    // ── Original booking summary ────────────────────────────
-                    _buildOriginalBookingCard()
-                        .animate()
-                        .fadeIn(delay: 130.ms)
-                        .slideY(begin: 0.06, end: 0),
-                    const SizedBox(height: 24),
+                  // ── Original booking card ───────────────────────────────
+                  _buildOriginalBookingCard()
+                      .animate()
+                      .fadeIn(delay: 110.ms)
+                      .slideY(begin: 0.05, end: 0),
+                  const SizedBox(height: 14),
 
-                    // ── Issue description ───────────────────────────────────
-                    _sectionLabel('Describe the Issue *'),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Explain what problem has reoccurred since the original service.',
-                      style:
-                          TextStyle(fontSize: 12, color: AppColors.textLight),
-                    ),
-                    const SizedBox(height: 10),
-                    TextFormField(
-                      controller: _descCtrl,
-                      maxLines: 4,
-                      style: const TextStyle(
-                          fontSize: 14, color: AppColors.textDark),
-                      decoration: InputDecoration(
-                        hintText:
-                            'e.g. The drain is clogged again after 2 weeks...',
-                        hintStyle: const TextStyle(
-                            fontSize: 13, color: AppColors.textLight),
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.all(14),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide:
-                              const BorderSide(color: Color(0xFFDDDDDD)),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide:
-                              const BorderSide(color: Color(0xFFDDDDDD)),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                              color: AppColors.primary, width: 1.5),
-                        ),
-                      ),
-                    ).animate().fadeIn(delay: 180.ms),
-                    const SizedBox(height: 24),
+                  // ── Issue description card ──────────────────────────────
+                  _buildDescriptionCard()
+                      .animate()
+                      .fadeIn(delay: 160.ms)
+                      .slideY(begin: 0.05, end: 0),
+                  const SizedBox(height: 14),
 
-                    // ── Preferred date ──────────────────────────────────────
-                    _sectionLabel('Preferred Service Date *'),
-                    const SizedBox(height: 10),
-                    _buildDatePicker()
-                        .animate()
-                        .fadeIn(delay: 220.ms)
-                        .slideY(begin: 0.06, end: 0),
-                    const SizedBox(height: 32),
+                  // ── Preferred date card ─────────────────────────────────
+                  _buildDateCard()
+                      .animate()
+                      .fadeIn(delay: 210.ms)
+                      .slideY(begin: 0.05, end: 0),
+                  const SizedBox(height: 14),
 
-                    // ── What happens next info box ──────────────────────────
-                    _buildInfoBox()
-                        .animate()
-                        .fadeIn(delay: 260.ms)
-                        .slideY(begin: 0.06, end: 0),
+                  // ── What happens next ───────────────────────────────────
+                  _buildInfoBox().animate().fadeIn(delay: 250.ms),
 
-                    const SizedBox(height: 40),
-                  ]),
+                  // Space for the pinned submit button
+                  const SizedBox(height: 100),
+                ],
+              ),
             ),
           ),
         ]),
@@ -261,21 +229,23 @@ class _BackjobScreenState extends State<BackjobScreen> {
     );
   }
 
-  // ── Header ────────────────────────────────────────────────────────────────
+  // ── HEADER ────────────────────────────────────────────────────────────────
+  // Same dark green gradient as BookingStatusScreen and CustomerBookingsScreen
+  // so navigating into this screen feels continuous, not jarring.
 
   Widget _buildHeader() => Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF0A2E3F), Color(0xFF1D8A9E), Color(0xFF30B0C7)],
+            colors: [Color(0xFF082218), Color(0xFF0F3D2E), Color(0xFF1A5C43)],
           ),
           borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
         ),
         child: SafeArea(
           bottom: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
             child: Row(children: [
               GestureDetector(
                 onTap: widget.onBack,
@@ -283,7 +253,7 @@ class _BackjobScreenState extends State<BackjobScreen> {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
+                    color: Colors.white.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(Icons.arrow_back_ios_new_rounded,
@@ -293,33 +263,34 @@ class _BackjobScreenState extends State<BackjobScreen> {
               const SizedBox(width: 14),
               const Expanded(
                 child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Backjob Request',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.3)),
-                      Text('Warranty claim',
-                          style:
-                              TextStyle(color: Colors.white60, fontSize: 13)),
-                    ]),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Request a Backjob',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3)),
+                    Text('AYO Guarantee claim',
+                        style: TextStyle(color: Colors.white54, fontSize: 13)),
+                  ],
+                ),
               ),
+              // Teal badge — signals warranty context without overusing the colour
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
+                  color: _teal.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _teal.withOpacity(0.5)),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.verified_user_rounded,
-                      color: Colors.white, size: 14),
+                  Icon(Icons.verified_user_rounded, color: _teal, size: 13),
                   const SizedBox(width: 5),
-                  const Text('Under Warranty',
+                  Text('Under Warranty',
                       style: TextStyle(
-                          color: Colors.white,
+                          color: _teal,
                           fontSize: 11,
                           fontWeight: FontWeight.w700)),
                 ]),
@@ -329,201 +300,249 @@ class _BackjobScreenState extends State<BackjobScreen> {
         ),
       );
 
-  // ── Warranty status banner ─────────────────────────────────────────────────
+  // ── WARRANTY BANNER ───────────────────────────────────────────────────────
+  // The only teal-tinted card — its colour immediately signals warranty
+  // status without competing with the white booking/form cards below.
 
-  Widget _buildWarrantyBanner() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF30B0C7).withOpacity(0.08),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF30B0C7).withOpacity(0.3)),
-      ),
-      child: Row(children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: const Color(0xFF30B0C7).withOpacity(0.12),
-            borderRadius: BorderRadius.circular(13),
-          ),
-          child: const Icon(Icons.verified_user_rounded,
-              color: Color(0xFF30B0C7), size: 24),
+  Widget _buildWarrantyBanner() => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _tealBg,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _teal.withOpacity(0.3), width: 1.5),
         ),
-        const SizedBox(width: 14),
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Warranty Active',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF1D8A9E))),
-            const SizedBox(height: 2),
-            Text(
-              '${_warrantyLabel()}  •  Expires ${_warrantyExpiry()}',
-              style: const TextStyle(
-                  fontSize: 12, color: AppColors.textMedium, height: 1.4),
+        child: Row(children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: _teal.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(13),
             ),
-          ]),
-        ),
-      ]),
-    );
-  }
+            child:
+                Icon(Icons.verified_user_rounded, color: _tealDark, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Warranty Active',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: _tealDark)),
+                const SizedBox(height: 2),
+                Text(
+                  '${_warrantyLabel()}  •  Expires ${_warrantyExpiry()}',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: _tealDark.withOpacity(0.75),
+                      height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        ]),
+      );
 
-  // ── Original booking summary card ─────────────────────────────────────────
+  // ── ORIGINAL BOOKING CARD ─────────────────────────────────────────────────
 
   Widget _buildOriginalBookingCard() {
     final proName = _b.professional?.name ?? 'Your Handyman';
     final serviceTitle = _b.serviceTitle ?? _b.serviceType;
-    final completedDate =
+    final scheduledStr =
         DateFormat('MMMM d, yyyy').format(_b.scheduledDate.toLocal());
 
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFEEEEEE)),
         boxShadow: [
           BoxShadow(
               color: Colors.black.withOpacity(0.05),
               blurRadius: 12,
-              offset: const Offset(0, 4))
+              offset: const Offset(0, 3))
         ],
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Section label
-        Row(children: [
-          const Icon(Icons.history_rounded,
-              size: 15, color: AppColors.textLight),
-          const SizedBox(width: 6),
-          const Text('Original Booking',
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textLight,
-                  letterSpacing: 0.2)),
-        ]),
-        const SizedBox(height: 12),
-        // Service name
-        Text(serviceTitle,
-            style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                color: AppColors.textDark,
-                letterSpacing: -0.2)),
-        const SizedBox(height: 8),
-        // Type chip + completed badge
-        Row(children: [
-          _miniChip(_b.serviceType, AppColors.primary),
-          const SizedBox(width: 8),
-          _miniChip('Completed', const Color(0xFF34C759)),
-        ]),
-        const SizedBox(height: 12),
-        const Divider(height: 1, color: Color(0xFFF0F0F0)),
-        const SizedBox(height: 12),
-        // Details row — person + date always side by side
-        Row(children: [
-          _detailPill(Icons.person_rounded, proName),
-          const SizedBox(width: 12),
-          _detailPill(Icons.calendar_today_rounded, completedDate),
-        ]),
-        // Address — full width row beneath when present
-        if (_b.address != null && _b.address!.isNotEmpty) ...[
-          const SizedBox(height: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Label
           Row(children: [
-            _detailPill(Icons.location_on_rounded, _b.address!),
+            const Icon(Icons.history_rounded,
+                size: 13, color: AppColors.textLight),
+            const SizedBox(width: 6),
+            const Text('ORIGINAL BOOKING',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textLight,
+                    letterSpacing: 0.5)),
           ]),
+          const SizedBox(height: 12),
+
+          // Service title
+          Text(serviceTitle,
+              style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textDark,
+                  letterSpacing: -0.2)),
+          const SizedBox(height: 10),
+
+          // Type + status chips
+          Row(children: [
+            _chip(_b.serviceType, AppColors.primary,
+                AppColors.primary.withOpacity(0.09)),
+            const SizedBox(width: 8),
+            _chip('Completed', const Color(0xFF1A7A35),
+                const Color(0xFF34C759).withOpacity(0.10)),
+          ]),
+          const SizedBox(height: 14),
+
+          const Divider(height: 1, color: Color(0xFFF0F0F0)),
+          const SizedBox(height: 14),
+
+          // Detail rows — each wrapped in Row so Flexible is always valid
+          _detailRow(Icons.person_rounded, proName),
+          const SizedBox(height: 8),
+          _detailRow(Icons.calendar_today_rounded, scheduledStr),
+          if (_b.address != null && _b.address!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _detailRow(Icons.location_on_rounded, _b.address!),
+          ],
         ],
-      ]),
+      ),
     );
   }
 
-  Widget _miniChip(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+  // ── DESCRIPTION CARD ──────────────────────────────────────────────────────
+
+  Widget _buildDescriptionCard() => Container(
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFEEEEEE)),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 12,
+                offset: const Offset(0, 3))
+          ],
         ),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w700, color: color)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: const [
+              Text('Describe the Issue',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textDark)),
+              SizedBox(width: 4),
+              Text('*',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFFFF3B30))),
+            ]),
+            const SizedBox(height: 4),
+            const Text(
+              'Explain what problem has reoccurred since the original service.',
+              style: TextStyle(fontSize: 12, color: AppColors.textLight),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _descCtrl,
+              maxLines: 4,
+              style: const TextStyle(fontSize: 14, color: AppColors.textDark),
+              decoration: InputDecoration(
+                hintText: 'e.g. The drain is clogged again after 2 weeks...',
+                hintStyle:
+                    const TextStyle(fontSize: 13, color: AppColors.textLight),
+                filled: true,
+                fillColor: const Color(0xFFF8F8F8),
+                contentPadding: const EdgeInsets.all(14),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: Color(0xFFE5E5E5)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: Color(0xFFE5E5E5)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide:
+                      const BorderSide(color: AppColors.primary, width: 1.5),
+                ),
+              ),
+            ),
+          ],
+        ),
       );
 
-  // _detailPill uses Flexible which requires a Row parent.
-  // Always call this inside a Row — never as a bare Column child.
-  Widget _detailPill(IconData icon, String text) => Flexible(
-        child: Row(children: [
-          Icon(icon, size: 13, color: AppColors.textLight),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(text,
-                style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textMedium,
-                    fontWeight: FontWeight.w500),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
-          ),
-        ]),
-      );
+  // ── DATE CARD ─────────────────────────────────────────────────────────────
 
-  // ── Date picker widget ────────────────────────────────────────────────────
-
-  Widget _buildDatePicker() => GestureDetector(
+  Widget _buildDateCard() => GestureDetector(
         onTap: _pickDate,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.primary.withOpacity(0.35)),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+                color: AppColors.primary.withOpacity(0.25), width: 1.5),
             boxShadow: [
               BoxShadow(
                   color: AppColors.primary.withOpacity(0.07),
-                  blurRadius: 8,
+                  blurRadius: 10,
                   offset: const Offset(0, 3))
             ],
           ),
           child: Row(children: [
             Container(
-              width: 40,
-              height: 40,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: AppColors.primary.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(11),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: const Icon(Icons.calendar_month_rounded,
-                  color: AppColors.primary, size: 20),
+                  color: AppColors.primary, size: 22),
             ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Preferred Date',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textLight,
-                            fontWeight: FontWeight.w500)),
-                    const SizedBox(height: 2),
-                    Text(
-                      DateFormat('EEEE, MMMM d, yyyy').format(_preferredDate),
-                      style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textDark),
-                    ),
-                  ]),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Preferred Date',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textLight,
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 2),
+                  Text(
+                    DateFormat('EEEE, MMMM d, yyyy').format(_preferredDate),
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textDark),
+                  ),
+                ],
+              ),
             ),
             const Icon(Icons.edit_calendar_rounded,
-                size: 18, color: AppColors.primary),
+                size: 18, color: AppColors.textLight),
           ]),
         ),
       );
 
-  // ── Info box ──────────────────────────────────────────────────────────────
+  // ── INFO BOX ──────────────────────────────────────────────────────────────
 
   Widget _buildInfoBox() => Container(
         padding: const EdgeInsets.all(16),
@@ -531,47 +550,55 @@ class _BackjobScreenState extends State<BackjobScreen> {
           color: const Color(0xFFF0F4F2),
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('ℹ️', style: TextStyle(fontSize: 16)),
-          const SizedBox(width: 10),
-          const Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('What happens next?',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textDark)),
-              SizedBox(height: 4),
-              Text(
-                'Your backjob request will be sent to the original handyman as a new booking. '
-                'They will review your issue and confirm the schedule. '
-                'This service is covered under your warranty at no extra charge.',
-                style: TextStyle(
-                    fontSize: 12, color: AppColors.textMedium, height: 1.5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(9),
               ),
-            ]),
-          ),
-        ]),
+              child: const Icon(Icons.info_outline_rounded,
+                  size: 15, color: AppColors.primary),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('What happens next?',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textDark)),
+                  SizedBox(height: 5),
+                  Text(
+                    'Your request will be sent directly to your original handyman. '
+                    'They will confirm the schedule within 24 hours. '
+                    'This is covered by your AYO Guarantee at no extra charge.',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMedium,
+                        height: 1.55),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       );
 
-  // ── Section label ─────────────────────────────────────────────────────────
-
-  Widget _sectionLabel(String text) => Text(text,
-      style: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
-          color: AppColors.textDark));
-
-  // ── Submit button ─────────────────────────────────────────────────────────
+  // ── SUBMIT BUTTON ─────────────────────────────────────────────────────────
 
   Widget _buildSubmitButton() => Container(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: const Color(0xFFF2F2F7),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withOpacity(0.06),
               blurRadius: 16,
               offset: const Offset(0, -4),
             ),
@@ -580,16 +607,15 @@ class _BackjobScreenState extends State<BackjobScreen> {
         child: SafeArea(
           top: false,
           child: SizedBox(
-            height: 54,
+            height: 56,
             child: ElevatedButton(
               onPressed: _submitting ? null : _submit,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF30B0C7),
+                backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
-                disabledBackgroundColor:
-                    const Color(0xFF30B0C7).withOpacity(0.5),
+                disabledBackgroundColor: AppColors.primary.withOpacity(0.45),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
+                    borderRadius: BorderRadius.circular(18)),
                 elevation: 0,
               ),
               child: _submitting
@@ -604,7 +630,7 @@ class _BackjobScreenState extends State<BackjobScreen> {
                       children: [
                         Icon(Icons.verified_user_rounded, size: 20),
                         SizedBox(width: 8),
-                        Text('Submit Backjob Request',
+                        Text('Submit Backjob',
                             style: TextStyle(
                                 fontSize: 15, fontWeight: FontWeight.w700)),
                       ],
@@ -613,4 +639,34 @@ class _BackjobScreenState extends State<BackjobScreen> {
           ),
         ),
       );
+
+  // ── SHARED HELPERS ────────────────────────────────────────────────────────
+
+  /// Pill chip for service type / status labels.
+  Widget _chip(String label, Color textColor, Color bgColor) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.w700, color: textColor)),
+      );
+
+  /// Detail row — always wrapped in a Row so Flexible is always valid.
+  /// Never call this as a bare Column child.
+  Widget _detailRow(IconData icon, String text) => Row(children: [
+        Icon(icon, size: 13, color: AppColors.textLight),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(text,
+              style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMedium,
+                  fontWeight: FontWeight.w500),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis),
+        ),
+      ]);
 }
