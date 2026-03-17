@@ -62,6 +62,7 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
   late final TextEditingController _priceCtrl;
   late final TextEditingController _durationCtrl;
   late final TextEditingController _tipsCtrl;
+  late final TextEditingController _warrantyCtrl;
 
   // Includes — each item editable, add/remove rows
   late List<TextEditingController> _includeControllers;
@@ -84,6 +85,11 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
     _priceCtrl = TextEditingController(text: p?.priceRange ?? '');
     _durationCtrl = TextEditingController(text: p?.duration ?? '');
     _tipsCtrl = TextEditingController(text: p?.tips ?? '');
+    _warrantyCtrl = TextEditingController(
+      text: (p?.warrantyDays != null && p!.warrantyDays > 0)
+          ? '${p.warrantyDays}'
+          : '',
+    );
     _includeControllers = p != null && p.includes.isNotEmpty
         ? p.includes.map((s) => TextEditingController(text: s)).toList()
         : [TextEditingController()];
@@ -97,6 +103,7 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
     _priceCtrl.dispose();
     _durationCtrl.dispose();
     _tipsCtrl.dispose();
+    _warrantyCtrl.dispose();
     for (final c in _includeControllers) {
       c.dispose();
     }
@@ -169,6 +176,13 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
     // Normalize before sending so DB stores a consistent, peso-prefixed value.
     final normalizedPrice = _normalizePriceRange(_priceCtrl.text.trim());
 
+    // Parse warranty days — default 0 if blank or non-numeric.
+    final warrantyDays = int.tryParse(_warrantyCtrl.text.trim()) ?? 0;
+    if (warrantyDays > 90) {
+      _snack('Warranty period cannot exceed 90 days (3 months).');
+      return;
+    }
+
     setState(() => _submitting = true);
     await widget.onSubmit?.call(ProposeServiceFormData(
       serviceType: _serviceType!,
@@ -179,6 +193,7 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
       priceRange: normalizedPrice,
       duration: _durationCtrl.text.trim(),
       tips: _tipsCtrl.text.trim().isEmpty ? null : _tipsCtrl.text.trim(),
+      warrantyDays: warrantyDays < 0 ? 0 : warrantyDays,
     ));
     if (mounted) setState(() => _submitting = false);
   }
@@ -460,6 +475,22 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
                 icon: Icons.lightbulb_outline_rounded,
                 maxLines: 3,
               ).animate().fadeIn(delay: 240.ms),
+              const SizedBox(height: 24),
+
+              // ── Warranty period (optional) ──────────────────────────────
+              _sectionLabel('Warranty Period — optional'),
+              const Text(
+                'Number of days you guarantee the work. '
+                '0 or blank = no warranty. e.g. 90 = 3 months.',
+                style: TextStyle(fontSize: 12, color: AppColors.textLight),
+              ),
+              const SizedBox(height: 8),
+              _textField(
+                controller: _warrantyCtrl,
+                hint: 'e.g. 90',
+                icon: Icons.verified_user_rounded,
+                keyboardType: TextInputType.number,
+              ).animate().fadeIn(delay: 250.ms),
               const SizedBox(height: 32),
 
               // ── Submit ─────────────────────────────────────────────────
@@ -725,10 +756,12 @@ class _ProposeServiceScreenState extends State<ProposeServiceScreen> {
     required String hint,
     required IconData icon,
     int maxLines = 1,
+    TextInputType? keyboardType,
   }) =>
       TextField(
         controller: controller,
         maxLines: maxLines,
+        keyboardType: keyboardType,
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: const TextStyle(color: AppColors.textLight, fontSize: 13),

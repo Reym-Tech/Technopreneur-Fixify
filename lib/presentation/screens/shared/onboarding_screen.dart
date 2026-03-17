@@ -44,7 +44,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       accentColor: Color(0xFF5AC8FA),
       title: 'Book in\nMinutes',
       body: 'Describe your issue, set your preferred time, and a handyman '
-          'comes to you. No calls, no hassle.',
+          'comes to you. No hassle.',
     ),
     _SlideDef(
       icon: Icons.verified_rounded,

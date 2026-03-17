@@ -2,7 +2,7 @@
 //
 // ServiceDetailScreen — rich detail page for a specific service offer.
 // Shows: hero image, service name, description, what's included list,
-// estimated price range, typical duration, and a "Book Now" CTA.
+// estimated price range, typical duration, warranty period, and a "Book Now" CTA.
 //
 // Props:
 //   serviceName     → String
@@ -14,10 +14,19 @@
 //   includes        → List<String>  — what the service covers
 //   priceRange      → String        — e.g. '₱500 – ₱1,500'
 //   duration        → String        — e.g. '1–3 hours'
+//   warrantyDays    → int           — 0 = no warranty; >0 shows a warranty chip
 //   tips            → String?       — optional tip/note for the customer
 //   onBookNow       → Function(String serviceType, String serviceName)
 //                     ↑ passes BOTH so the request wizard can pre-fill
 //                       the Problem Title field with the specific service name.
+//
+// BACKJOB / WARRANTY UPDATE:
+//   • Added `warrantyDays` constructor parameter (default 0).
+//   • Warranty chip rendered in the quick-stats row when warrantyDays > 0.
+//     Uses a shield icon and a teal accent so it is visually distinct from
+//     the price and duration chips.
+//   • Helper _warrantyLabel() converts raw days into a human-readable string
+//     (e.g. 90 → "3-month warranty", 30 → "30-day warranty").
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -42,6 +51,12 @@ class ServiceDetailScreen extends StatelessWidget {
   final List<String> includes;
   final String priceRange;
   final String duration;
+
+  /// Warranty period in days sourced from service_proposals.warranty_days.
+  /// 0 means no warranty — the warranty chip is hidden.
+  /// >0 renders a chip in the quick-stats row (e.g. "3-month warranty").
+  final int warrantyDays;
+
   final String? tips;
 
   /// Called when the user taps "Book Now".
@@ -62,9 +77,23 @@ class ServiceDetailScreen extends StatelessWidget {
     required this.includes,
     required this.priceRange,
     required this.duration,
+    this.warrantyDays = 0,
     this.tips,
     this.onBookNow,
   });
+
+  // ── WARRANTY LABEL HELPER ─────────────────────────────────────────────────
+  // Converts raw days to a human-readable label displayed in the chip.
+  // Whole months are shown as months (30 → "1-Month", 90 → "3-Month").
+  // Partial-month values are shown as days (45 → "45-Day").
+  String _warrantyLabel() {
+    if (warrantyDays <= 0) return '';
+    if (warrantyDays % 30 == 0) {
+      final months = warrantyDays ~/ 30;
+      return '$months-Month Warranty';
+    }
+    return '$warrantyDays-Day Warranty';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -147,7 +176,7 @@ class ServiceDetailScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Quick stats row
+                  // Quick stats row: price · duration · warranty (if any)
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(children: [
@@ -156,6 +185,16 @@ class ServiceDetailScreen extends StatelessWidget {
                       const SizedBox(width: 12),
                       _statChip(
                           Icons.schedule_rounded, duration, AppColors.primary),
+                      // Warranty chip — only shown when warrantyDays > 0
+                      if (warrantyDays > 0) ...[
+                        const SizedBox(width: 12),
+                        _statChip(
+                          Icons.verified_user_rounded,
+                          _warrantyLabel(),
+                          const Color(
+                              0xFF30B0C7), // teal — distinct from others
+                        ),
+                      ],
                     ]),
                   ).animate().fadeIn(delay: 100.ms).slideY(begin: 0.1),
 
@@ -179,6 +218,13 @@ class ServiceDetailScreen extends StatelessWidget {
                       .asMap()
                       .entries
                       .map((e) => _includeItem(e.value, accentColor, e.key)),
+
+                  // Warranty info box — shown below "What's Included" when
+                  // warrantyDays > 0, giving customers context on coverage.
+                  if (warrantyDays > 0) ...[
+                    const SizedBox(height: 24),
+                    _warrantyBox(),
+                  ],
 
                   // Tips (optional)
                   if (tips != null) ...[
@@ -246,6 +292,50 @@ class ServiceDetailScreen extends StatelessWidget {
           ),
         ]).animate().fadeIn(delay: (150 + index * 50).ms).slideX(begin: 0.05),
       );
+
+  /// Info box shown when the service carries a warranty.
+  /// Explains what the Backjob feature means to the customer in plain language.
+  Widget _warrantyBox() => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF30B0C7).withOpacity(0.07),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFF30B0C7).withOpacity(0.3)),
+        ),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: const Color(0xFF30B0C7).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.verified_user_rounded,
+                color: Color(0xFF30B0C7), size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(
+                '${_warrantyLabel()} Included',
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF1D8A9E)),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'If the same issue reoccurs within the warranty period, '
+                'you can file a Backjob request free of charge. '
+                'The original handyman will be notified to return and fix it.',
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textMedium, height: 1.5),
+              ),
+            ]),
+          ),
+        ]),
+      ).animate().fadeIn(delay: 300.ms).slideY(begin: 0.05);
 
   Widget _tipBox(String tip, Color color) => Container(
         padding: const EdgeInsets.all(16),

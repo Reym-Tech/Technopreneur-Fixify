@@ -477,6 +477,32 @@ class _CatalogueRow extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 11, color: AppColors.textLight)),
               ],
+              // Warranty badge — only shown when warrantyDays > 0
+              if (service.warrantyDays > 0) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF30B0C7).withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                        color: const Color(0xFF30B0C7).withOpacity(0.35)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.verified_user_rounded,
+                        size: 9, color: Color(0xFF30B0C7)),
+                    const SizedBox(width: 3),
+                    Text(
+                      _warrantyLabel(service.warrantyDays),
+                      style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF30B0C7)),
+                    ),
+                  ]),
+                ),
+              ],
             ]),
           ]),
         ),
@@ -497,6 +523,15 @@ class _CatalogueRow extends StatelessWidget {
         child: const Icon(Icons.home_repair_service_rounded,
             color: AppColors.textLight, size: 24),
       );
+
+  static String _warrantyLabel(int days) {
+    if (days <= 0) return '';
+    if (days % 30 == 0) {
+      final m = days ~/ 30;
+      return '$m-mo warranty';
+    }
+    return '$days-day warranty';
+  }
 }
 
 // ── Proposal review card ──────────────────────────────────────────────────────
@@ -678,6 +713,10 @@ class ServiceFormData {
   final String? tips;
   final String? imageUrl;
 
+  /// Warranty period in days. 0 means no warranty is offered.
+  /// Written to service_proposals.warranty_days on create/update.
+  final int warrantyDays;
+
   const ServiceFormData({
     required this.serviceName,
     required this.serviceType,
@@ -687,6 +726,7 @@ class ServiceFormData {
     required this.duration,
     this.tips,
     this.imageUrl,
+    this.warrantyDays = 0,
   });
 }
 
@@ -708,6 +748,7 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
   final _durationCtrl = TextEditingController();
   final _tipsCtrl = TextEditingController();
   final _imageCtrl = TextEditingController();
+  final _warrantyCtrl = TextEditingController();
   String? _serviceType;
   bool _submitting = false;
 
@@ -728,7 +769,8 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
       _priceCtrl,
       _durationCtrl,
       _tipsCtrl,
-      _imageCtrl
+      _imageCtrl,
+      _warrantyCtrl,
     ]) {
       c.dispose();
     }
@@ -749,6 +791,10 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty)
           .toList();
+
+      // Parse warranty days — default 0 if blank or invalid.
+      final warrantyDays = int.tryParse(_warrantyCtrl.text.trim()) ?? 0;
+
       await widget.onSubmit(ServiceFormData(
         serviceName: _nameCtrl.text.trim(),
         serviceType: _serviceType!,
@@ -759,6 +805,7 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
         tips: _tipsCtrl.text.trim().isEmpty ? null : _tipsCtrl.text.trim(),
         imageUrl:
             _imageCtrl.text.trim().isEmpty ? null : _imageCtrl.text.trim(),
+        warrantyDays: warrantyDays < 0 ? 0 : warrantyDays,
       ));
     } catch (e) {
       if (mounted)
@@ -906,6 +953,20 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
                     _label('Image URL (optional)'),
                     const SizedBox(height: 8),
                     _field(_imageCtrl, hint: 'https://…supabase.co/storage/…'),
+                    const SizedBox(height: 14),
+                    _label('Warranty Period (days, optional)'),
+                    const SizedBox(height: 4),
+                    const Text(
+                      '0 or blank = no warranty. e.g. 90 = 3-month warranty.',
+                      style:
+                          TextStyle(fontSize: 11, color: AppColors.textLight),
+                    ),
+                    const SizedBox(height: 6),
+                    _field(
+                      _warrantyCtrl,
+                      hint: 'e.g. 90',
+                      keyboardType: TextInputType.number,
+                    ),
                     const SizedBox(height: 28),
                     SizedBox(
                       width: double.infinity,
@@ -949,11 +1010,13 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
     String? hint,
     int maxLines = 1,
     String? Function(String?)? validator,
+    TextInputType? keyboardType,
   }) =>
       TextFormField(
         controller: ctrl,
         maxLines: maxLines,
         validator: validator,
+        keyboardType: keyboardType,
         style: const TextStyle(fontSize: 13, color: AppColors.textDark),
         decoration: InputDecoration(
           hintText: hint,

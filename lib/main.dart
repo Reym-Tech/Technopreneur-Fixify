@@ -90,6 +90,7 @@ import 'package:fixify/presentation/screens/customer/professional_profile_screen
 import 'package:fixify/presentation/screens/customer/all_professionals_screen.dart';
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
 import 'package:fixify/presentation/screens/customer/review_screen.dart';
+import 'package:fixify/presentation/screens/customer/backjob_screen.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
 import 'package:fixify/presentation/screens/customer/assessment_screen.dart';
 import 'package:fixify/presentation/screens/professional/dashboard_professional.dart';
@@ -783,11 +784,31 @@ class _MainAppState extends State<MainApp> {
 
   /// Customer confirms that the professional has completed the job.
   /// Transitions status: pendingCustomerConfirmation → completed.
+  /// Also writes warranty_expires_at when the service has warrantyDays > 0.
   Future<void> _handleCustomerConfirmCompletion() async {
     if (_selectedBooking == null) return;
     try {
-      // Model: persist completion confirmation.
-      final updated = await _ds.customerConfirmCompletion(_selectedBooking!.id);
+      // Look up warrantyDays from the matching service offer so we can
+      // write warranty_expires_at to the bookings row on completion.
+      int warrantyDays = 0;
+      try {
+        final serviceTitle = _selectedBooking!.serviceTitle;
+        final serviceType = _selectedBooking!.serviceType;
+        if (serviceTitle != null && serviceTitle.isNotEmpty) {
+          final match = _serviceOffers.firstWhereOrNull((o) =>
+              o.serviceName.toLowerCase() == serviceTitle.toLowerCase() &&
+              o.serviceType.toLowerCase() == serviceType.toLowerCase());
+          warrantyDays = match?.warrantyDays ?? 0;
+        }
+      } catch (e) {
+        debugPrint('[Backjob] Could not look up warrantyDays: $e');
+      }
+
+      // Model: persist completion confirmation + warranty expiry.
+      final updated = await _ds.customerConfirmCompletion(
+        _selectedBooking!.id,
+        warrantyDays: warrantyDays,
+      );
       // Model: keep local list consistent.
       _updateBookingInList(updated);
       // View: reflect updated status.
@@ -812,6 +833,91 @@ class _MainAppState extends State<MainApp> {
       }
     } catch (e) {
       _notify('Failed to confirm completion: $e');
+    }
+  }
+
+  // ── BACKJOB / WARRANTY ────────────────────────────────────────────────────
+
+  /// Navigates to BackjobScreen for the currently selected completed booking.
+  /// Called from BookingStatusScreen.onBackjob and
+  /// CustomerBookingsScreen.onBackjob.
+  void _navigateToBackjob(BookingEntity booking) {
+    final model = _bookings.firstWhereOrNull((b) => b.id == booking.id);
+    if (model == null) return;
+    setState(() {
+      _selectedBooking = model;
+      _screen = 'backjob';
+    });
+  }
+
+  /// Controller: submits a warranty backjob booking via the datasource,
+  /// notifies the professional with a 24-hour confirmation request,
+  /// and navigates to the new booking's status screen.
+  Future<void> _handleBackjobSubmit(BackjobSubmitData data) async {
+    if (_user == null) return;
+    try {
+      final booking = await _ds.createBackjobBooking(
+        customerId: _user!.id,
+        originalBookingId: data.originalBookingId,
+        serviceType: data.serviceType,
+        serviceTitle: data.serviceTitle,
+        preferredDate: data.preferredDate,
+        address: _selectedBooking?.address ?? '',
+        description: data.description,
+        latitude: _selectedBooking?.latitude,
+        longitude: _selectedBooking?.longitude,
+      );
+
+      _subscribeToBooking(booking);
+      await _refreshBookings();
+
+      // Notify the professional with a priority warranty message.
+      // The message explicitly asks them to confirm within 24 hours so
+      // the customer has a clear expectation on response time (Option C).
+      final proUserId = booking.professional?.userId;
+      if (proUserId != null) {
+        try {
+          await _notifDs.pushToUser(
+            targetUserId: proUserId,
+            role: 'professional',
+            type: NotificationTypeStrings.bookingRequest,
+            title: '🛡️ Warranty Claim — Action Required',
+            message:
+                '${_user?.name ?? 'A customer'} has filed a warranty claim '
+                'for "${data.serviceTitle}". This is covered under your '
+                'previous job warranty. Please confirm within 24 hours.',
+            referenceId: booking.id,
+            referenceType: 'booking',
+          );
+        } catch (e) {
+          debugPrint('[Backjob] Could not notify professional: $e');
+        }
+      }
+
+      final created =
+          _bookings.firstWhereOrNull((b) => b.id == booking.id) ?? booking;
+      if (mounted) {
+        setState(() {
+          _selectedBooking = created;
+          _screen = 'booking_status';
+        });
+      }
+      // Snackbar gives the customer a clear expectation: handyman will
+      // confirm within 24 hours — matches the notification message above.
+      _notify(
+          'Warranty claim submitted! Your handyman will confirm within 24 hours. 🛡️');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
     }
   }
 
@@ -1652,6 +1758,7 @@ class _MainAppState extends State<MainApp> {
               duration: data.duration,
               tips: data.tips,
               imageUrl: data.imageUrl,
+              warrantyDays: data.warrantyDays,
             );
             final updated = await _ds.getServiceOffers();
             if (mounted) {
@@ -2596,6 +2703,7 @@ class _MainAppState extends State<MainApp> {
           });
           _subscribeToBooking(model);
         },
+        onBackjob: (booking) => _navigateToBackjob(booking),
       );
     }
 
@@ -2843,6 +2951,13 @@ class _MainAppState extends State<MainApp> {
                   _navigateToDirectBooking(pro);
                 }
               : null,
+          // Backjob CTA: shown for completed bookings still within their
+          // warranty window. booking.isUnderWarranty is computed from
+          // warrantyExpiresAt written when customerConfirmCompletion fires.
+          onBackjob: _selectedBooking!.status == BookingStatus.completed &&
+                  _selectedBooking!.toEntity().isUnderWarranty
+              ? () => _navigateToBackjob(_selectedBooking!.toEntity())
+              : null,
           onCancel: (_selectedBooking!.status == BookingStatus.pending ||
                   _selectedBooking!.status == BookingStatus.accepted ||
                   _selectedBooking!.status == BookingStatus.scheduleProposed ||
@@ -2866,6 +2981,15 @@ class _MainAppState extends State<MainApp> {
                   }
                 }
               : null,
+        );
+
+      // ── Backjob / Warranty claim screen ────────────────────────────────
+      case 'backjob':
+        if (_selectedBooking == null) return _home();
+        return BackjobScreen(
+          booking: _selectedBooking!.toEntity(),
+          onBack: () => setState(() => _screen = 'booking_status'),
+          onSubmit: (data) => _handleBackjobSubmit(data),
         );
 
       case 'schedule_review':

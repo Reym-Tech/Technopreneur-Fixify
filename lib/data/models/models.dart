@@ -21,6 +21,16 @@
 //   • Customer confirms arrival → status = assessment (price-setting unlocked).
 //   • DB value: 'pending_arrival_confirmation'.
 //   • _parseStatus() and statusToString() handle the new value.
+//
+// BACKJOB / WARRANTY UPDATE:
+//   • ServiceOfferModel — added `warrantyDays` (int, default 0).
+//     Reads `warranty_days` from service_proposals DB column.
+//   • BookingModel — added:
+//       isBackjob         — bool, reads `is_backjob` DB column.
+//       originalBookingId — String?, reads `original_booking_id` DB column.
+//       warrantyExpiresAt — DateTime?, reads `warranty_expires_at` DB column.
+//     All three included in fromJson, toJson, toEntity, copyWithStatus,
+//     and copyWithProLocation.
 
 import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
@@ -287,6 +297,20 @@ class BookingModel extends Equatable {
   /// Reason given when the handyman proposes a reschedule.
   final String? rescheduleReason;
 
+  // ── BACKJOB / WARRANTY ────────────────────────────────────────────────────
+
+  /// True when this booking was created as a warranty / backjob claim.
+  final bool isBackjob;
+
+  /// UUID of the completed booking that triggered this warranty claim.
+  /// Null for regular (non-backjob) bookings.
+  final String? originalBookingId;
+
+  /// UTC timestamp after which the warranty on the original booking expires.
+  /// Written when [customerConfirmCompletion] is called and the service
+  /// has warrantyDays > 0.  Null means no warranty for this booking.
+  final DateTime? warrantyExpiresAt;
+
   const BookingModel({
     required this.id,
     required this.customerId,
@@ -308,6 +332,9 @@ class BookingModel extends Equatable {
     this.photoUrl,
     this.scheduledTime,
     this.rescheduleReason,
+    this.isBackjob = false,
+    this.originalBookingId,
+    this.warrantyExpiresAt,
   });
 
   factory BookingModel.fromJson(Map<String, dynamic> json) {
@@ -345,7 +372,7 @@ class BookingModel extends Equatable {
         createdAt = DateTime.now();
       }
 
-      // Parse scheduledTime from the new scheduled_time column
+      // Parse scheduledTime from the scheduled_time column
       DateTime? scheduledTime;
       try {
         final st = json['scheduled_time']?.toString();
@@ -356,6 +383,17 @@ class BookingModel extends Equatable {
 
       // Parse photo_url — set when customer uploads a photo during booking creation.
       final photoUrl = json['photo_url'] as String?;
+
+      // ── Backjob / warranty fields ─────────────────────────────────────────
+      final isBackjob = json['is_backjob'] as bool? ?? false;
+      final originalBookingId = json['original_booking_id'] as String?;
+      DateTime? warrantyExpiresAt;
+      try {
+        final wea = json['warranty_expires_at']?.toString();
+        if (wea != null && wea.isNotEmpty) {
+          warrantyExpiresAt = DateTime.parse(wea);
+        }
+      } catch (_) {}
 
       return BookingModel(
         id: id,
@@ -379,6 +417,9 @@ class BookingModel extends Equatable {
         photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
+        isBackjob: isBackjob,
+        originalBookingId: originalBookingId,
+        warrantyExpiresAt: warrantyExpiresAt,
       );
     } catch (e, st) {
       debugPrint('[BookingModel.fromJson] error parsing json: $e');
@@ -461,6 +502,9 @@ class BookingModel extends Equatable {
         assessmentPrice: assessmentPrice,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
+        isBackjob: isBackjob,
+        originalBookingId: originalBookingId,
+        warrantyExpiresAt: warrantyExpiresAt,
       );
 
   BookingModel copyWithStatus(BookingStatus newStatus) => BookingModel(
@@ -484,6 +528,9 @@ class BookingModel extends Equatable {
         photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
+        isBackjob: isBackjob,
+        originalBookingId: originalBookingId,
+        warrantyExpiresAt: warrantyExpiresAt,
       );
 
   BookingModel copyWithProLocation(double? lat, double? lng) => BookingModel(
@@ -507,6 +554,9 @@ class BookingModel extends Equatable {
         photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
+        isBackjob: isBackjob,
+        originalBookingId: originalBookingId,
+        warrantyExpiresAt: warrantyExpiresAt,
       );
 
   Map<String, dynamic> toJson() => {
@@ -526,6 +576,10 @@ class BookingModel extends Equatable {
         'assessment_price': assessmentPrice,
         'scheduled_time': scheduledTime?.toUtc().toIso8601String(),
         'reschedule_reason': rescheduleReason,
+        'is_backjob': isBackjob,
+        if (originalBookingId != null) 'original_booking_id': originalBookingId,
+        if (warrantyExpiresAt != null)
+          'warranty_expires_at': warrantyExpiresAt!.toUtc().toIso8601String(),
       };
 
   @override
@@ -622,6 +676,12 @@ class ServiceOfferModel extends Equatable {
   /// professional_id from service_proposals — null for admin-seeded rows.
   final String? professionalId;
 
+  /// Warranty period in days. 0 = no warranty.
+  /// Stored in service_proposals.warranty_days.
+  /// Used to compute warrantyExpiresAt when a booking is completed and to
+  /// drive the Backjob CTA visibility on the customer side.
+  final int warrantyDays;
+
   const ServiceOfferModel({
     required this.id,
     required this.slug,
@@ -635,6 +695,7 @@ class ServiceOfferModel extends Equatable {
     this.tips,
     this.createdAt,
     this.professionalId,
+    this.warrantyDays = 0,
   });
 
   factory ServiceOfferModel.fromJson(Map<String, dynamic> json) {
@@ -663,6 +724,7 @@ class ServiceOfferModel extends Equatable {
       tips: json['tips'] as String?,
       createdAt: created,
       professionalId: json['professional_id'] as String?,
+      warrantyDays: (json['warranty_days'] as int?) ?? 0,
     );
   }
 
@@ -679,6 +741,7 @@ class ServiceOfferModel extends Equatable {
         tips: tips,
         createdAt: createdAt,
         professionalId: professionalId,
+        warrantyDays: warrantyDays,
       );
 
   @override

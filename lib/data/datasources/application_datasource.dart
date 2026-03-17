@@ -308,10 +308,18 @@ class ApplicationDataSource {
 //   price_range      TEXT       — e.g. '₱300 – ₱1,800'
 //   duration         TEXT       — e.g. '1–3 hours'
 //   tips             TEXT?
+//   warranty_days    INT        — 0 = no warranty; >0 = days of coverage
 //   status           TEXT       — 'pending' | 'approved' | 'rejected'
 //   admin_note       TEXT?      — feedback shown to the handyman on rejection
 //   submitted_at     TIMESTAMPTZ
 //   reviewed_at      TIMESTAMPTZ?
+//
+// BACKJOB / WARRANTY UPDATE:
+//   • ServiceProposalModel — added warrantyDays (int, default 0).
+//     Reads warranty_days from the DB row; written by submitProposal and
+//     resubmitProposal from ProposeServiceFormData.warrantyDays.
+//   • ProposeServiceFormData — added warrantyDays (int, default 0).
+//     Set by ProposeServiceScreen and passed through to the DB insert/update.
 // ═════════════════════════════════════════════════════════════════════════════
 
 class ServiceProposalModel {
@@ -326,6 +334,11 @@ class ServiceProposalModel {
   final String? priceRange;
   final String? duration;
   final String? tips;
+
+  /// Warranty period in days. 0 = no warranty offered for this service.
+  /// Stored in service_proposals.warranty_days.
+  final int warrantyDays;
+
   final String status; // pending | approved | rejected
   final String? adminNote;
   final DateTime submittedAt;
@@ -346,6 +359,7 @@ class ServiceProposalModel {
     this.priceRange,
     this.duration,
     this.tips,
+    this.warrantyDays = 0,
     required this.status,
     this.adminNote,
     required this.submittedAt,
@@ -368,6 +382,7 @@ class ServiceProposalModel {
       priceRange: j['price_range'] as String?,
       duration: j['duration'] as String?,
       tips: j['tips'] as String?,
+      warrantyDays: (j['warranty_days'] as int?) ?? 0,
       status: j['status'] as String? ?? 'pending',
       adminNote: j['admin_note'] as String?,
       submittedAt: DateTime.parse(j['submitted_at'] as String),
@@ -391,6 +406,10 @@ class ProposeServiceFormData {
   final String duration;
   final String? tips;
 
+  /// Warranty period in days proposed by the handyman. 0 = no warranty.
+  /// Written to service_proposals.warranty_days on submit/resubmit.
+  final int warrantyDays;
+
   const ProposeServiceFormData({
     required this.serviceType,
     required this.serviceName,
@@ -400,6 +419,7 @@ class ProposeServiceFormData {
     required this.priceRange,
     required this.duration,
     this.tips,
+    this.warrantyDays = 0,
   });
 }
 
@@ -445,6 +465,7 @@ class ServiceProposalDatasource {
           'price_range': data.priceRange,
           'duration': data.duration,
           'tips': data.tips,
+          'warranty_days': data.warrantyDays,
           'status': 'pending',
           'submitted_at': DateTime.now().toIso8601String(),
         })
@@ -476,6 +497,7 @@ class ServiceProposalDatasource {
           'price_range': data.priceRange,
           'duration': data.duration,
           'tips': data.tips,
+          'warranty_days': data.warrantyDays,
           'status': 'pending',
           'admin_note': null,
           'submitted_at': DateTime.now().toIso8601String(),

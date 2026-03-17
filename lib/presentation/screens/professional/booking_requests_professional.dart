@@ -465,22 +465,52 @@ class _RequestCard extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: expanded
-                ? AppColors.primary.withOpacity(0.3)
-                : Colors.transparent,
+            color: booking.isBackjob
+                ? const Color(0xFF30B0C7).withOpacity(0.45)
+                : expanded
+                    ? AppColors.primary.withOpacity(0.3)
+                    : Colors.transparent,
             width: 2,
           ),
           boxShadow: [
             BoxShadow(
-              color: expanded
-                  ? AppColors.primary.withOpacity(0.1)
-                  : Colors.black.withOpacity(0.06),
+              color: booking.isBackjob
+                  ? const Color(0xFF30B0C7).withOpacity(0.12)
+                  : expanded
+                      ? AppColors.primary.withOpacity(0.1)
+                      : Colors.black.withOpacity(0.06),
               blurRadius: expanded ? 16 : 12,
               offset: const Offset(0, 4),
             )
           ],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── Warranty claim banner — shown at top of card when isBackjob.
+          // Immediately signals to the handyman this is a warranty request,
+          // not a new paid booking, so they can prioritise and respond quickly.
+          if (booking.isBackjob)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+              decoration: const BoxDecoration(
+                color: Color(0xFFE8F8FB),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.verified_user_rounded,
+                    size: 13, color: Color(0xFF1D8A9E)),
+                const SizedBox(width: 7),
+                const Expanded(
+                  child: Text(
+                    'Warranty Claim — original customer, covered at no charge',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF1D8A9E)),
+                  ),
+                ),
+              ]),
+            ),
           // Summary row
           Padding(
             padding: const EdgeInsets.all(16),
@@ -670,7 +700,9 @@ class _RequestCard extends StatelessWidget {
                     onPressed: onAccept,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: isAvailable
-                          ? AppColors.primary
+                          ? (booking.isBackjob
+                              ? const Color(0xFF1D8A9E)
+                              : AppColors.primary)
                           : Colors.grey.shade400,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
@@ -678,8 +710,9 @@ class _RequestCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       elevation: 0,
                     ),
-                    child: const Text('Accept',
-                        style: TextStyle(fontWeight: FontWeight.w700)),
+                    child: Text(
+                        booking.isBackjob ? 'Confirm Warranty' : 'Accept',
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ),
               ]),

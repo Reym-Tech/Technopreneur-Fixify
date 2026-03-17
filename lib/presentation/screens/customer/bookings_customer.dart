@@ -12,10 +12,19 @@
 //   onNavTap       → Function(int)
 //   currentNavIndex → int
 //   onRefresh      → Future<void> Function()?
+//   onBackjob      → Function(BookingEntity)? — called when the customer taps
+//                    "Backjob" on a completed, in-warranty booking card.
 //
 // FIX: Added `assessment` to:
 //   - _filtered('Active') so Assessment bookings appear in the Active tab
 //   - _statusColor() / _statusLabel() so the badge shows correctly
+//
+// BACKJOB / WARRANTY UPDATE:
+//   • Added onBackjob callback to CustomerBookingsScreen and _BookingCard.
+//   • Completed cards that are still under warranty show a teal "Backjob"
+//     action button row beneath the date/address footer.
+//   • The Backjob button is only shown when booking.isUnderWarranty == true
+//     AND onBackjob != null — no changes visible for non-warranty bookings.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -29,6 +38,10 @@ class CustomerBookingsScreen extends StatefulWidget {
   final int currentNavIndex;
   final Future<void> Function()? onRefresh;
 
+  /// Called when the customer taps "Backjob" on a completed, in-warranty
+  /// booking card in the list. The controller navigates to BackjobScreen.
+  final Function(BookingEntity)? onBackjob;
+
   const CustomerBookingsScreen({
     super.key,
     this.bookings = const [],
@@ -36,6 +49,7 @@ class CustomerBookingsScreen extends StatefulWidget {
     this.onNavTap,
     this.currentNavIndex = 1,
     this.onRefresh,
+    this.onBackjob,
   });
 
   @override
@@ -213,6 +227,9 @@ class _CustomerBookingsScreenState extends State<CustomerBookingsScreen>
         itemBuilder: (ctx, i) => _BookingCard(
           booking: list[i],
           onTap: () => widget.onBookingTap?.call(list[i]),
+          onBackjob: widget.onBackjob != null
+              ? () => widget.onBackjob!.call(list[i])
+              : null,
         ).animate().fadeIn(delay: (i * 50).ms).slideY(begin: 0.06, end: 0),
       ),
     );
@@ -311,13 +328,23 @@ class _CustomerBookingsScreenState extends State<CustomerBookingsScreen>
 class _BookingCard extends StatelessWidget {
   final BookingEntity booking;
   final VoidCallback? onTap;
-  const _BookingCard({required this.booking, this.onTap});
+
+  /// Called when the customer taps "Backjob" on this card.
+  /// Only wired when the booking is completed AND under warranty.
+  final VoidCallback? onBackjob;
+
+  const _BookingCard({required this.booking, this.onTap, this.onBackjob});
 
   @override
   Widget build(BuildContext context) {
     final color = _statusColor(booking.status);
     final label = _statusLabel(booking.status);
     final icon = _serviceIcon(booking.serviceType);
+
+    // Show Backjob button only for completed, in-warranty bookings.
+    final showBackjob = booking.status == BookingStatus.completed &&
+        booking.isUnderWarranty &&
+        onBackjob != null;
 
     return GestureDetector(
       onTap: onTap,
@@ -363,28 +390,59 @@ class _BookingCard extends StatelessWidget {
                         style: const TextStyle(
                             fontSize: 12, color: AppColors.textLight)),
                   ])),
-              // Status badge
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(label,
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: color)),
+              // Status badge — shows WARRANTY chip for completed in-warranty
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(label,
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: color)),
+                  ),
+                  // Warranty badge — shown below the status badge
+                  if (showBackjob) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF30B0C7).withOpacity(0.10),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: const Color(0xFF30B0C7).withOpacity(0.35)),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.verified_user_rounded,
+                            size: 9, color: Color(0xFF30B0C7)),
+                        const SizedBox(width: 3),
+                        const Text('Warranty',
+                            style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF30B0C7))),
+                      ]),
+                    ),
+                  ],
+                ],
               ),
             ]),
           ),
           // Divider + footer
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: const BoxDecoration(
-              color: Color(0xFFF8F8F8),
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F8F8),
+              borderRadius: BorderRadius.vertical(
+                bottom: showBackjob ? Radius.zero : const Radius.circular(20),
+              ),
             ),
             child: Row(children: [
               const Icon(Icons.calendar_today_outlined,
@@ -414,6 +472,56 @@ class _BookingCard extends StatelessWidget {
                   size: 18, color: AppColors.textLight),
             ]),
           ),
+
+          // ── Backjob action row ──────────────────────────────────────────
+          // Rendered only for completed, in-warranty bookings.
+          if (showBackjob)
+            GestureDetector(
+              onTap: onBackjob,
+              child: Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF0A2E3F), Color(0xFF1D8A9E)],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                  borderRadius:
+                      BorderRadius.vertical(bottom: Radius.circular(20)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.verified_user_rounded,
+                      size: 15, color: Colors.white),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('File a Backjob (Warranty Claim)',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white)),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('FREE',
+                        style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                            letterSpacing: 0.4)),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.arrow_forward_ios_rounded,
+                      size: 12, color: Colors.white70),
+                ]),
+              ),
+            ),
         ]),
       ),
     );

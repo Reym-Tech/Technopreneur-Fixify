@@ -330,14 +330,40 @@ class _HistoryCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
+          border: booking.isBackjob
+              ? Border.all(
+                  color: const Color(0xFF30B0C7).withOpacity(0.4), width: 1.5)
+              : null,
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.06),
+                color: booking.isBackjob
+                    ? const Color(0xFF30B0C7).withOpacity(0.10)
+                    : Colors.black.withOpacity(0.06),
                 blurRadius: 12,
                 offset: const Offset(0, 4))
           ],
         ),
         child: Column(children: [
+          // ── Warranty banner — top strip for backjob bookings
+          if (booking.isBackjob)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: const BoxDecoration(
+                color: Color(0xFFE8F8FB),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.verified_user_rounded,
+                    size: 13, color: Color(0xFF1D8A9E)),
+                const SizedBox(width: 6),
+                const Text('Warranty Claim',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF1D8A9E))),
+              ]),
+            ),
           Padding(
             padding: const EdgeInsets.all(16),
             child: Row(children: [

@@ -15,11 +15,22 @@
 // COMPLETION UPDATE:
 //   markJobDoneByPro()          — Pro marks job done → status = 'pending_customer_confirmation'.
 //   customerConfirmCompletion() — Customer confirms job done → status = 'completed'.
+//                                 ✅ Now also writes warranty_expires_at when
+//                                    the service has warrantyDays > 0.
 //
 // DATE VALIDATION:
 //   createBooking() ✅ Validates scheduledDate is not in the past (date only,
 //                      time-of-day not enforced since it is a preferred date).
 //   proposeSchedule() / proposeReschedule() ✅ Reject times already in the past.
+//
+// BACKJOB / WARRANTY UPDATE:
+//   adminSeedService()   — Added optional warrantyDays param (default 0).
+//   adminUpdateService() — Added optional warrantyDays param.
+//   createBooking()      — Added optional isBackjob + originalBookingId params.
+//   customerConfirmCompletion() — Accepts warrantyDays; writes warranty_expires_at.
+//   createBackjobBooking() — NEW: creates a backjob booking linked to the
+//                            original completed booking. Validates the original
+//                            is completed and still under warranty.
 //
 // All other public methods are unchanged.
 
@@ -310,6 +321,7 @@ class SupabaseDataSource {
 
   /// Admin creates a new service offer — inserted directly as 'approved'
   /// so it is immediately live in the catalogue without a review step.
+  /// [warrantyDays] — number of days of warranty for this service (0 = none).
   Future<ServiceOfferModel> adminSeedService({
     required String serviceName,
     required String serviceType,
@@ -319,6 +331,7 @@ class SupabaseDataSource {
     required String duration,
     String? tips,
     String? imageUrl,
+    int warrantyDays = 0,
   }) async {
     debugPrint('[Supabase] adminSeedService: $serviceName ($serviceType)');
     try {
@@ -333,6 +346,7 @@ class SupabaseDataSource {
             'duration': duration,
             if (tips != null) 'tips': tips,
             if (imageUrl != null) 'image_url': imageUrl,
+            'warranty_days': warrantyDays,
             'status': 'approved',
           })
           .select()
@@ -347,6 +361,7 @@ class SupabaseDataSource {
   }
 
   /// Admin updates an existing service offer.
+  /// [warrantyDays] — pass a non-null value to update the warranty period.
   Future<ServiceOfferModel> adminUpdateService({
     required String id,
     String? serviceName,
@@ -357,6 +372,7 @@ class SupabaseDataSource {
     String? duration,
     String? tips,
     String? imageUrl,
+    int? warrantyDays,
   }) async {
     debugPrint('[Supabase] adminUpdateService: $id');
     final updates = <String, dynamic>{
@@ -368,6 +384,7 @@ class SupabaseDataSource {
       if (duration != null) 'duration': duration,
       if (tips != null) 'tips': tips,
       if (imageUrl != null) 'image_url': imageUrl,
+      if (warrantyDays != null) 'warranty_days': warrantyDays,
     };
     final data = await _client
         .from('service_proposals')
@@ -556,6 +573,9 @@ class SupabaseDataSource {
   /// Validates that scheduledDate is not strictly in the past (date-level check;
   /// time of day is not enforced because this is a preferred date, not an exact
   /// arrival time).
+  ///
+  /// [isBackjob]         — set true when this is a warranty claim.
+  /// [originalBookingId] — UUID of the completed booking being claimed against.
   Future<BookingModel> createBooking({
     required String customerId,
     String? professionalId,
@@ -569,6 +589,8 @@ class SupabaseDataSource {
     double? latitude,
     double? longitude,
     String? photoPath,
+    bool isBackjob = false,
+    String? originalBookingId,
   }) async {
     // ── Validation: reject dates in the past ──────────────────────────────
     final today = DateTime.now();
@@ -634,6 +656,9 @@ class SupabaseDataSource {
       if (longitude != null) 'longitude': longitude,
       // Only include photo_url when a URL was successfully obtained.
       if (photoUrl != null) 'photo_url': photoUrl,
+      // Backjob / warranty fields
+      'is_backjob': isBackjob,
+      if (originalBookingId != null) 'original_booking_id': originalBookingId,
     };
     try {
       // Insert the booking row, then immediately re-fetch with full joins
@@ -920,11 +945,31 @@ class SupabaseDataSource {
 
   /// Called by the customer to confirm the job is truly complete.
   /// Sets status = 'completed'.
-  Future<BookingModel> customerConfirmCompletion(String bookingId) async {
-    debugPrint('[Supabase] customerConfirmCompletion: id=$bookingId');
-    await _client.from(AppConfig.bookingsTable).update({
-      'status': 'completed',
-    }).eq('id', bookingId);
+  ///
+  /// [warrantyDays] — if > 0, writes warranty_expires_at = now + warrantyDays
+  ///                  so the Backjob CTA becomes visible to the customer.
+  ///                  Pass 0 (default) for services with no warranty.
+  Future<BookingModel> customerConfirmCompletion(
+    String bookingId, {
+    int warrantyDays = 0,
+  }) async {
+    debugPrint('[Supabase] customerConfirmCompletion: id=$bookingId '
+        'warrantyDays=$warrantyDays');
+
+    final updates = <String, dynamic>{'status': 'completed'};
+
+    if (warrantyDays > 0) {
+      final expiresAt =
+          DateTime.now().toUtc().add(Duration(days: warrantyDays));
+      updates['warranty_expires_at'] = expiresAt.toIso8601String();
+      debugPrint('[Supabase] customerConfirmCompletion: '
+          'warranty expires $expiresAt');
+    }
+
+    await _client
+        .from(AppConfig.bookingsTable)
+        .update(updates)
+        .eq('id', bookingId);
 
     final data = await _client
         .from(AppConfig.bookingsTable)
@@ -933,6 +978,108 @@ class SupabaseDataSource {
         .single();
     debugPrint('[Supabase] customerConfirmCompletion: done ✅');
     return BookingModel.fromJson(data);
+  }
+
+  // ── BACKJOB / WARRANTY ────────────────────────────────────
+
+  /// Creates a new booking tagged as a warranty / backjob claim.
+  ///
+  /// Validates:
+  ///   1. The original booking exists and its status is 'completed'.
+  ///   2. The warranty has not expired (warrantyExpiresAt is in the future).
+  ///
+  /// On success returns the newly inserted backjob BookingModel.
+  /// The new booking is pre-assigned to the same professional as the original
+  /// so it lands directly in their queue as a direct booking rather than being
+  /// broadcast as an open request.
+  Future<BookingModel> createBackjobBooking({
+    required String customerId,
+    required String originalBookingId,
+    required String serviceType,
+    required String serviceTitle,
+    required DateTime preferredDate,
+    required String address,
+    String? description,
+    String? notes,
+    double? latitude,
+    double? longitude,
+  }) async {
+    debugPrint('[Supabase] createBackjobBooking: '
+        'original=$originalBookingId serviceType=$serviceType');
+
+    // ── Fetch and validate original booking ──────────────────────────────────
+    final origData = await _client
+        .from(AppConfig.bookingsTable)
+        .select('status, professional_id, warranty_expires_at')
+        .eq('id', originalBookingId)
+        .single();
+
+    final origStatus = origData['status'] as String?;
+    if (origStatus != 'completed') {
+      throw ArgumentError(
+          'Backjob can only be filed against a completed booking.');
+    }
+
+    final weaRaw = origData['warranty_expires_at']?.toString();
+    if (weaRaw == null || weaRaw.isEmpty) {
+      throw ArgumentError(
+          'This service does not carry a warranty. No backjob can be filed.');
+    }
+    final warrantyExpiresAt = DateTime.parse(weaRaw);
+    if (DateTime.now().isAfter(warrantyExpiresAt)) {
+      throw ArgumentError('The warranty period for this booking has expired. '
+          'Backjobs can no longer be filed.');
+    }
+
+    // ── Re-use the same professional (direct booking) ─────────────────────
+    final professionalId = origData['professional_id'] as String?;
+
+    // ── Date validation ───────────────────────────────────────────────────
+    final today = DateTime.now();
+    final todayDateOnly = DateTime(today.year, today.month, today.day);
+    final requestedDateOnly =
+        DateTime(preferredDate.year, preferredDate.month, preferredDate.day);
+    if (requestedDateOnly.isBefore(todayDateOnly)) {
+      throw ArgumentError(
+          'Preferred date cannot be in the past. Please choose today or a future date.');
+    }
+
+    final payload = {
+      'customer_id': customerId,
+      if (professionalId != null) 'professional_id': professionalId,
+      'service_type': serviceType,
+      'service_title': serviceTitle,
+      'description': description,
+      'price_estimate': null,
+      'status': 'pending',
+      'scheduled_date': preferredDate.toUtc().toIso8601String(),
+      'address': address,
+      'notes': notes,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      'is_backjob': true,
+      'original_booking_id': originalBookingId,
+    };
+
+    try {
+      final inserted = await _client
+          .from(AppConfig.bookingsTable)
+          .insert(payload)
+          .select('id')
+          .single();
+
+      final data = await _client
+          .from(AppConfig.bookingsTable)
+          .select(_fullBookingSelect)
+          .eq('id', inserted['id'] as String)
+          .single();
+
+      debugPrint('[Supabase] createBackjobBooking: done ✅');
+      return BookingModel.fromJson(data);
+    } catch (e, st) {
+      debugPrint('[Supabase] createBackjobBooking error: $e\n$st');
+      rethrow;
+    }
   }
 
   // ── Internal Validation Helper ────────────────────────────

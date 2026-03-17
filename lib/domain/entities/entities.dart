@@ -1,5 +1,15 @@
 // lib/domain/entities/entities.dart
 // Single file containing ALL domain entities for Fixify
+//
+// BACKJOB / WARRANTY UPDATE:
+//   • ServiceOfferEntity — added `warrantyDays` (int, default 0).
+//     Drives the warranty chip in ServiceDetailScreen and the Backjob CTA
+//     eligibility logic in BookingStatusScreen / CustomerBookingsScreen.
+//   • BookingEntity — added:
+//       isBackjob         — true when this booking is a warranty claim.
+//       originalBookingId — UUID of the completed booking that triggered the claim.
+//       warrantyExpiresAt — computed on completion: completedAt + warrantyDays.
+//                           Null for services with warrantyDays == 0.
 
 import 'package:equatable/equatable.dart';
 
@@ -157,6 +167,22 @@ class BookingEntity extends Equatable {
   /// (i.e. they are running late / still on another job).
   final String? rescheduleReason;
 
+  // ── BACKJOB / WARRANTY ────────────────────────────────────────────────────
+
+  /// True when this booking is a warranty / backjob claim.
+  /// Backjob bookings are created via BackjobScreen and linked to their
+  /// source completed booking via [originalBookingId].
+  final bool isBackjob;
+
+  /// ID of the completed booking that triggered this warranty claim.
+  /// Null for regular (non-backjob) bookings.
+  final String? originalBookingId;
+
+  /// UTC timestamp after which the warranty on the original service expires.
+  /// Computed at completion time: completedAt + service.warrantyDays.
+  /// Null when the service has warrantyDays == 0 (no warranty).
+  final DateTime? warrantyExpiresAt;
+
   const BookingEntity({
     required this.id,
     required this.customerId,
@@ -178,7 +204,18 @@ class BookingEntity extends Equatable {
     this.assessmentPrice,
     this.scheduledTime,
     this.rescheduleReason,
+    this.isBackjob = false,
+    this.originalBookingId,
+    this.warrantyExpiresAt,
   });
+
+  /// Whether this completed booking is still within its warranty window.
+  /// Returns false for non-completed bookings and for services with no warranty.
+  bool get isUnderWarranty {
+    if (status != BookingStatus.completed) return false;
+    if (warrantyExpiresAt == null) return false;
+    return DateTime.now().isBefore(warrantyExpiresAt!);
+  }
 
   @override
   List<Object?> get props =>
@@ -240,6 +277,11 @@ class ServiceOfferEntity extends Equatable {
   /// The professional who proposed this service offer (null for admin-created).
   final String? professionalId;
 
+  /// Warranty period in days.
+  /// 0 means no warranty is offered for this service.
+  /// Stored in service_proposals.warranty_days.
+  final int warrantyDays;
+
   const ServiceOfferEntity({
     required this.id,
     required this.slug,
@@ -253,6 +295,7 @@ class ServiceOfferEntity extends Equatable {
     this.tips,
     this.createdAt,
     this.professionalId,
+    this.warrantyDays = 0,
   });
 
   @override

@@ -267,7 +267,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Join Fixify and get expert help at home',
+                    'Join AYO and get expert help at home',
                     style: TextStyle(fontSize: 15, color: AppColors.textMedium),
                   ),
                   const SizedBox(height: 28),

@@ -28,12 +28,22 @@
 // REVIEW FIX (retained):
 //   • onLeaveReview shown for completed, unreviewed bookings.
 //
+// BACKJOB / WARRANTY UPDATE:
+//   • Added onBackjob callback — shown for completed bookings where
+//     booking.isUnderWarranty == true.
+//   • _BackjobCTA widget added — teal shield-icon card, rendered between
+//     Book Again and the booking info section for completed in-warranty jobs.
+//   • The Backjob CTA is intentionally shown even when onBookAgain is also
+//     visible — customers may want to rebook (new service) OR file a warranty
+//     claim (same issue). Both are distinct actions.
+//
 // PROPS (all optional for backward compat):
 //   onReviewSchedule    — VoidCallback? — kept in signature, no longer shown
 //   onConfirmArrival    — VoidCallback? — customer confirms handyman arrived
 //   onConfirmCompletion — VoidCallback?
 //   onLeaveReview       — VoidCallback?
 //   hasReviewed         — bool (default false)
+//   onBackjob           — VoidCallback? — customer files a warranty backjob claim
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -79,6 +89,11 @@ class BookingStatusScreen extends StatefulWidget {
   /// the same professional (direct booking behaviour).
   final Function(String serviceType)? onBookAgain;
 
+  /// Called when the customer taps "Backjob" on a completed booking that
+  /// is still within its warranty period.
+  /// The controller navigates to BackjobScreen.
+  final VoidCallback? onBackjob;
+
   /// Called when the customer taps "Cancel Booking".
   final VoidCallback? onCancel;
 
@@ -96,6 +111,7 @@ class BookingStatusScreen extends StatefulWidget {
     this.onLoadCompletionPhotos,
     this.onLeaveReview,
     this.onBookAgain,
+    this.onBackjob,
     this.onDeclineSchedule,
     this.onCancel,
     this.hasReviewed = false,
@@ -119,6 +135,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
   VoidCallback? get onLeaveReview => widget.onLeaveReview;
   VoidCallback? get onDeclineSchedule => widget.onDeclineSchedule;
   Function(String serviceType)? get onBookAgain => widget.onBookAgain;
+  VoidCallback? get onBackjob => widget.onBackjob;
   VoidCallback? get onCancel => widget.onCancel;
   bool get hasReviewed => widget.hasReviewed;
 
@@ -194,6 +211,11 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
   // ── VIEW helpers — status display ─────────────────────────────────────────
 
   String get _statusLabel {
+    // Backjob pending shows a distinct label so the customer knows it is
+    // directed at their original handyman, not a broadcast search.
+    if (booking.isBackjob && booking.status == BookingStatus.pending) {
+      return 'Warranty Claim Sent';
+    }
     switch (booking.status) {
       case BookingStatus.pending:
         return 'Finding Handyman';
@@ -219,6 +241,15 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
   }
 
   String get _statusMessage {
+    // ── Backjob / warranty override for pending state ─────────────────────
+    // When a warranty claim is pending, the booking is already assigned to
+    // the original handyman — it is NOT an open broadcast. Show a specific
+    // message so the customer knows their claim was received and directed
+    // to the right person rather than the generic "finding a handyman" copy.
+    if (booking.isBackjob && booking.status == BookingStatus.pending) {
+      return 'Your warranty claim has been sent directly to your original handyman. '
+          'They will review it and confirm the schedule shortly — usually within 24 hours.';
+    }
     switch (booking.status) {
       case BookingStatus.pending:
         return 'We\'re matching you with an available handyman. This usually takes just a few minutes.';
@@ -391,6 +422,21 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                       _BookAgainCTA(
                         onBookAgain: () => onBookAgain!(booking.serviceType),
                       ).animate().fadeIn(delay: 260.ms),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // ── Backjob / Warranty CTA ────────────────────────────
+                    // Shown for completed bookings that are still within their
+                    // warranty period (booking.isUnderWarranty == true).
+                    // Distinct from Book Again — this files a warranty claim,
+                    // not a new paid booking.
+                    if (booking.status == BookingStatus.completed &&
+                        booking.isUnderWarranty &&
+                        onBackjob != null) ...[
+                      _BackjobCTA(
+                        booking: booking,
+                        onBackjob: onBackjob!,
+                      ).animate().fadeIn(delay: 290.ms),
                       const SizedBox(height: 16),
                     ],
 
@@ -612,6 +658,32 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
             Text(_statusMessage,
                 style: const TextStyle(
                     fontSize: 12, color: AppColors.textMedium, height: 1.4)),
+            // ── Warranty badge — shown on backjob bookings ──────────────
+            // Appears below the status message to remind the customer
+            // this is a warranty-covered job at no extra charge.
+            if (booking.isBackjob) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF30B0C7).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: const Color(0xFF30B0C7).withOpacity(0.35)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.verified_user_rounded,
+                      size: 12, color: Color(0xFF1D8A9E)),
+                  const SizedBox(width: 5),
+                  const Text('Warranty Claim — Covered at No Charge',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1D8A9E))),
+                ]),
+              ),
+            ],
           ]),
         ),
       ]),
@@ -619,6 +691,11 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
   }
 
   IconData get _statusIcon {
+    // Backjob pending uses a shield icon instead of the search icon to
+    // reinforce that this is a warranty claim, not a new search.
+    if (booking.isBackjob && booking.status == BookingStatus.pending) {
+      return Icons.verified_user_rounded;
+    }
     switch (booking.status) {
       case BookingStatus.pending:
         return Icons.search_rounded;
@@ -2086,6 +2163,94 @@ class _BookAgainCTA extends StatelessWidget {
           ),
           const Icon(Icons.arrow_forward_ios_rounded,
               color: Colors.white, size: 16),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── VIEW — Backjob CTA ─────────────────────────────────────────────────────
+// Shown for completed bookings where booking.isUnderWarranty == true.
+// Uses a teal gradient so it is visually distinct from Book Again (green)
+// and Review (amber).
+
+class _BackjobCTA extends StatelessWidget {
+  final BookingEntity booking;
+  final VoidCallback onBackjob;
+
+  const _BackjobCTA({required this.booking, required this.onBackjob});
+
+  String _expiryLabel() {
+    final exp = booking.warrantyExpiresAt;
+    if (exp == null) return 'Warranty active';
+    final days = exp.difference(DateTime.now()).inDays;
+    if (days <= 0) return 'Expires today';
+    if (days == 1) return '1 day left';
+    if (days < 30) return '$days days left';
+    final months = (days / 30).floor();
+    return '$months month${months > 1 ? 's' : ''} left';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onBackjob,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0A2E3F), Color(0xFF1D8A9E)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: const Color(0xFF30B0C7).withOpacity(0.30),
+                blurRadius: 16,
+                offset: const Offset(0, 6))
+          ],
+        ),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: const Icon(Icons.verified_user_rounded,
+                color: Colors.white, size: 26),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('File a Backjob',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800)),
+              const SizedBox(height: 3),
+              Text(
+                'Same issue? File a warranty claim. ${_expiryLabel()}.',
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ]),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Text('FREE',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5)),
+          ),
         ]),
       ),
     );

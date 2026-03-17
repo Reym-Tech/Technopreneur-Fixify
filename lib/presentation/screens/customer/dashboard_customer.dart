@@ -517,6 +517,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             duration: offer.duration ?? '',
             includes: offer.includes,
             tips: offer.tips,
+            warrantyDays: offer.warrantyDays,
             onBookNow: (type, name) => Navigator.of(context).pop((type, name)),
           ),
         ),
