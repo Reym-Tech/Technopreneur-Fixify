@@ -85,9 +85,9 @@ class BookingStatusScreen extends StatefulWidget {
   final VoidCallback? onDeclineSchedule;
 
   /// Called when the customer taps "Book Again" on a completed booking.
-  /// The controller should navigate to RequestServiceScreen pre-targeting
-  /// the same professional (direct booking behaviour).
-  final Function(String serviceType)? onBookAgain;
+  /// Passes the full [BookingEntity] so the rebook screen can pre-fill
+  /// the service, address, professional, and price from the original job.
+  final Function(BookingEntity booking)? onBookAgain;
 
   /// Called when the customer taps "Backjob" on a completed booking that
   /// is still within its warranty period.
@@ -134,7 +134,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       widget.onLoadCompletionPhotos;
   VoidCallback? get onLeaveReview => widget.onLeaveReview;
   VoidCallback? get onDeclineSchedule => widget.onDeclineSchedule;
-  Function(String serviceType)? get onBookAgain => widget.onBookAgain;
+  Function(BookingEntity booking)? get onBookAgain => widget.onBookAgain;
   VoidCallback? get onBackjob => widget.onBackjob;
   VoidCallback? get onCancel => widget.onCancel;
   bool get hasReviewed => widget.hasReviewed;
@@ -468,7 +468,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                     if (booking.status == BookingStatus.completed &&
                         onBookAgain != null) ...[
                       _BookAgainCTA(
-                        onBookAgain: () => onBookAgain!(booking.serviceType),
+                        onBookAgain: () => onBookAgain!(booking),
                       ).animate().fadeIn(delay: 260.ms),
                       const SizedBox(height: 16),
                     ],
@@ -2413,7 +2413,7 @@ class _BookAgainCTA extends StatelessWidget {
                       fontWeight: FontWeight.w800)),
               SizedBox(height: 3),
               Text(
-                'Request the same handyman for a new job.',
+                'Same handyman, same address. Confirm in one tap.',
                 style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ]),

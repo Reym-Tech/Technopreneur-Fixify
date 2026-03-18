@@ -5,10 +5,31 @@
 //   2. Wrapped CustomScrollView in a RefreshIndicator so pull-to-refresh works
 //      with sliver-based layouts.
 //   3. _fetchUnreadCount is also called on every pull-to-refresh.
+//
+// FIRST-TIME USER TOUR (new):
+//   4. ShowCaseWidget wraps the entire Scaffold so the tour overlay can render.
+//   5. SharedPreferences key 'customer_has_seen_tour' guards the one-time launch.
+//   6. Tour is triggered inside ShowCaseWidget's builder via addPostFrameCallback.
+//      The builder context (not the state context) is passed to _startTour() so
+//      ShowCaseWidget.of() can walk up the tree and find the InheritedWidget.
+//      Using the state's own context here causes "Please provide ShowCaseView
+//      context" because the state sits ABOVE ShowCaseWidget in the tree.
+//   7. CustomerTourKeys.instance provides all GlobalKeys; CustomerTourShowcase
+//      wraps each target widget declaratively with a Showcase tooltip.
+//   8. Tour steps covered:
+//        • Request Service CTA      — big green booking card
+//        • Service Offers section   — horizontal scrollable cards
+//        • Category filter chips    — skill filter row
+//        • Top Professionals        — professional card list / See All
+//        • Notifications bell       — header icon
+//        • Bookings bottom-nav tab  — nav bar item
+//        • Profile bottom-nav tab   — nav bar item
+//        • Recent Bookings row      — shown only when bookings are present
 
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:fixify/data/models/models.dart';
+import 'package:fixify/presentation/screens/customer/customer_tour_keys.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -16,6 +37,8 @@ import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/widgets/shared_widgets.dart';
 import 'package:fixify/presentation/screens/customer/serviceoffers/service_detail_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:showcaseview/showcaseview.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shimmer/shimmer.dart';
 
@@ -369,10 +392,21 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   // ── Unread count — owned entirely by this state, fetched from Supabase ──
   int _unreadNotifCount = 0;
 
+  // ── Tour keys (singleton) ─────────────────────────────────────────────────
+  final _keys = CustomerTourKeys.instance;
+
+  // Guard so the prefs check is only scheduled once per screen mount,
+  // not on every rebuild triggered by setState().
+  bool _tourScheduled = false;
+  late BuildContext _showcaseContext;
+
   @override
   void initState() {
     super.initState();
     _fetchUnreadCount();
+    // Tour is now scheduled from within ShowCaseWidget's builder context
+    // (see build()) — NOT here — to avoid the "Please provide ShowCaseView
+    // context" error that occurs when using the state's own context.
   }
 
   @override
@@ -380,6 +414,28 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     _serviceSearchCtrl.dispose();
     super.dispose();
   }
+
+  // ── Tour: one-time launch guard ───────────────────────────────────────────
+
+  /// Called from inside ShowCaseWidget's builder so [showcaseContext] is a
+  /// descendant of ShowCaseWidget and ShowCaseWidget.of() can find it.
+  void _startTour(BuildContext showcaseContext) {
+    final hasBookings = widget.recentBookings.isNotEmpty;
+    ShowCaseWidget.of(showcaseContext).startShowCase(
+      _keys.orderedKeys(hasRecentBookings: hasBookings),
+    );
+  }
+
+  Future<void> _markTourSeen() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(kCustomerTourSeenKey, true);
+    } catch (e) {
+      debugPrint('[CustomerTour] Could not write prefs: $e');
+    }
+  }
+
+  // ── Unread notifications ──────────────────────────────────────────────────
 
   Future<void> _fetchUnreadCount() async {
     try {
@@ -398,7 +454,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     await _fetchUnreadCount();
   }
 
-  // ── Top Professionals helpers ─────────────────────────────────────────
+  // ── Top Professionals helpers ─────────────────────────────────────────────
 
   List<ProfessionalEntity> get _verifiedSorted {
     final list =
@@ -432,20 +488,12 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   }
 
   // ── MODEL: resolve which service list to display ──────────────────────────
-  // When the Controller passes DB-backed serviceOffers, use them.
-  // Fall back to the hardcoded _allServices list if the DB list is empty
-  // (e.g. during migration or if no proposals have been approved yet).
 
   bool get _usingDbOffers => widget.serviceOffers.isNotEmpty;
 
-  /// Unique category labels present in the current DB offers list.
   Set<String> get _dbOfferCategories =>
       widget.serviceOffers.map((o) => o.serviceType).toSet();
 
-  /// Returns the display list after applying the selected category filter
-  /// and the active search query.
-  /// In DB mode: filters [widget.serviceOffers].
-  /// In legacy mode: filters the hardcoded [_allServices].
   List<_ServiceDef> get _filteredServices {
     final q = _serviceSearch.trim().toLowerCase();
 
@@ -486,12 +534,9 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   }
 
   // ── CONTROLLER: navigate to ServiceDetailScreen ───────────────────────────
-  // Looks up detail data from DB offers first; falls back to the legacy
-  // _serviceDetails map for hardcoded entries.
 
   void _openServiceDetail(_ServiceDef service) async {
     if (_usingDbOffers) {
-      // Find the matching DB offer by id (set in _filteredServices above)
       ServiceOfferModel? offer;
       for (final o in widget.serviceOffers) {
         if (o.id == service.id) {
@@ -609,82 +654,141 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ),
       );
 
+  // ── BUILD ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     final topThree = _topThree;
     final verifiedCount = _verifiedSorted.length;
 
-    return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
-      // ── Pull-to-refresh wraps the entire CustomScrollView ──────────────
-      body: RefreshIndicator(
-        onRefresh: _handleRefresh,
-        color: AppColors.primary,
-        backgroundColor: Colors.white,
-        displacement: 60,
-        child: CustomScrollView(
-          // physics must allow overscroll for RefreshIndicator to trigger
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(child: _buildHeader()),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                child: _buildRequestCTA(),
-              ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
-            ),
-            SliverToBoxAdapter(
-              child: _buildServiceOffers().animate().fadeIn(delay: 220.ms),
-            ),
-            if (widget.recentBookings.isNotEmpty) ...[
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                  child: SectionHeader(
-                    title: 'Recent Bookings',
-                    actionLabel: 'See All',
-                    onAction: widget.onViewBookings,
-                  ),
-                ).animate().fadeIn(delay: 280.ms),
-              ),
-              SliverToBoxAdapter(
-                child: _buildRecentBookings().animate().fadeIn(delay: 320.ms),
-              ),
-            ],
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                child: SectionHeader(
-                  title: 'Top Professionals',
-                  actionLabel: verifiedCount > 0 ? 'See All' : null,
-                  onAction: verifiedCount > 0 ? _openAllProfessionals : null,
+    // ShowCaseWidget must wrap the entire screen so the tour overlay can
+    // paint above the Scaffold. onFinish persists the "seen" flag.
+    //
+    // IMPORTANT: the tour is scheduled from *inside* the builder using
+    // [showcaseContext] — a context that is a child of ShowCaseWidget.
+    // Using the state's own [context] here causes the error:
+    //   "Please provide ShowCaseView context"
+    // because the state sits ABOVE ShowCaseWidget in the widget tree.
+    return ShowCaseWidget(
+      onFinish: _markTourSeen,
+      onComplete: (_, __) {},
+      // Automatically scrolls off-screen target widgets into view before
+      // the tooltip appears. Note: only works with eager-render scroll views
+      // (e.g. SingleChildScrollView / CustomScrollView with SliverToBoxAdapter).
+      // Demand-rendered views (ListView.builder) require the widget to already
+      // be in the tree for this to work.
+      enableAutoScroll: true,
+      builder: (showcaseContext) {
+        _showcaseContext = showcaseContext;
+        // Schedule the tour for first-time customers using the correct context.
+        // addPostFrameCallback ensures all Showcase keys are attached before
+        // startShowCase() is called.
+        if (widget.user != null && !_tourScheduled) {
+          _tourScheduled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!mounted) return;
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              final seen = prefs.getBool(kCustomerTourSeenKey) ?? false;
+              if (!seen && mounted) _startTour(showcaseContext);
+            } catch (e) {
+              debugPrint('[CustomerTour] Could not read prefs: $e');
+            }
+          });
+        }
+
+        return Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          // ── Pull-to-refresh wraps the entire CustomScrollView ───────────
+          body: RefreshIndicator(
+            onRefresh: _handleRefresh,
+            color: AppColors.primary,
+            backgroundColor: Colors.white,
+            displacement: 60,
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(child: _buildHeader()),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                    child: _buildRequestCTA(),
+                  ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
                 ),
-              ).animate().fadeIn(delay: 360.ms),
-            ),
-            topThree.isEmpty
-                ? SliverToBoxAdapter(child: _buildEmptyPros())
-                : SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, i) {
-                          final pro = topThree[i];
-                          return ProfessionalCard(
-                            professional: pro,
-                            onTap: () => widget.onProfessionalTap?.call(pro),
-                          )
-                              .animate()
-                              .fadeIn(delay: (400 + i * 70).ms)
-                              .slideX(begin: 0.04, end: 0);
-                        },
-                        childCount: topThree.length,
+                SliverToBoxAdapter(
+                  child: _buildServiceOffers().animate().fadeIn(delay: 220.ms),
+                ),
+                if (widget.recentBookings.isNotEmpty) ...[
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                      child: SectionHeader(
+                        title: 'Recent Bookings',
+                        actionLabel: 'See All',
+                        onAction: widget.onViewBookings,
                       ),
-                    ),
+                    ).animate().fadeIn(delay: 280.ms),
                   ),
-          ],
-        ),
-      ),
-      bottomNavigationBar: _buildBottomNav(),
+                  SliverToBoxAdapter(
+                    child:
+                        _buildRecentBookings().animate().fadeIn(delay: 320.ms),
+                  ),
+                ],
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                    child: _buildTopProsHeader(verifiedCount),
+                  ).animate().fadeIn(delay: 360.ms),
+                ),
+                topThree.isEmpty
+                    ? SliverToBoxAdapter(child: _buildEmptyPros())
+                    : SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, i) {
+                              final pro = topThree[i];
+                              // Wrap only the first card with the tour highlight
+                              // so the spotlight is tight around a single item.
+                              final card = ProfessionalCard(
+                                professional: pro,
+                                onTap: () =>
+                                    widget.onProfessionalTap?.call(pro),
+                              )
+                                  .animate()
+                                  .fadeIn(delay: (400 + i * 70).ms)
+                                  .slideX(begin: 0.04, end: 0);
+
+                              if (i == 0) {
+                                return CustomerTourShowcase.wrap(
+                                  key: _keys.topProsKey,
+                                  stepName: 'topPros',
+                                  showcaseContext: _showcaseContext,
+                                  child: card,
+                                );
+                              }
+                              return card;
+                            },
+                            childCount: topThree.length,
+                          ),
+                        ),
+                      ),
+              ],
+            ),
+          ),
+          bottomNavigationBar: _buildBottomNav(),
+        );
+      },
+    );
+  }
+
+  // ── TOP PROS SECTION HEADER (with tour wrap on "See All") ─────────────────
+
+  Widget _buildTopProsHeader(int verifiedCount) {
+    return SectionHeader(
+      title: 'Top Professionals',
+      actionLabel: verifiedCount > 0 ? 'See All' : null,
+      onAction: verifiedCount > 0 ? _openAllProfessionals : null,
     );
   }
 
@@ -722,6 +826,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
+                      // ── Logo / app name ────────────────────────────────
                       Row(
                         children: [
                           Container(
@@ -760,56 +865,63 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                           ),
                         ],
                       ),
+                      // ── Notification bell (tour step 5) + Profile avatar ──
                       Row(
                         children: [
-                          IconButton(
-                            onPressed: () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => NotificationsScreen(
-                                    userId: widget.user?.id ?? '',
-                                  ),
-                                ),
-                              );
-                              if (mounted) {
-                                await _fetchUnreadCount();
-                                widget.onNotificationsViewed?.call();
-                              }
-                            },
-                            icon: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.12),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(
-                                    Icons.notifications_outlined,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
-                                if (_unreadNotifCount > 0)
-                                  Positioned(
-                                    top: 7,
-                                    right: 7,
-                                    child: Container(
-                                      width: 7,
-                                      height: 7,
-                                      decoration: const BoxDecoration(
-                                        color: Color(0xFFFF3B30),
-                                        shape: BoxShape.circle,
-                                      ),
+                          // TOUR STEP 5 — notifications bell
+                          CustomerTourShowcase.wrap(
+                            key: _keys.notificationsKey,
+                            stepName: 'notifications',
+                            showcaseContext: _showcaseContext,
+                            child: IconButton(
+                              onPressed: () async {
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => NotificationsScreen(
+                                      userId: widget.user?.id ?? '',
                                     ),
                                   ),
-                              ],
+                                );
+                                if (mounted) {
+                                  await _fetchUnreadCount();
+                                  widget.onNotificationsViewed?.call();
+                                }
+                              },
+                              icon: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Icon(
+                                      Icons.notifications_outlined,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                  if (_unreadNotifCount > 0)
+                                    Positioned(
+                                      top: 7,
+                                      right: 7,
+                                      child: Container(
+                                        width: 7,
+                                        height: 7,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFFFF3B30),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
                             ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
                           ),
                           const SizedBox(width: 8),
                           IconButton(
@@ -911,13 +1023,19 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             shape: BoxShape.circle, color: Colors.white.withOpacity(opacity)),
       );
 
-  // ── CTA ──────────────────────────────────────────────────────────────────
+  // ── CTA (TOUR STEP 1) ─────────────────────────────────────────────────────
 
-  Widget _buildRequestCTA() => GestureDetector(
+  Widget _buildRequestCTA() {
+    // TOUR STEP 1 — Request Service CTA
+    return CustomerTourShowcase.wrap(
+      key: _keys.requestServiceKey,
+      stepName: 'requestService',
+      showcaseContext: _showcaseContext,
+      child: GestureDetector(
         onTap: widget.onRequestService,
         child: Stack(
           children: [
-            // ── Main button ───────────────────────────────────────────────
+            // ── Main button ────────────────────────────────────────────
             Container(
               margin: const EdgeInsets.only(top: 20),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
@@ -978,37 +1096,32 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                 ),
               ]),
             ),
-
-            // ── Moving light / shimmer overlay ────────────────────────────
+            // ── Moving light / shimmer overlay ────────────────────────
             Positioned.fill(
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(24),
                 child: IgnorePointer(
                   child: Shimmer.fromColors(
                     baseColor: Colors.white.withOpacity(0.01),
-                    highlightColor: const Color.fromARGB(255, 182, 230, 27)
-                        .withOpacity(0.6),
-                    period: const Duration(seconds: 4),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.10),
-                      ),
-                    ),
+                    highlightColor: Colors.white.withOpacity(0.06),
+                    child: Container(color: Colors.white),
                   ),
                 ),
               ),
             ),
           ],
         ),
-      );
+      ),
+    );
+  }
 
-  // ── SERVICE OFFERS ────────────────────────────────────────────────────────
+  // ── SERVICE OFFERS SECTION (TOUR STEPS 2 + 3) ────────────────────────────
 
   Widget _buildServiceOffers() {
+    final hasSearch = _serviceSearch.isNotEmpty;
     final allFiltered = _filteredServices;
     final catHasPro = _hasProForCategory(_selectedSkill);
-    final hasSearch = _serviceSearch.trim().isNotEmpty;
-    // Total count before search — used for the badge
+
     final totalInCategory = _usingDbOffers
         ? (_selectedSkill == 'All'
             ? widget.serviceOffers.length
@@ -1022,7 +1135,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // ── Section header with count badge ────────────────────────────
+        // ── Section header with count badge ─────────────────────────
         Row(
           children: [
             const Expanded(child: SectionHeader(title: 'Service Offers')),
@@ -1046,7 +1159,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ),
         const SizedBox(height: 14),
 
-        // ── Search bar ──────────────────────────────────────────────────
+        // ── Search bar ──────────────────────────────────────────────
         Container(
           height: 42,
           decoration: BoxDecoration(
@@ -1088,80 +1201,92 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ),
         const SizedBox(height: 12),
 
-        // ── Category filter chips ───────────────────────────────────────
-        SizedBox(
-          height: 40,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: _categories.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (context, i) {
-              final cat = _categories[i];
-              final selected = _selectedSkill == cat.label;
-              final hasAvail = _hasProForCategory(cat.label);
-              return FilterChip(
-                label: Text(cat.label),
-                selected: selected,
-                showCheckmark: false,
-                onSelected: (_) {
-                  setState(() => _selectedSkill = cat.label);
-                  widget.onFilterBySkill?.call(cat.label);
-                },
-                backgroundColor: Colors.white,
-                selectedColor: cat.color,
-                labelStyle: TextStyle(
-                  color: selected ? Colors.white : AppColors.textDark,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                ),
-                avatar: Stack(clipBehavior: Clip.none, children: [
-                  Icon(cat.icon,
-                      size: 16, color: selected ? Colors.white : cat.color),
-                  if (!hasAvail && cat.label != 'All')
-                    Positioned(
-                      top: -3,
-                      right: -4,
-                      child: Container(
-                          width: 6,
-                          height: 6,
-                          decoration: const BoxDecoration(
-                              color: Color(0xFFFF3B30),
-                              shape: BoxShape.circle)),
-                    ),
-                ]),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  side: BorderSide(
-                      color:
-                          selected ? Colors.transparent : Colors.grey.shade300),
-                ),
-              );
-            },
+        // ── Category filter chips (TOUR STEP 3) ─────────────────────
+        CustomerTourShowcase.wrap(
+          key: _keys.categoryFilterKey,
+          stepName: 'categoryFilter',
+          showcaseContext: _showcaseContext,
+          child: SizedBox(
+            height: 40,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _categories.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, i) {
+                final cat = _categories[i];
+                final selected = _selectedSkill == cat.label;
+                final hasAvail = _hasProForCategory(cat.label);
+                return FilterChip(
+                  label: Text(cat.label),
+                  selected: selected,
+                  showCheckmark: false,
+                  onSelected: (_) {
+                    setState(() => _selectedSkill = cat.label);
+                    widget.onFilterBySkill?.call(cat.label);
+                  },
+                  backgroundColor: Colors.white,
+                  selectedColor: cat.color,
+                  labelStyle: TextStyle(
+                    color: selected ? Colors.white : AppColors.textDark,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                  avatar: Stack(clipBehavior: Clip.none, children: [
+                    Icon(cat.icon,
+                        size: 16, color: selected ? Colors.white : cat.color),
+                    if (!hasAvail && cat.label != 'All')
+                      Positioned(
+                        top: -3,
+                        right: -4,
+                        child: Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                                color: Color(0xFFFF3B30),
+                                shape: BoxShape.circle)),
+                      ),
+                  ]),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                        color: selected
+                            ? Colors.transparent
+                            : Colors.grey.shade300),
+                  ),
+                );
+              },
+            ),
           ),
         ),
         const SizedBox(height: 10),
 
-        // ── Service list / grid ─────────────────────────────────────────
+        // ── Service list / grid (TOUR STEP 2) ───────────────────────
         if (!catHasPro && _selectedSkill != 'All' && !hasSearch)
           _buildNoProsForCategory(_selectedSkill)
         else if (allFiltered.isEmpty)
           _buildEmptySearch(hasSearch)
         else
-          SizedBox(
-            height: 232,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: allFiltered.length,
-              padding: const EdgeInsets.only(right: 20),
-              itemBuilder: (context, i) {
-                final s = allFiltered[i];
-                final available = _hasProForCategory(s.category);
-                return _ServiceCard(
-                  service: s,
-                  available: available,
-                  accentColor: _colorForCategory(s.category),
-                  onTap: available ? () => _openServiceDetail(s) : null,
-                ).animate().fadeIn(delay: (i * 60).ms);
-              },
+          // Wrap the scrollable list so the tour highlights the whole row
+          CustomerTourShowcase.wrap(
+            key: _keys.serviceOffersKey,
+            stepName: 'serviceOffers',
+            showcaseContext: _showcaseContext,
+            child: SizedBox(
+              height: 232,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: allFiltered.length,
+                padding: const EdgeInsets.only(right: 20),
+                itemBuilder: (context, i) {
+                  final s = allFiltered[i];
+                  final available = _hasProForCategory(s.category);
+                  return _ServiceCard(
+                    service: s,
+                    available: available,
+                    accentColor: _colorForCategory(s.category),
+                    onTap: available ? () => _openServiceDetail(s) : null,
+                  ).animate().fadeIn(delay: (i * 60).ms);
+                },
+              ),
             ),
           ),
       ]),
@@ -1288,9 +1413,17 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     }
   }
 
-  // ── RECENT BOOKINGS ───────────────────────────────────────────────────────
+  // ── RECENT BOOKINGS (TOUR STEP 8) ─────────────────────────────────────────
 
-  Widget _buildRecentBookings() => SizedBox(
+  Widget _buildRecentBookings() {
+    // Wrap only the first card with the tour highlight so the spotlight
+    // stays tight. The SizedBox wrapper provides the tour boundary.
+    return CustomerTourShowcase.wrap(
+      key: _keys.recentBookingsKey,
+      stepName: 'recentBookings',
+      showcaseContext: _showcaseContext,
+      isLast: true,
+      child: SizedBox(
         height: 110,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
@@ -1305,7 +1438,9 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             );
           },
         ),
-      );
+      ),
+    );
+  }
 
   // ── EMPTY PROS ────────────────────────────────────────────────────────────
 
@@ -1333,7 +1468,12 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ]),
       );
 
-  // ── BOTTOM NAV ────────────────────────────────────────────────────────────
+  // ── BOTTOM NAV (includes TOUR STEPS 6 + 7) ──────────────────────────────────
+  //
+  // Bookings (index 1) and Profile (index 2) nav items are wrapped directly
+  // with wrapAnchor(). ShowCaseWidget wraps the entire Scaffold so these keys
+  // are within its subtree. The package measures the real nav item position
+  // and correctly renders the tooltip above it.
 
   Widget _buildBottomNav() {
     const items = [
@@ -1341,6 +1481,8 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       {'icon': Icons.calendar_today_rounded, 'label': 'Bookings'},
       {'icon': Icons.person_rounded, 'label': 'Profile'},
     ];
+    final isLastStep = !widget.recentBookings.isNotEmpty;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1352,45 +1494,64 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ],
       ),
       child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: List.generate(items.length, (i) {
-                final active = i == widget.currentNavIndex;
-                return GestureDetector(
-                  onTap: () => widget.onNavTap?.call(i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: active
-                          ? AppColors.primary.withOpacity(0.1)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(items[i]['icon'] as IconData,
-                          color:
-                              active ? AppColors.primary : AppColors.textLight,
-                          size: 24),
-                      const SizedBox(height: 4),
-                      Text(items[i]['label'] as String,
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontWeight:
-                                  active ? FontWeight.w700 : FontWeight.w400,
-                              color: active
-                                  ? AppColors.primary
-                                  : AppColors.textLight)),
-                    ]),
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: List.generate(items.length, (i) {
+              final active = i == widget.currentNavIndex;
+              final navItem = GestureDetector(
+                onTap: () => widget.onNavTap?.call(i),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? AppColors.primary.withOpacity(0.1)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
                   ),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(items[i]['icon'] as IconData,
+                        color: active ? AppColors.primary : AppColors.textLight,
+                        size: 24),
+                    const SizedBox(height: 4),
+                    Text(items[i]['label'] as String,
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight:
+                                active ? FontWeight.w700 : FontWeight.w400,
+                            color: active
+                                ? AppColors.primary
+                                : AppColors.textLight)),
+                  ]),
+                ),
+              );
+
+              if (i == 1) {
+                return CustomerTourShowcase.wrapAnchor(
+                  key: _keys.bookingsTabKey,
+                  stepName: 'bookingsTab',
+                  showcaseContext: _showcaseContext,
+                  child: navItem,
                 );
-              }),
-            ),
-          )),
+              }
+              if (i == 2) {
+                return CustomerTourShowcase.wrapAnchor(
+                  key: _keys.profileTabKey,
+                  stepName: 'profileTab',
+                  showcaseContext: _showcaseContext,
+                  isLast: isLastStep,
+                  child: navItem,
+                );
+              }
+              return navItem;
+            }),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1429,6 +1590,9 @@ class _ServiceCard extends StatelessWidget {
                 offset: const Offset(0, 4),
               )
             ],
+            border: Border.all(
+              color: available ? Colors.transparent : Colors.grey.shade200,
+            ),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),
@@ -1441,9 +1605,6 @@ class _ServiceCard extends StatelessWidget {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // VIEW: render network URL (DB offer) or local asset
-                      // (hardcoded legacy). The `image` field holds whichever
-                      // is relevant for the current service source.
                       if (service.image.startsWith('http'))
                         Image.network(
                           service.image,

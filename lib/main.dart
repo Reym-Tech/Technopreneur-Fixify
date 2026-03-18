@@ -67,6 +67,7 @@ import 'package:fixify/presentation/screens/professional/pro_booking_detail_scre
 import 'package:fixify/presentation/screens/customer/schedule_review_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -91,6 +92,7 @@ import 'package:fixify/presentation/screens/customer/all_professionals_screen.da
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
 import 'package:fixify/presentation/screens/customer/review_screen.dart';
 import 'package:fixify/presentation/screens/customer/backjob_screen.dart';
+import 'package:fixify/presentation/screens/customer/rebook_screen.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
 import 'package:fixify/presentation/screens/customer/assessment_screen.dart';
 import 'package:fixify/presentation/screens/professional/dashboard_professional.dart';
@@ -836,6 +838,88 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  // ── REBOOK ────────────────────────────────────────────────────────────────
+
+  /// Navigates to RebookScreen with the completed booking pre-filled.
+  /// Called from BookingStatusScreen.onBookAgain.
+  void _navigateToRebook(BookingEntity booking) {
+    final model = _bookings.firstWhereOrNull((b) => b.id == booking.id);
+    if (model == null) return;
+    setState(() {
+      _selectedBooking = model;
+      _screen = 'rebook';
+    });
+  }
+
+  /// Controller: creates a new booking from RebookConfirmData (pre-filled
+  /// from the original completed booking), notifies the same professional,
+  /// and navigates to the new booking's status screen.
+  Future<void> _handleRebookConfirm(RebookConfirmData data) async {
+    if (_user == null) return;
+    try {
+      final booking = await _ds.createBooking(
+        customerId: data.customerId,
+        professionalId: data.professionalId,
+        serviceType: data.serviceType,
+        serviceTitle: data.serviceTitle,
+        scheduledDate: data.preferredDate,
+        address: data.address,
+        priceEstimate: data.priceEstimate,
+        latitude: data.latitude,
+        longitude: data.longitude,
+      );
+
+      _subscribeToBooking(booking);
+      await _refreshBookings();
+
+      // Notify the same professional — direct booking so they see it
+      // immediately as an assigned request, not an open broadcast.
+      if (data.professionalId != null) {
+        try {
+          final pro = _professionals
+              .firstWhereOrNull((p) => p.id == data.professionalId);
+          if (pro != null) {
+            await _notifDs.pushToUser(
+              targetUserId: pro.userId,
+              role: 'professional',
+              type: NotificationTypeStrings.bookingRequest,
+              title: 'Repeat Booking Request',
+              message: '${_user?.name ?? 'A customer'} has booked you again '
+                  'for "${data.serviceTitle ?? data.serviceType}". '
+                  'Please confirm the schedule.',
+              referenceId: booking.id,
+              referenceType: 'booking',
+            );
+          }
+        } catch (e) {
+          debugPrint('[Rebook] Could not notify professional: $e');
+        }
+      }
+
+      final created =
+          _bookings.firstWhereOrNull((b) => b.id == booking.id) ?? booking;
+      if (mounted) {
+        setState(() {
+          _selectedBooking = created;
+          _screen = 'booking_status';
+        });
+      }
+      _notify('Booking confirmed. Your handyman has been notified.');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    }
+  }
+
   // ── BACKJOB / WARRANTY ────────────────────────────────────────────────────
 
   /// Navigates to BackjobScreen for the currently selected completed booking.
@@ -1382,6 +1466,141 @@ class _MainAppState extends State<MainApp> {
     } catch (e) {
       debugPrint('Pull-to-refresh (customer) error: $e');
     }
+  }
+
+  // ── SHARE PROFILE ─────────────────────────────────────────────────────────
+
+  /// Builds the handyman's AYO profile link and shows a bottom sheet
+  /// with options to copy or share it. Uses Clipboard (no extra package
+  /// needed — flutter/services.dart is always available).
+  ///
+  /// The profile link format is:
+  ///   https://ayoapp.ph/pro/{professionalId}
+  ///
+  /// Even before the deep link is live this trains the share habit and the
+  /// URL is ready to activate when the web profile page launches.
+  void _shareProProfile() {
+    if (_pro == null || !mounted) return;
+    final link = 'https://ayoapp.ph/pro/${_pro!.id}';
+    final proName = _user?.name ?? 'My';
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDDDDDD),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Share Your AYO Profile',
+              style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1C1C1E)),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Send this link to customers so they can book $proName directly through AYO.',
+              style: const TextStyle(
+                  fontSize: 13, color: Color(0xFF8E8E93), height: 1.4),
+            ),
+            const SizedBox(height: 20),
+            // Link preview box
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF2F2F7),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(children: [
+                const Icon(Icons.link_rounded,
+                    size: 16, color: Color(0xFF8E8E93)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(link,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF1C1C1E),
+                          fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            // Action buttons
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: link));
+                    Navigator.pop(context);
+                    _notify('Profile link copied.');
+                  },
+                  icon: const Icon(Icons.copy_rounded, size: 16),
+                  label: const Text('Copy Link'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: BorderSide(color: AppColors.primary.withOpacity(0.4)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    // url_launcher is already a dependency — use it to
+                    // open the native share sheet via a data: URI.
+                    // Fallback: copy to clipboard if share is unavailable.
+                    final encoded =
+                        Uri.encodeComponent('Book me through AYO: $link');
+                    final whatsapp = Uri.parse('https://wa.me/?text=$encoded');
+                    if (await canLaunchUrl(whatsapp)) {
+                      await launchUrl(whatsapp,
+                          mode: LaunchMode.externalApplication);
+                    } else {
+                      Clipboard.setData(ClipboardData(text: link));
+                      _notify('Profile link copied.');
+                    }
+                  },
+                  icon: const Icon(Icons.send_rounded, size: 16),
+                  label: const Text('Share'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _refreshProfessionalDashboard() async {
@@ -2436,6 +2655,7 @@ class _MainAppState extends State<MainApp> {
       onApplyCredentials: () => setState(() => _screen = 'apply'),
       onViewVerification: () => setState(() => _screen = 'verification_status'),
       onManageServices: () => setState(() => _screen = 'my_services'),
+      onShareProfile: () => _shareProProfile(),
       onToggleAvailability: (isAvailable) async {
         if (_pro == null) return;
         try {
@@ -2941,16 +3161,11 @@ class _MainAppState extends State<MainApp> {
               : null,
           hasReviewed: _reviewedBookingIds.contains(_selectedBooking!.id),
           // Book Again CTA: shown for completed bookings that had an assigned
-          // professional. Re-uses the direct booking path by setting _selectedPro
-          // to the same professional before navigating to request_service.
+          // professional. Routes to RebookScreen (one-tap confirmation flow)
+          // instead of the full RequestServiceScreen wizard.
           onBookAgain: _selectedBooking!.status == BookingStatus.completed &&
                   _selectedBooking!.professionalId != null
-              ? (serviceType) {
-                  final pro = _professionals.firstWhereOrNull(
-                      (p) => p.id == _selectedBooking!.professionalId);
-                  if (pro == null) return;
-                  _navigateToDirectBooking(pro);
-                }
+              ? (booking) => _navigateToRebook(booking)
               : null,
           // Backjob CTA: shown for completed bookings still within their
           // warranty window. booking.isUnderWarranty is computed from
@@ -2991,6 +3206,17 @@ class _MainAppState extends State<MainApp> {
           booking: _selectedBooking!.toEntity(),
           onBack: () => setState(() => _screen = 'booking_status'),
           onSubmit: (data) => _handleBackjobSubmit(data),
+        );
+
+      // ── One-tap rebook confirmation screen ─────────────────────────────
+      // Pre-fills everything from the original completed booking.
+      // Customer only picks a date then taps Confirm — no wizard.
+      case 'rebook':
+        if (_selectedBooking == null) return _home();
+        return RebookScreen(
+          booking: _selectedBooking!.toEntity(),
+          onBack: () => setState(() => _screen = 'booking_status'),
+          onConfirm: (data) => _handleRebookConfirm(data),
         );
 
       case 'schedule_review':

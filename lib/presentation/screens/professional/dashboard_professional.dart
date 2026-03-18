@@ -10,14 +10,24 @@
 //      _pendingCount (which counts pending items in assigned _bookings —
 //      always 0 after a booking is claimed). This was causing stale
 //      "2 New Requests" banners to persist even after all requests were handled.
+//
+// FIRST-TIME USER TOUR (new):
+//   5. ShowCaseWidget wraps the entire Scaffold.
+//   6. SharedPreferences key 'professional_has_seen_tour' guards one-time launch.
+//   7. Tour scheduled inside ShowCaseWidget builder using builder context.
+//   8. ProfessionalTourShowcase.wrap() used for visible targets;
+//      wrapAnchor() used for bottom nav steps (TooltipPosition.top).
 
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:fixify/presentation/screens/professional/notificationhandyman.dart';
+import 'package:fixify/presentation/screens/professional/professional_tour_keys.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:showcaseview/showcaseview.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ProfessionalDashboardScreen extends StatefulWidget {
@@ -40,6 +50,10 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   final VoidCallback? onViewVerification;
   final VoidCallback? onViewReviews;
   final VoidCallback? onManageServices;
+
+  /// Called when the handyman taps "Share Profile".
+  /// The controller builds the share link and triggers the share sheet.
+  final VoidCallback? onShareProfile;
   final List<ReviewEntity> reviews;
   final Function(bool)? onToggleAvailability;
   final Function(int)? onNavTap;
@@ -64,6 +78,7 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.onViewVerification,
     this.onViewReviews,
     this.onManageServices,
+    this.onShareProfile,
     this.reviews = const [],
     this.onToggleAvailability,
     this.onNavTap,
@@ -85,6 +100,11 @@ class _ProfessionalDashboardScreenState
   late final NotificationDataSource _notifDs;
   RealtimeChannel? _notifChannel;
 
+  // ── Tour ──────────────────────────────────────────────────
+  final _keys = ProfessionalTourKeys.instance;
+  bool _tourScheduled = false;
+  late BuildContext _showcaseContext;
+
   @override
   void initState() {
     super.initState();
@@ -92,6 +112,7 @@ class _ProfessionalDashboardScreenState
     _notifDs = NotificationDataSource(Supabase.instance.client);
     _fetchUnreadCount();
     _subscribeToNotifications();
+    // Tour is scheduled inside ShowCaseWidget's builder context — see build().
   }
 
   @override
@@ -125,6 +146,21 @@ class _ProfessionalDashboardScreenState
   Future<void> _handleRefresh() async {
     await widget.onRefresh?.call();
     await _fetchUnreadCount();
+  }
+
+  // ── Tour ──────────────────────────────────────────────────
+
+  void _startTour(BuildContext showcaseContext) {
+    ShowCaseWidget.of(showcaseContext).startShowCase(_keys.orderedKeys());
+  }
+
+  Future<void> _markTourSeen() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(kProfessionalTourSeenKey, true);
+    } catch (e) {
+      debugPrint('[ProTour] Could not write prefs: $e');
+    }
   }
 
   // ── Derived stats ─────────────────────────────────────────
@@ -164,65 +200,93 @@ class _ProfessionalDashboardScreenState
     return widget.professional?.rating ?? 0.0;
   }
 
-  int get _totalJobs {
-    if (widget.reviews.isNotEmpty) return widget.reviews.length;
-    return widget.professional?.reviewCount ?? _completedCount;
-  }
+  // Total jobs = completed bookings, regardless of how many have reviews.
+  // Reviews are a subset of completed jobs — conflating the two causes the
+  // stat chip to under-count whenever not every job has received a review.
+  int get _totalJobs => _completedCount;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
-      // ── Pull-to-refresh wraps the entire CustomScrollView ──────────────
-      body: RefreshIndicator(
-        onRefresh: _handleRefresh,
-        color: AppColors.primary,
-        backgroundColor: Colors.white,
-        displacement: 60,
-        child: CustomScrollView(
-          // AlwaysScrollableScrollPhysics ensures RefreshIndicator fires even
-          // when content is shorter than the viewport.
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(child: _buildHeader()),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                child: _buildStatsRow(),
-              ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
+    return ShowCaseWidget(
+      onFinish: _markTourSeen,
+      onComplete: (_, __) {},
+      enableAutoScroll: true,
+      builder: (showcaseContext) {
+        _showcaseContext = showcaseContext;
+        if (!_tourScheduled) {
+          _tourScheduled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!mounted) return;
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              final seen = prefs.getBool(kProfessionalTourSeenKey) ?? false;
+              if (!seen && mounted) _startTour(showcaseContext);
+            } catch (e) {
+              debugPrint('[ProTour] Could not read prefs: $e');
+            }
+          });
+        }
+
+        return Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          // ── Pull-to-refresh wraps the entire CustomScrollView ──────────
+          body: RefreshIndicator(
+            onRefresh: _handleRefresh,
+            color: AppColors.primary,
+            backgroundColor: Colors.white,
+            displacement: 60,
+            child: CustomScrollView(
+              // AlwaysScrollableScrollPhysics ensures RefreshIndicator fires even
+              // when content is shorter than the viewport.
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(child: _buildHeader()),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                    // TOUR STEP 3 — stats row
+                    child: ProfessionalTourShowcase.wrap(
+                      key: _keys.statsRowKey,
+                      stepName: 'statsRow',
+                      showcaseContext: _showcaseContext,
+                      child: _buildStatsRow(),
+                    ),
+                  ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
+                ),
+                if (!(widget.professional?.verified ?? false))
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                      child: _buildVerificationBanner(),
+                    ).animate().fadeIn(delay: 180.ms),
+                  ),
+                // FIX: Use openRequestCount — this reflects actual open/unassigned
+                // requests, not pending items in already-assigned bookings.
+                if (widget.openRequestCount > 0)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                      child: _buildPendingBanner(),
+                    ).animate().fadeIn(delay: 200.ms),
+                  ),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                    child: _buildMenuCards(),
+                  ).animate().fadeIn(delay: 250.ms),
+                ),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+                    child: _buildRatingsCard(),
+                  ).animate().fadeIn(delay: 320.ms),
+                ),
+              ],
             ),
-            if (!(widget.professional?.verified ?? false))
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                  child: _buildVerificationBanner(),
-                ).animate().fadeIn(delay: 180.ms),
-              ),
-            // FIX: Use openRequestCount — this reflects actual open/unassigned
-            // requests, not pending items in already-assigned bookings.
-            if (widget.openRequestCount > 0)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                  child: _buildPendingBanner(),
-                ).animate().fadeIn(delay: 200.ms),
-              ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                child: _buildMenuCards(),
-              ).animate().fadeIn(delay: 250.ms),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-                child: _buildRatingsCard(),
-              ).animate().fadeIn(delay: 320.ms),
-            ),
-          ],
-        ),
-      ),
-      bottomNavigationBar: _buildBottomNav(),
+          ),
+          bottomNavigationBar: _buildBottomNav(),
+        );
+      },
     );
   }
 
@@ -322,49 +386,74 @@ class _ProfessionalDashboardScreenState
                               letterSpacing: -0.3,
                             )),
                       ]),
-                      // Bell with dynamic red dot
-                      IconButton(
-                        onPressed: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => HandymanNotificationsScreen(
-                                userId: widget.user?.id ?? '',
-                              ),
+                      // Share + Bell row — TOUR STEP 2 wraps the bell only
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        GestureDetector(
+                          onTap: widget.onShareProfile,
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                          );
-                          _fetchUnreadCount();
-                        },
-                        icon: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Icon(
-                                Icons.notifications_outlined,
-                                color: Colors.white,
-                                size: 20,
-                              ),
+                            child: const Icon(
+                              Icons.share_rounded,
+                              color: Colors.white,
+                              size: 18,
                             ),
-                            if (_unreadNotifCount > 0)
-                              const Positioned(
-                                top: 7,
-                                right: 7,
-                                child: CircleAvatar(
-                                  radius: 3.5,
-                                  backgroundColor: Color(0xFFFF3B30),
-                                ),
-                              ),
-                          ],
+                          ),
                         ),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
+                        const SizedBox(width: 8),
+                        // Bell with dynamic red dot — TOUR STEP 2
+                        ProfessionalTourShowcase.wrap(
+                          key: _keys.notificationsKey,
+                          stepName: 'notifications',
+                          showcaseContext: _showcaseContext,
+                          child: IconButton(
+                            onPressed: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => HandymanNotificationsScreen(
+                                    userId: widget.user?.id ?? '',
+                                  ),
+                                ),
+                              );
+                              _fetchUnreadCount();
+                            },
+                            icon: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.notifications_outlined,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                if (_unreadNotifCount > 0)
+                                  const Positioned(
+                                    top: 7,
+                                    right: 7,
+                                    child: CircleAvatar(
+                                      radius: 3.5,
+                                      backgroundColor: Color(0xFFFF3B30),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ),
+                      ]), // end share + bell Row
                     ],
                   ),
                   const SizedBox(height: 24),
@@ -473,32 +562,37 @@ class _ProfessionalDashboardScreenState
                           ],
                         ),
                       ),
-                      // Availability toggle
-                      Column(
-                        children: [
-                          Switch(
-                            value: _available,
-                            onChanged: (v) {
-                              setState(() => _available = v);
-                              widget.onToggleAvailability?.call(v);
-                            },
-                            activeColor: const Color(0xFF34C759),
-                            activeTrackColor:
-                                const Color(0xFF34C759).withOpacity(0.3),
-                            inactiveThumbColor: Colors.white,
-                            inactiveTrackColor: Colors.white.withOpacity(0.2),
-                          ),
-                          Text(
-                            _available ? 'Online' : 'Offline',
-                            style: TextStyle(
-                              color: _available
-                                  ? const Color(0xFF34C759)
-                                  : Colors.white.withOpacity(0.5),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
+                      // Availability toggle — TOUR STEP 1
+                      ProfessionalTourShowcase.wrap(
+                        key: _keys.availabilityKey,
+                        stepName: 'availability',
+                        showcaseContext: _showcaseContext,
+                        child: Column(
+                          children: [
+                            Switch(
+                              value: _available,
+                              onChanged: (v) {
+                                setState(() => _available = v);
+                                widget.onToggleAvailability?.call(v);
+                              },
+                              activeColor: const Color(0xFF34C759),
+                              activeTrackColor:
+                                  const Color(0xFF34C759).withOpacity(0.3),
+                              inactiveThumbColor: Colors.white,
+                              inactiveTrackColor: Colors.white.withOpacity(0.2),
                             ),
-                          ),
-                        ],
+                            Text(
+                              _available ? 'Online' : 'Offline',
+                              style: TextStyle(
+                                color: _available
+                                    ? const Color(0xFF34C759)
+                                    : Colors.white.withOpacity(0.5),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -765,50 +859,79 @@ class _ProfessionalDashboardScreenState
     final openCount = widget.openRequestCount;
     return Column(
       children: [
-        _menuCard(
-          icon: Icons.calendar_month_rounded,
-          title: 'Booking Requests',
-          subtitle: 'View and accept new service requests',
-          // FIX: badge reflects open/unassigned requests, not pending assigned ones
-          badge: openCount > 0 ? '$openCount' : null,
-          badgeColor: const Color(0xFFFF3B30),
-          onTap: widget.onViewRequests,
+        // TOUR STEP 4
+        ProfessionalTourShowcase.wrap(
+          key: _keys.bookingRequestsKey,
+          stepName: 'bookingRequests',
+          showcaseContext: _showcaseContext,
+          child: _menuCard(
+            icon: Icons.calendar_month_rounded,
+            title: 'Booking Requests',
+            subtitle: 'View and accept new service requests',
+            badge: openCount > 0 ? '$openCount' : null,
+            badgeColor: const Color(0xFFFF3B30),
+            onTap: widget.onViewRequests,
+          ),
         ),
         const SizedBox(height: 12),
-        _menuCard(
-          icon: Icons.history_rounded,
-          title: 'Booking History',
-          subtitle: 'View your past and ongoing services',
-          badge: widget.bookings
-                  .where((b) => b.status == BookingStatus.inProgress)
-                  .isNotEmpty
-              ? 'Ongoing'
-              : null,
-          badgeColor: const Color(0xFF007AFF),
-          onTap: widget.onViewHistory,
+        // TOUR STEP 5
+        ProfessionalTourShowcase.wrap(
+          key: _keys.bookingHistoryKey,
+          stepName: 'bookingHistory',
+          showcaseContext: _showcaseContext,
+          child: _menuCard(
+            icon: Icons.history_rounded,
+            title: 'Booking History',
+            subtitle: 'View your past and ongoing services',
+            badge: widget.bookings
+                    .where((b) => b.status == BookingStatus.inProgress)
+                    .isNotEmpty
+                ? 'Ongoing'
+                : null,
+            badgeColor: const Color(0xFF007AFF),
+            onTap: widget.onViewHistory,
+          ),
         ),
         const SizedBox(height: 12),
-        _menuCard(
-          icon: Icons.payments_rounded,
-          title: 'Earnings Summary',
-          subtitle: 'View your earnings and job history',
-          onTap: widget.onViewEarnings,
+        // TOUR STEP 6
+        ProfessionalTourShowcase.wrap(
+          key: _keys.earningsSummaryKey,
+          stepName: 'earningsSummary',
+          showcaseContext: _showcaseContext,
+          child: _menuCard(
+            icon: Icons.payments_rounded,
+            title: 'Earnings Summary',
+            subtitle: 'Track what you have earned through AYO',
+            onTap: widget.onViewEarnings,
+          ),
         ),
         const SizedBox(height: 12),
-        _menuCard(
-          icon: Icons.workspace_premium_rounded,
-          title: 'My Credentials',
-          subtitle: 'Submit credentials & track verification',
-          badge: widget.pendingApplications > 0 ? 'Pending' : null,
-          badgeColor: const Color(0xFFFF9500),
-          onTap: widget.onViewVerification,
+        // TOUR STEP 7
+        ProfessionalTourShowcase.wrap(
+          key: _keys.myCredentialsKey,
+          stepName: 'myCredentials',
+          showcaseContext: _showcaseContext,
+          child: _menuCard(
+            icon: Icons.workspace_premium_rounded,
+            title: 'My Credentials',
+            subtitle: 'Submit credentials & track verification',
+            badge: widget.pendingApplications > 0 ? 'Pending' : null,
+            badgeColor: const Color(0xFFFF9500),
+            onTap: widget.onViewVerification,
+          ),
         ),
         const SizedBox(height: 12),
-        _menuCard(
-          icon: Icons.home_repair_service_rounded,
-          title: 'My Services',
-          subtitle: 'Select the services you offer to customers',
-          onTap: widget.onManageServices,
+        // TOUR STEP 8
+        ProfessionalTourShowcase.wrap(
+          key: _keys.myServicesKey,
+          stepName: 'myServices',
+          showcaseContext: _showcaseContext,
+          child: _menuCard(
+            icon: Icons.home_repair_service_rounded,
+            title: 'My Services',
+            subtitle: 'Select the services you offer to customers',
+            onTap: widget.onManageServices,
+          ),
         ),
       ],
     );
@@ -932,32 +1055,62 @@ class _ProfessionalDashboardScreenState
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
-                'Ratings Overview',
+                'Your Reputation',
                 style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textDark),
               ),
-              if (widget.onViewReviews != null)
-                GestureDetector(
-                  onTap: widget.onViewReviews,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Text(
-                      'See All',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
+              Row(children: [
+                if (widget.onShareProfile != null)
+                  GestureDetector(
+                    onTap: widget.onShareProfile,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.share_rounded,
+                              size: 12, color: AppColors.primary),
+                          SizedBox(width: 5),
+                          Text('Share',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.primary)),
+                        ],
                       ),
                     ),
                   ),
-                ),
+                if (widget.onShareProfile != null &&
+                    widget.onViewReviews != null)
+                  const SizedBox(width: 8),
+                if (widget.onViewReviews != null)
+                  GestureDetector(
+                    onTap: widget.onViewReviews,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text(
+                        'See All',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ),
+                  ),
+              ]),
             ],
           ),
           const SizedBox(height: 20),
@@ -977,7 +1130,7 @@ class _ProfessionalDashboardScreenState
                             color: AppColors.textLight)),
                     const SizedBox(height: 4),
                     const Text(
-                      'Reviews from completed bookings\nwill appear here.',
+                      'Complete jobs through AYO to\nbuild your reputation.',
                       textAlign: TextAlign.center,
                       style:
                           TextStyle(fontSize: 12, color: AppColors.textLight),
@@ -1160,6 +1313,10 @@ class _ProfessionalDashboardScreenState
   }
 
   // ── BOTTOM NAV ────────────────────────────────────────────
+  //
+  // Nav items for tour steps 9-11 (Requests, Earnings, Profile) are wrapped
+  // directly here. ShowCaseWidget wraps the entire Scaffold so these keys
+  // are within its subtree and the tooltip renders above the nav bar correctly.
 
   Widget _buildBottomNav() {
     const items = [
@@ -1186,7 +1343,7 @@ class _ProfessionalDashboardScreenState
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: List.generate(items.length, (i) {
               final active = i == widget.currentNavIndex;
-              return GestureDetector(
+              final navItem = GestureDetector(
                 onTap: () => widget.onNavTap?.call(i),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
@@ -1218,6 +1375,35 @@ class _ProfessionalDashboardScreenState
                   ),
                 ),
               );
+
+              // Wrap tour-relevant nav items directly so the package measures
+              // their real screen position and renders the tooltip above them.
+              if (i == 1) {
+                return ProfessionalTourShowcase.wrapAnchor(
+                  key: _keys.requestsNavKey,
+                  stepName: 'requestsNav',
+                  showcaseContext: _showcaseContext,
+                  child: navItem,
+                );
+              }
+              if (i == 2) {
+                return ProfessionalTourShowcase.wrapAnchor(
+                  key: _keys.earningsNavKey,
+                  stepName: 'earningsNav',
+                  showcaseContext: _showcaseContext,
+                  child: navItem,
+                );
+              }
+              if (i == 3) {
+                return ProfessionalTourShowcase.wrapAnchor(
+                  key: _keys.profileNavKey,
+                  stepName: 'profileNav',
+                  showcaseContext: _showcaseContext,
+                  isLast: true,
+                  child: navItem,
+                );
+              }
+              return navItem;
             }),
           ),
         ),

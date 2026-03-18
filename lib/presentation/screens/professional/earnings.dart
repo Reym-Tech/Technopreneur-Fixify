@@ -403,7 +403,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                             fontSize: 20,
                             fontWeight: FontWeight.w800,
                             letterSpacing: -0.3)),
-                    Text('Track your income and transactions',
+                    Text('Everything you have earned through AYO',
                         style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.6),
                             fontSize: 13)),
@@ -491,9 +491,9 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Total Earnings',
+          const Text('Earned through AYO',
               style: TextStyle(
-                  color: Colors.white, fontSize: 14, letterSpacing: 1)),
+                  color: Colors.white, fontSize: 14, letterSpacing: 0.3)),
           const SizedBox(height: 8),
           Text(_fmt(_totalEarnings),
               style: const TextStyle(
@@ -502,7 +502,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text(
-            'From ${_completed.length} completed job${_completed.length == 1 ? '' : 's'}',
+            '${_completed.length} job${_completed.length == 1 ? '' : 's'} completed on AYO',
             style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
           ),
@@ -616,7 +616,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Total Earnings',
+              Text('Total earned through AYO',
                   style: TextStyle(fontSize: 14, color: Colors.grey[600])),
               const SizedBox(height: 4),
               Text(_fmt(_totalEarnings),
