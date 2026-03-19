@@ -55,10 +55,9 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   /// The controller builds the share link and triggers the share sheet.
   final VoidCallback? onShareProfile;
 
-  /// Called when the handyman taps an upgrade CTA on the subscription card.
-  /// In Stage 1 (manual flow) the controller shows a contact/request sheet.
-  /// In Stage 2 (PayMongo) this triggers the payment link flow.
-  final VoidCallback? onRequestUpgrade;
+  /// Called when the handyman taps "My Plan" menu card.
+  /// Navigates to the SubscriptionScreen.
+  final VoidCallback? onViewPlan;
 
   /// True when the handyman already has a pending upgrade request awaiting
   /// admin review. Suppresses the upgrade button to prevent duplicate requests.
@@ -88,7 +87,7 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.onViewReviews,
     this.onManageServices,
     this.onShareProfile,
-    this.onRequestUpgrade,
+    this.onViewPlan,
     this.hasPendingUpgrade = false,
     this.reviews = const [],
     this.onToggleAvailability,
@@ -266,15 +265,6 @@ class _ProfessionalDashboardScreenState
                       child: _buildStatsRow(),
                     ),
                   ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
-                ),
-                // ── Subscription status card ──────────────────────────────────
-                // Always visible — shows current tier and upgrade CTA for
-                // Tier 0 and Tier 1 handymen, and plan details for Tier 2.
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                    child: _buildSubscriptionCard(),
-                  ).animate().fadeIn(delay: 170.ms),
                 ),
                 if (!(widget.professional?.verified ?? false))
                   SliverToBoxAdapter(
@@ -529,45 +519,99 @@ class _ProfessionalDashboardScreenState
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(children: [
-                              Flexible(
-                                child: Text(name,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                    overflow: TextOverflow.ellipsis),
-                              ),
-                              if (verified) ...[
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF34C759)
-                                        .withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                        color: const Color(0xFF34C759)
-                                            .withOpacity(0.5)),
-                                  ),
-                                  child: const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.verified_rounded,
-                                          color: Color(0xFF34C759), size: 11),
-                                      SizedBox(width: 3),
-                                      Text('Verified',
-                                          style: TextStyle(
-                                              color: Color(0xFF34C759),
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w700)),
-                                    ],
-                                  ),
+                            // Name — full width, never crowded by badges
+                            Text(name,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
                                 ),
+                                overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 5),
+                            // Badges row — Verified + Plan tier on their own line
+                            Row(
+                              children: [
+                                if (verified)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF34C759)
+                                          .withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                          color: const Color(0xFF34C759)
+                                              .withOpacity(0.5)),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.verified_rounded,
+                                            color: Color(0xFF34C759), size: 11),
+                                        SizedBox(width: 3),
+                                        Text('Verified',
+                                            style: TextStyle(
+                                                color: Color(0xFF34C759),
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w700)),
+                                      ],
+                                    ),
+                                  ),
+                                // Plan tier badge — only visible for Pro / Elite
+                                Builder(builder: (_) {
+                                  final tier =
+                                      (widget.professional?.subscriptionTier ??
+                                              0)
+                                          .clamp(0, 2);
+                                  if (tier == 0) return const SizedBox.shrink();
+                                  const tierLabels = [
+                                    '',
+                                    'AYO Pro',
+                                    'AYO Elite'
+                                  ];
+                                  const tierColors = [
+                                    Colors.transparent,
+                                    Color(0xFF007AFF),
+                                    Color(0xFFFF9500),
+                                  ];
+                                  const tierIcons = [
+                                    null,
+                                    Icons.workspace_premium_rounded,
+                                    Icons.star_rounded,
+                                  ];
+                                  return Padding(
+                                    padding:
+                                        EdgeInsets.only(left: verified ? 6 : 0),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            tierColors[tier].withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                            color: tierColors[tier]
+                                                .withOpacity(0.5)),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(tierIcons[tier],
+                                              color: tierColors[tier],
+                                              size: 11),
+                                          const SizedBox(width: 3),
+                                          Text(tierLabels[tier],
+                                              style: TextStyle(
+                                                  color: tierColors[tier],
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w700)),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }),
                               ],
-                            ]),
+                            ),
                             const SizedBox(height: 4),
                             Text(
                               widget.professional?.skills.isNotEmpty == true
@@ -626,246 +670,6 @@ class _ProfessionalDashboardScreenState
         ],
       ),
     ).animate().fadeIn().slideY(begin: -0.04, end: 0);
-  }
-
-  // ── SUBSCRIPTION CARD ─────────────────────────────────────────────────────
-  // Shows the handyman's current plan with included features and an upgrade CTA.
-  // Tier 0 → upgrade to Pro. Tier 1 → upgrade to Elite. Tier 2 → shows badge.
-
-  Widget _buildSubscriptionCard() {
-    final pro = widget.professional;
-    final tier = pro?.subscriptionTier ?? 0;
-    final effectiveTier = (pro?.tierExpiresAt == null ||
-            DateTime.now().isBefore(pro!.tierExpiresAt!))
-        ? tier
-        : 0;
-
-    // Colors and labels per tier
-    const tierColors = [
-      Color(0xFF8E8E93), // Free — grey
-      Color(0xFF007AFF), // Pro — blue
-      Color(0xFFFF9500), // Elite — amber
-    ];
-    const tierLabels = ['Free', 'AYO Pro', 'AYO Elite'];
-    const tierIcons = [
-      Icons.person_outline_rounded,
-      Icons.workspace_premium_rounded,
-      Icons.star_rounded,
-    ];
-
-    final color = tierColors[effectiveTier.clamp(0, 2)];
-    final label = tierLabels[effectiveTier.clamp(0, 2)];
-    final icon = tierIcons[effectiveTier.clamp(0, 2)];
-
-    // Feature lists per tier
-    const tierFeatures = [
-      ['Listed in search', 'Up to 2 active jobs', 'Receive ratings'],
-      [
-        'Higher search ranking',
-        'Up to 10 active jobs',
-        'Priority job notifications',
-        'AYO Pro badge',
-      ],
-      [
-        'Top search placement',
-        'Unlimited active jobs',
-        'Featured in customer home',
-        'Profile highlighted',
-        'AYO Elite badge',
-      ],
-    ];
-
-    final features = tierFeatures[effectiveTier.clamp(0, 2)];
-    final hasUpgrade = effectiveTier < 2;
-    final nextLabel = effectiveTier == 0 ? 'AYO Pro' : 'AYO Elite';
-
-    // Expiry notice
-    String? expiryNote;
-    if (effectiveTier > 0 && pro?.tierExpiresAt != null) {
-      final days = pro!.tierExpiresAt!.difference(DateTime.now()).inDays;
-      if (days <= 7) {
-        expiryNote = days <= 0
-            ? 'Your plan expired. Tap below to renew.'
-            : 'Plan expires in $days day${days == 1 ? '' : 's'}.';
-      }
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3), width: 1.5),
-        boxShadow: [
-          BoxShadow(
-              color: color.withOpacity(0.08),
-              blurRadius: 12,
-              offset: const Offset(0, 4)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Header row ───────────────────────────────────────────────────
-          Row(children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: color, size: 22),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Current Plan',
-                      style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.textLight)),
-                  const SizedBox(height: 1),
-                  Text(label,
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                          color: color)),
-                ],
-              ),
-            ),
-            // Active badge
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(effectiveTier == 0 ? 'Active' : 'Active',
-                  style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w700, color: color)),
-            ),
-          ]),
-
-          const SizedBox(height: 14),
-          const Divider(height: 1, color: Color(0xFFF0F0F0)),
-          const SizedBox(height: 12),
-
-          // ── Features list ────────────────────────────────────────────────
-          ...features.map((f) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(children: [
-                  Icon(Icons.check_circle_rounded, size: 14, color: color),
-                  const SizedBox(width: 8),
-                  Text(f,
-                      style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textMedium,
-                          fontWeight: FontWeight.w500)),
-                ]),
-              )),
-
-          // ── Expiry warning ───────────────────────────────────────────────
-          if (expiryNote != null) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF3B30).withOpacity(0.07),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: const Color(0xFFFF3B30).withOpacity(0.25)),
-              ),
-              child: Row(children: [
-                const Icon(Icons.warning_amber_rounded,
-                    size: 14, color: Color(0xFFFF3B30)),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(expiryNote,
-                      style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFFFF3B30),
-                          fontWeight: FontWeight.w600)),
-                ),
-              ]),
-            ),
-          ],
-
-          // ── Upgrade CTA / Pending state ──────────────────────────────────
-          if (hasUpgrade) ...[
-            const SizedBox(height: 14),
-            if (widget.hasPendingUpgrade)
-              // Pending banner — request already submitted, awaiting admin
-              Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF9500).withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                      color: const Color(0xFFFF9500).withOpacity(0.3)),
-                ),
-                child: Row(children: [
-                  const Icon(Icons.hourglass_top_rounded,
-                      size: 16, color: Color(0xFFFF9500)),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Upgrade Request Pending',
-                            style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFFFF9500))),
-                        SizedBox(height: 2),
-                        Text(
-                          'Your request is under review. '
-                          'You will be notified when it is approved.',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textMedium,
-                              height: 1.4),
-                        ),
-                      ],
-                    ),
-                  ),
-                ]),
-              )
-            else ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: widget.onRequestUpgrade,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: color,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: Text('Upgrade to $nextLabel',
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w700)),
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Center(
-                child: Text(
-                  'Submit a request — admin will activate within 24 hours.',
-                  style: TextStyle(fontSize: 11, color: AppColors.textLight),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
-          ],
-        ],
-      ),
-    );
   }
 
   // ── STATS ROW ─────────────────────────────────────────────
@@ -1158,12 +962,40 @@ class _ProfessionalDashboardScreenState
           showcaseContext: showcaseContext,
           child: _menuCard(
             icon: Icons.payments_rounded,
-            iconColor: const Color(0xFF00B8A9), // teal
+            iconColor: const Color(0xFF00B8A9),
             title: 'Earnings Summary',
             subtitle: 'Track what you have earned through AYO',
             onTap: widget.onViewEarnings,
           ),
         ),
+        const SizedBox(height: 12),
+        // My Plan card — shows current tier with subtle upgrade hint
+        Builder(builder: (_) {
+          final tier = (widget.professional?.subscriptionTier ?? 0).clamp(0, 2);
+          const tierLabels = ['Free', 'AYO Pro', 'AYO Elite'];
+          const tierColors = [
+            Color(0xFF8E8E93),
+            Color(0xFF007AFF),
+            Color(0xFFFF9500),
+          ];
+          const tierIcons = [
+            Icons.person_outline_rounded,
+            Icons.workspace_premium_rounded,
+            Icons.star_rounded,
+          ];
+          const subtitles = [
+            'Upgrade to Pro or Elite to grow faster',
+            'You\'re on AYO Pro — tap to manage',
+            'You\'re on AYO Elite — tap to manage',
+          ];
+          return _menuCard(
+            icon: tierIcons[tier],
+            iconColor: tierColors[tier],
+            title: 'My Plan  ·  ${tierLabels[tier]}',
+            subtitle: subtitles[tier],
+            onTap: widget.onViewPlan,
+          );
+        }),
         const SizedBox(height: 12),
         // TOUR STEP 7
         ProfessionalTourShowcase.wrap(

@@ -41,6 +41,16 @@
 // SCHEDULE UI SIMPLIFICATION:
 //   • onProposeAlternative no longer passed to ScheduleReviewScreen (removed from UI).
 //   • Parameter retained in ScheduleReviewScreen for API compat but unused.
+//
+// SUBSCRIPTION SCREEN (applied):
+//   • SubscriptionScreen imported.
+//   • _screen == 'my_plan' case added to _professionalFlow().
+//   • ProfessionalDashboardScreen now receives onViewPlan instead of
+//     onRequestUpgrade / hasPendingUpgrade. The old _handleRequestUpgrade()
+//     bottom sheet in main.dart is replaced by the checkout sheet inside
+//     SubscriptionScreen, keeping the controller lean.
+//   • onRequestUpgrade on SubscriptionScreen calls _ds.submitUpgradeRequest()
+//     directly with the targetTier chosen by the user in the pricing page.
 
 // ── MVC SEPARATION NOTES ──────────────────────────────────────────────────
 // MODEL  : BookingModel, UserModel, ProfessionalModel, etc. live in
@@ -114,6 +124,7 @@ import 'package:fixify/presentation/screens/professional/my_services_screen.dart
 import 'package:fixify/data/datasources/service_selection_request_datasource.dart';
 import 'package:fixify/presentation/screens/professional/propose_service_screen.dart';
 import 'package:fixify/presentation/screens/customer/privacy_policy_screen.dart';
+import 'package:fixify/presentation/screens/professional/subscription_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1688,136 +1699,6 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
-  // ── UPGRADE REQUEST ───────────────────────────────────────────────────────
-  // Shows a confirmation bottom sheet then submits a subscription_requests
-  // row to the DB. Admin reviews and approves in the Approvals screen.
-  // Stage 2: swap the DB call for a PayMongo payment link.
-
-  Future<void> _handleRequestUpgrade() async {
-    if (_pro == null || !mounted) return;
-    final currentTier = _pro!.subscriptionTier;
-    final targetTier = currentTier < 1 ? 1 : 2;
-    const tierNames = ['Free', 'AYO Pro', 'AYO Elite'];
-    final targetName = tierNames[targetTier];
-
-    // Confirm before submitting
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFDDDDDD),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text('Upgrade to $targetName',
-                style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF1C1C1E))),
-            const SizedBox(height: 8),
-            const Text(
-              'Your request will be sent to the AYO admin for review. '
-              'You will be notified once it is approved — '
-              'usually within 24 hours.',
-              style: TextStyle(
-                  fontSize: 13, color: Color(0xFF8E8E93), height: 1.5),
-            ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF2F2F7),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('What you get with $targetName',
-                      style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF1C1C1E))),
-                  const SizedBox(height: 8),
-                  ...(targetTier == 1
-                          ? [
-                              'Higher search ranking',
-                              'Up to 10 active jobs',
-                              'Priority job notifications',
-                              'AYO Pro badge',
-                            ]
-                          : [
-                              'Top search placement',
-                              'Unlimited active jobs',
-                              'Featured on customer home',
-                              'Profile highlighted',
-                              'AYO Elite badge',
-                            ])
-                      .map((f) => Padding(
-                            padding: const EdgeInsets.only(bottom: 5),
-                            child: Row(children: [
-                              const Icon(Icons.check_circle_rounded,
-                                  size: 13, color: Color(0xFF34C759)),
-                              const SizedBox(width: 8),
-                              Text(f,
-                                  style: const TextStyle(
-                                      fontSize: 12, color: Color(0xFF3C3C43))),
-                            ]),
-                          )),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-                child: const Text('Submit Upgrade Request',
-                    style:
-                        TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    try {
-      await _ds.submitUpgradeRequest(
-        professionalId: _pro!.id,
-        currentTier: currentTier,
-        requestedTier: targetTier,
-      );
-      _notify('Upgrade request submitted. We will review it within 24 hours.');
-    } on Exception catch (e) {
-      _notify(e.toString().replaceFirst('Exception: ', ''));
-    }
-  }
-
   Future<void> _refreshProfessionalDashboard() async {
     if (_user == null || _pro == null) return;
     try {
@@ -2706,6 +2587,52 @@ class _MainAppState extends State<MainApp> {
       );
     }
 
+    if (_screen == 'my_plan') {
+      final hasPending = _upgradeRequests
+          .any((r) => r.professionalId == _pro?.id && r.status == 'pending');
+      return SubscriptionScreen(
+        professional: proEntity,
+        hasPendingUpgrade: hasPending,
+        onRequestUpgrade: (targetTier) async {
+          if (_pro == null) return;
+          await _ds.submitUpgradeRequest(
+            professionalId: _pro!.id,
+            currentTier: _pro!.subscriptionTier,
+            requestedTier: targetTier,
+          );
+          // Refresh upgrade requests so hasPendingUpgrade badge updates.
+          try {
+            final updated = await _ds.getUpgradeRequests();
+            if (mounted) setState(() => _upgradeRequests = updated);
+          } catch (e) {
+            debugPrint(
+                '[SubscriptionScreen] Could not refresh upgrade requests: $e');
+          }
+          // Notify admins.
+          try {
+            const tierNames = ['Free', 'AYO Pro', 'AYO Elite'];
+            final adminUsers = await _ds.getAdminUserIds();
+            for (final adminId in adminUsers) {
+              await _notifDs.pushToUser(
+                targetUserId: adminId,
+                role: 'admin',
+                type: NotificationTypeStrings.bookingAccepted,
+                title: 'Plan Upgrade Request',
+                message:
+                    '${_user?.name ?? 'A handyman'} has requested an upgrade '
+                    'to ${tierNames[targetTier.clamp(0, 2)]}. Please review in Approvals.',
+                referenceId: _pro!.id,
+                referenceType: 'subscription_request',
+              );
+            }
+          } catch (e) {
+            debugPrint('[SubscriptionScreen] Could not notify admin: $e');
+          }
+        },
+        onBack: () => setState(() => _screen = 'home'),
+      );
+    }
+
     // ── NAV INDEX CHECKS ──────────────────────────────────────────────────
 
     if (_navIndex == 1) {
@@ -2813,6 +2740,7 @@ class _MainAppState extends State<MainApp> {
 
     if (_navIndex == 2) {
       return EarningsHandymanScreen(
+        professional: proEntity,
         professionalId: _pro?.id,
         bookings: bookingEntities,
         reviews: _reviews.map((r) => r.toEntity()).toList(),
@@ -2952,9 +2880,7 @@ class _MainAppState extends State<MainApp> {
       onViewVerification: () => setState(() => _screen = 'verification_status'),
       onManageServices: () => setState(() => _screen = 'my_services'),
       onShareProfile: () => _shareProProfile(),
-      onRequestUpgrade: () => _handleRequestUpgrade(),
-      hasPendingUpgrade: _upgradeRequests
-          .any((r) => r.professionalId == _pro!.id && r.status == 'pending'),
+      onViewPlan: () => setState(() => _screen = 'my_plan'),
       onToggleAvailability: (isAvailable) async {
         if (_pro == null) return;
         try {

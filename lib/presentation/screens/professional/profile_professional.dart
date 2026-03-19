@@ -273,7 +273,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
   void _openEditSheet() {
     final nameCtrl = TextEditingController(text: _name);
     final phoneCtrl = TextEditingController(text: _phone ?? '');
-    final cityCtrl = TextEditingController(text: _city ?? '');
     final formKey = GlobalKey<FormState>();
     bool saving = false;
 
@@ -340,12 +339,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
                           return null;
                         },
                       ),
-                      const SizedBox(height: 16),
-                      _buildField(
-                        controller: cityCtrl,
-                        label: 'City / Address',
-                        icon: Icons.location_on_outlined,
-                      ),
                     ]),
                   ),
                 ),
@@ -361,17 +354,13 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
                     final newPhone = phoneCtrl.text.trim().isEmpty
                         ? null
                         : phoneCtrl.text.trim();
-                    final newCity = cityCtrl.text.trim().isEmpty
-                        ? null
-                        : cityCtrl.text.trim();
                     try {
                       await widget.onSaveProfile
-                          ?.call(newName, newPhone, newCity);
+                          ?.call(newName, newPhone, _city);
                       if (mounted)
                         setState(() {
                           _name = newName;
                           _phone = newPhone;
-                          _city = newCity;
                         });
                       if (ctx.mounted) Navigator.of(ctx).pop();
                       _showSuccess('Profile updated successfully!');
@@ -1191,11 +1180,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
             icon: Icons.email_outlined,
             label: 'Email',
             value: widget.user?.email ?? '—'),
-        _divider(),
-        _infoRow(
-            icon: Icons.location_on_outlined,
-            label: 'City / Address',
-            value: _city ?? 'Not specified'),
       ],
     );
   }
@@ -1267,7 +1251,9 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
                       const SizedBox(height: 3),
                       Text(
                         hasLocation
-                            ? 'Location set  ·  Tap to update'
+                            ? (_city != null && _city!.isNotEmpty
+                                ? _city!
+                                : 'Location set')
                             : 'Not set yet  ·  Tap to pin your location',
                         style: TextStyle(
                           fontSize: 13,
@@ -1277,6 +1263,14 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
                               : const Color(0xFFFF9500),
                         ),
                       ),
+                      if (hasLocation)
+                        const Text(
+                          'Tap to update',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textLight,
+                          ),
+                        ),
                     ]),
               ),
               Icon(
@@ -1547,7 +1541,12 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
   void initState() {
     super.initState();
     if (widget.initialLat != null && widget.initialLng != null) {
+      // Already has a saved pin — restore it, don't override with GPS.
       _pinned = LatLng(widget.initialLat!, widget.initialLng!);
+    } else {
+      // No saved pin — auto-fetch GPS so the map lands on the user's
+      // exact position immediately without needing to tap the button.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _useGps());
     }
   }
 
