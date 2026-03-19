@@ -203,7 +203,13 @@ class _AllProfessionalsScreenState extends State<AllProfessionalsScreen> {
             try {
               final prefs = await SharedPreferences.getInstance();
               final seen = prefs.getBool(kExploreTourSeenKey) ?? false;
-              if (!seen && mounted) _startTour(showcaseContext);
+              if (!seen && mounted) {
+                // Mark as seen immediately so widget recreations (e.g. when
+                // navigating to a pro profile and back) never re-trigger the
+                // auto-start, even if the user dismisses before onFinish fires.
+                await prefs.setBool(kExploreTourSeenKey, true);
+                _startTour(showcaseContext);
+              }
             } catch (e) {
               debugPrint('[ExploreTour] Could not read prefs: $e');
             }

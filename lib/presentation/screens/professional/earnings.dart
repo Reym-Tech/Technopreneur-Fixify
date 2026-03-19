@@ -66,7 +66,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: _isElite ? 3 : 2, vsync: this);
+    _tabController = TabController(length: _isPro ? 3 : 2, vsync: this);
   }
 
   @override
@@ -88,6 +88,16 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       .where((b) => b.status == BookingStatus.completed)
       .toList();
 
+  /// Completed bookings filtered by [_selectedDateRange] when active.
+  /// All Overview stats that depend on the date filter use this getter.
+  List<BookingEntity> get _filteredCompleted {
+    if (_selectedDateRange == null) return _completed;
+    return _completed.where((b) {
+      return !b.scheduledDate.isBefore(_selectedDateRange!.start) &&
+          !b.scheduledDate.isAfter(_selectedDateRange!.end);
+    }).toList();
+  }
+
   List<BookingEntity> get _unpaid => widget.bookings
       .where((b) =>
           b.status == BookingStatus.pending ||
@@ -96,7 +106,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       .toList();
 
   double get _totalEarnings =>
-      _completed.fold(0.0, (s, b) => s + _effectivePrice(b));
+      _filteredCompleted.fold(0.0, (s, b) => s + _effectivePrice(b));
 
   double get _thisMonthEarnings {
     final now = DateTime.now();
@@ -131,13 +141,19 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       _unpaid.fold(0.0, (s, b) => s + _effectivePrice(b));
 
   double get _completionRate {
-    final relevant = widget.bookings
+    final bookings = _selectedDateRange == null
+        ? widget.bookings
+        : widget.bookings.where((b) {
+            return !b.scheduledDate.isBefore(_selectedDateRange!.start) &&
+                !b.scheduledDate.isAfter(_selectedDateRange!.end);
+          });
+    final relevant = bookings
         .where((b) =>
             b.status == BookingStatus.completed ||
             b.status == BookingStatus.cancelled)
         .length;
     if (relevant == 0) return 0;
-    return (_completed.length / relevant) * 100;
+    return (_filteredCompleted.length / relevant) * 100;
   }
 
   double get _avgRating {
@@ -152,7 +168,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
 
   List<_MonthlyData> get _monthlyEarnings {
     final map = <String, _MonthlyData>{};
-    for (final b in _completed) {
+    for (final b in _filteredCompleted) {
       final key =
           '${b.scheduledDate.year}-${b.scheduledDate.month.toString().padLeft(2, '0')}';
       final label = _monthLabel(b.scheduledDate.month);
@@ -213,7 +229,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       Colors.pink,
     ];
     int colorIndex = 0;
-    for (final b in _completed) {
+    for (final b in _filteredCompleted) {
       final type = b.serviceType;
       final price = _effectivePrice(b);
       final existing = map[type];
@@ -282,6 +298,11 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     return '${diff.inDays}d ago';
+  }
+
+  String _rangeLabelShort(DateTimeRange r) {
+    String fmt(DateTime d) => '${d.month}/${d.day}';
+    return '${fmt(r.start)} – ${fmt(r.end)}';
   }
 
   // FIX: BookingStatus.scheduleProposed added to make switch exhaustive.
@@ -358,6 +379,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                 children: [
                   _buildOverviewTab(),
                   if (_isElite) _buildAnalyticsTab(),
+                  if (_isPro && !_isElite) _buildProAnalyticsTab(),
                   _buildTransactionsTab(),
                 ],
               ),
@@ -418,8 +440,39 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   ],
                 ),
               ),
+              if (_selectedDateRange != null) ...[
+                GestureDetector(
+                  onTap: () => setState(() => _selectedDateRange = null),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text(
+                        _rangeLabelShort(_selectedDateRange!),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(width: 5),
+                      const Icon(Icons.close_rounded,
+                          color: Colors.white, size: 13),
+                    ]),
+                  ),
+                ),
+                const SizedBox(width: 4),
+              ],
               IconButton(
-                icon: const Icon(Icons.calendar_today, color: Colors.white),
+                icon: Icon(
+                  Icons.calendar_today,
+                  color: _selectedDateRange != null
+                      ? Colors.white
+                      : Colors.white.withValues(alpha: 0.7),
+                ),
                 onPressed: _showDateRangePicker,
               ),
             ],
@@ -443,7 +496,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
             const TextStyle(fontWeight: FontWeight.w400, fontSize: 13),
         tabs: [
           const Tab(text: 'Overview'),
-          if (_isElite)
+          if (_isPro)
             Tab(
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 const Text('Analytics'),
@@ -452,14 +505,20 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFF9500).withValues(alpha: 0.15),
+                    color: _isElite
+                        ? const Color(0xFFFF9500).withValues(alpha: 0.15)
+                        : const Color(0xFF1E88E5).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: const Text('Elite',
-                      style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFFFF9500))),
+                  child: Text(
+                    _isElite ? 'Elite' : 'Pro',
+                    style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: _isElite
+                            ? const Color(0xFFFF9500)
+                            : const Color(0xFF1E88E5)),
+                  ),
                 ),
               ]),
             ),
@@ -478,19 +537,16 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildTotalEarningsCard(),
-          const SizedBox(height: 20),
-          _buildStatsRow(),
-          const SizedBox(height: 20),
-          _buildSummaryBalanceCard(),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
+          _buildStatsGrid(),
+          const SizedBox(height: 16),
           _buildMonthlyChart(),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           _buildServiceBreakdownCard(),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           _buildRecentTransactionsCard(),
           const SizedBox(height: 16),
-          // ── Pro upgrade nudge ───────────────────────────
-          if (_isPro && !_isElite) _buildAnalyticsNudge(),
+          if (!_isPro) _buildAnalyticsNudge(),
           const SizedBox(height: 80),
         ],
       ),
@@ -533,7 +589,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text(
-            '${_completed.length} job${_completed.length == 1 ? '' : 's'} completed on AYO',
+            '${_filteredCompleted.length} job${_filteredCompleted.length == 1 ? '' : 's'} completed on AYO',
             style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
           ),
@@ -580,110 +636,113 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     );
   }
 
-  Widget _buildStatsRow() {
-    return Row(children: [
-      Expanded(
-          child: _statCard(
-              'Today', _fmt(_todayEarnings), Icons.today, Colors.blue)),
-      const SizedBox(width: 12),
-      Expanded(
-          child: _statCard('This Month', _fmt(_thisMonthEarnings),
-              Icons.calendar_month, const Color(0xFF2A7F6E))),
-      const SizedBox(width: 12),
-      Expanded(
-          child: _statCard('Unpaid', _fmt(_pendingAmount),
-              Icons.pending_actions, Colors.orange)),
-    ]);
-  }
+  // ── 2×2 Stats Grid ───────────────────────────────────────
+  // Today | Unpaid
+  // Jobs  | Avg Rating
+  // Replaces the old _buildStatsRow (which duplicated This Month)
+  // and the _summaryItem row at the bottom of the monthly chart.
 
-  Widget _statCard(String title, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.grey.withValues(alpha: 0.1),
-              blurRadius: 5,
-              offset: const Offset(0, 2)),
-        ],
+  Widget _buildStatsGrid() {
+    final items = [
+      _GridStatItem(
+        label: 'Today',
+        value: _fmt(_todayEarnings),
+        icon: Icons.today_rounded,
+        color: Colors.blue,
       ),
-      child: Column(children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
-          child: Icon(icon, color: color, size: 18),
-        ),
-        const SizedBox(height: 8),
-        Text(value,
-            style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1E5F4B))),
-        Text(title,
-            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-            textAlign: TextAlign.center),
-      ]),
+      _GridStatItem(
+        label: 'Unpaid',
+        value: _fmt(_pendingAmount),
+        icon: Icons.pending_actions_rounded,
+        color: Colors.orange,
+        badge: _unpaid.isNotEmpty ? '${_unpaid.length}' : null,
+      ),
+      _GridStatItem(
+        label: 'Jobs Done',
+        value: '${_filteredCompleted.length}',
+        icon: Icons.check_circle_rounded,
+        color: const Color(0xFF2A7F6E),
+      ),
+      _GridStatItem(
+        label: 'Avg Rating',
+        value: _avgRating > 0 ? _avgRating.toStringAsFixed(1) : '—',
+        icon: Icons.star_rounded,
+        color: const Color(0xFFFF9500),
+      ),
+    ];
+
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisSpacing: 12,
+      mainAxisSpacing: 12,
+      childAspectRatio: 2.2,
+      children: items.map((item) => _buildGridStatCard(item)).toList(),
     );
   }
 
-  Widget _buildSummaryBalanceCard() {
+  Widget _buildGridStatCard(_GridStatItem item) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withValues(alpha: 0.1),
-              blurRadius: 5,
+              color: Colors.grey.withValues(alpha: 0.08),
+              blurRadius: 6,
               offset: const Offset(0, 2)),
         ],
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Total earned through AYO',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[600])),
-              const SizedBox(height: 4),
-              Text(_fmt(_totalEarnings),
-                  style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E5F4B))),
-              const SizedBox(height: 6),
-              if (_unpaid.isNotEmpty)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    '${_unpaid.length} active job${_unpaid.length == 1 ? '' : 's'} • ${_fmt(_pendingAmount)} unpaid',
-                    style: const TextStyle(
-                        fontSize: 11,
-                        color: Colors.orange,
-                        fontWeight: FontWeight.w600),
-                  ),
+      child: Row(children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: item.color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(item.icon, color: item.color, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(children: [
+                Text(
+                  item.value,
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: item.color),
                 ),
-            ]),
+                if (item.badge != null) ...[
+                  const SizedBox(width: 5),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: item.color.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(item.badge!,
+                        style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: item.color)),
+                  ),
+                ],
+              ]),
+              Text(item.label,
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textLight)),
+            ],
           ),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-                color: const Color(0xFF2A7F6E).withValues(alpha: 0.1),
-                shape: BoxShape.circle),
-            child: const Icon(Icons.account_balance_wallet,
-                color: Color(0xFF2A7F6E), size: 30),
-          ),
-        ],
-      ),
+        ),
+      ]),
     );
   }
 
@@ -695,7 +754,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
     if (months.isEmpty) {
       return _emptyCard(
         'No earnings yet',
-        _completed.isEmpty
+        _filteredCompleted.isEmpty && _completed.isEmpty
             ? 'Complete your first job to see monthly earnings here.'
             : 'No data available for this period.',
         Icons.bar_chart_rounded,
@@ -729,26 +788,7 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
             TextButton(
                 onPressed: _showDetailedChart, child: const Text('View All')),
           ]),
-          const SizedBox(height: 4),
-          // Summary row under title
-          Row(children: [
-            Text('This month: ',
-                style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-            Text(_fmt(_thisMonthEarnings),
-                style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF1E5F4B))),
-            const SizedBox(width: 12),
-            Text('Total: ',
-                style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-            Text(_fmt(_totalEarnings),
-                style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF1E5F4B))),
-          ]),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           // Responsive chart via LayoutBuilder
           LayoutBuilder(
             builder: (context, constraints) {
@@ -760,35 +800,9 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
               );
             },
           ),
-          const Divider(height: 28),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _summaryItem(Icons.work, '${_completed.length}', 'Total Jobs'),
-              _summaryItem(
-                  Icons.star,
-                  _avgRating > 0 ? _avgRating.toStringAsFixed(1) : '—',
-                  'Avg Rating'),
-              _summaryItem(Icons.check_circle,
-                  '${_completionRate.toStringAsFixed(0)}%', 'Completion'),
-            ],
-          ),
         ],
       ),
     );
-  }
-
-  Widget _summaryItem(IconData icon, String value, String label) {
-    return Column(children: [
-      Icon(icon, size: 20, color: const Color(0xFF2A7F6E)),
-      const SizedBox(height: 4),
-      Text(value,
-          style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1E5F4B))),
-      Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-    ]);
   }
 
   // ── Service Breakdown ────────────────────────────────────
@@ -1120,6 +1134,79 @@ class _EarningsHandymanScreenState extends State<EarningsHandymanScreen>
       ));
     }
     return result;
+  }
+
+  // ── Pro Analytics Tab (Tier 1) ───────────────────────────
+  // Shows basic jobs completed count and earnings trend.
+  // Rating history and completion rate trend are Elite-only.
+
+  Widget _buildProAnalyticsTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _analyticsSection(
+            icon: Icons.work_rounded,
+            title: 'Jobs Completed',
+            subtitle: 'Last 6 months',
+            color: const Color(0xFF1E88E5),
+            child: _JobsBarChart(
+              months: _earningsLast6Months(),
+              color: const Color(0xFF1E88E5),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Elite upgrade nudge at bottom of Pro analytics
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(colors: [
+                const Color(0xFFFF9500).withValues(alpha: 0.08),
+                const Color(0xFFFF9500).withValues(alpha: 0.03),
+              ]),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                  color: const Color(0xFFFF9500).withValues(alpha: 0.3)),
+            ),
+            child: Row(children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9500).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.star_rounded,
+                    color: Color(0xFFFF9500), size: 20),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Unlock Full Analytics',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFFF9500))),
+                      SizedBox(height: 3),
+                      Text(
+                        'Upgrade to AYO Elite for earnings trends, '
+                        'rating history, and completion rate insights.',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMedium,
+                            height: 1.4),
+                      ),
+                    ]),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
   }
 
   // ── Pro upgrade nudge ────────────────────────────────────
@@ -1797,6 +1884,163 @@ class _CompletionEntry {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Jobs bar chart — Pro Analytics (jobs count per month)
+// ─────────────────────────────────────────────────────────────
+
+class _JobsBarChart extends StatelessWidget {
+  final List<_MonthlyData> months;
+  final Color color;
+
+  const _JobsBarChart({required this.months, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasData = months.any((m) => m.jobs > 0);
+    if (!hasData) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Text('No completed jobs yet',
+              style: TextStyle(fontSize: 13, color: AppColors.textLight)),
+        ),
+      );
+    }
+    final total = months.fold(0, (s, m) => s + m.jobs);
+    final best = months.reduce((a, b) => a.jobs > b.jobs ? a : b);
+    final avg = total / months.length;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      LayoutBuilder(builder: (context, constraints) {
+        return SizedBox(
+          width: constraints.maxWidth,
+          height: 160,
+          child: CustomPaint(
+            size: Size(constraints.maxWidth, 160),
+            painter: _JobsBarPainter(months: months, color: color),
+          ),
+        );
+      }),
+      const SizedBox(height: 14),
+      const Divider(height: 1, color: Color(0xFFF0F0F0)),
+      const SizedBox(height: 12),
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        _stat('Total Jobs', '$total', color),
+        _stat('Monthly Avg', avg.toStringAsFixed(1), color),
+        _stat('Best Month', '${best.jobs} jobs', color),
+      ]),
+    ]);
+  }
+
+  Widget _stat(String label, String value, Color color) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: const TextStyle(fontSize: 10, color: AppColors.textLight)),
+          const SizedBox(height: 2),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+        ],
+      );
+}
+
+class _JobsBarPainter extends CustomPainter {
+  final List<_MonthlyData> months;
+  final Color color;
+  const _JobsBarPainter({required this.months, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (months.isEmpty) return;
+    const labelH = 20.0;
+    const topPad = 24.0;
+    final chartH = size.height - labelH - topPad;
+    final chartTop = topPad;
+    final chartBottom = topPad + chartH;
+    final n = months.length;
+    final slotW = size.width / n;
+    final barW = (slotW * 0.55).clamp(8.0, 36.0);
+    final maxJobs = months.map((m) => m.jobs).fold(0, (a, b) => a > b ? a : b);
+
+    final gridPaint = Paint()
+      ..color = const Color(0xFFEEEEEE)
+      ..strokeWidth = 1;
+    for (int i = 0; i <= 4; i++) {
+      final y = chartTop + chartH * (1 - i / 4);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
+    final valuePainter = TextPainter(textDirection: TextDirection.ltr);
+    final labelPainter = TextPainter(textDirection: TextDirection.ltr);
+
+    for (int i = 0; i < n; i++) {
+      final m = months[i];
+      final cx = slotW * i + slotW / 2;
+      final isPeak = m.jobs == maxJobs && m.jobs > 0;
+      final barH = maxJobs > 0 ? (m.jobs / maxJobs) * chartH : 0.0;
+      final barTop = chartBottom - barH;
+      final barLeft = cx - barW / 2;
+
+      canvas.drawRRect(
+        RRect.fromRectAndCorners(
+          Rect.fromLTWH(barLeft, chartTop, barW, chartH),
+          topLeft: const Radius.circular(5),
+          topRight: const Radius.circular(5),
+        ),
+        Paint()..color = color.withValues(alpha: 0.07),
+      );
+
+      if (m.jobs > 0) {
+        canvas.drawRRect(
+          RRect.fromRectAndCorners(
+            Rect.fromLTWH(barLeft, barTop, barW, barH),
+            topLeft: const Radius.circular(5),
+            topRight: const Radius.circular(5),
+          ),
+          Paint()
+            ..shader = LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: isPeak
+                  ? [color.withValues(alpha: 0.6), color]
+                  : [
+                      color.withValues(alpha: 0.3),
+                      color.withValues(alpha: 0.6)
+                    ],
+            ).createShader(Rect.fromLTWH(barLeft, barTop, barW, barH)),
+        );
+
+        valuePainter.text = TextSpan(
+          text: '${m.jobs}',
+          style: TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              color: isPeak ? color : const Color(0xFF999999)),
+        );
+        valuePainter.layout();
+        final vY = (barTop - valuePainter.height - 3).clamp(0.0, barTop);
+        valuePainter.paint(canvas, Offset(cx - valuePainter.width / 2, vY));
+      }
+
+      labelPainter.text = TextSpan(
+        text: m.label,
+        style: TextStyle(
+            fontSize: 10,
+            color: isPeak ? color : const Color(0xFF999999),
+            fontWeight: isPeak ? FontWeight.w700 : FontWeight.w400),
+      );
+      labelPainter.layout();
+      labelPainter.paint(
+          canvas, Offset(cx - labelPainter.width / 2, chartBottom + 6));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_JobsBarPainter old) =>
+      old.months != months || old.color != color;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Earnings bar chart — Elite Analytics (reuses _MonthlyBarChart)
 // ─────────────────────────────────────────────────────────────
 
@@ -2186,6 +2430,21 @@ class _CompletionBarPainter extends CustomPainter {
   @override
   bool shouldRepaint(_CompletionBarPainter old) =>
       old.months != months || old.color != color;
+}
+
+class _GridStatItem {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+  final String? badge;
+  const _GridStatItem({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+    this.badge,
+  });
 }
 
 class _MonthlyData {

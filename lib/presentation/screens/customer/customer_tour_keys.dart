@@ -44,11 +44,11 @@ class CustomerTourKeys {
         requestServiceKey,
         serviceOffersKey,
         categoryFilterKey,
+        if (hasRecentBookings) recentBookingsKey,
         exploreTabKey,
-        notificationsKey,
         bookingsTabKey,
         profileTabKey,
-        if (hasRecentBookings) recentBookingsKey,
+        notificationsKey,
       ];
 
   List<GlobalKey> exploreOrderedKeys() => [

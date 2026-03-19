@@ -31,6 +31,7 @@ class ProfessionalTourKeys {
   final GlobalKey myCredentialsKey =
       GlobalKey(debugLabel: 'pro_tour_myCredentials');
   final GlobalKey myServicesKey = GlobalKey(debugLabel: 'pro_tour_myServices');
+  final GlobalKey myPlanKey = GlobalKey(debugLabel: 'pro_tour_myPlan');
   final GlobalKey requestsNavKey =
       GlobalKey(debugLabel: 'pro_tour_requestsNav');
   final GlobalKey earningsNavKey =
@@ -44,6 +45,7 @@ class ProfessionalTourKeys {
         bookingRequestsKey,
         bookingHistoryKey,
         earningsSummaryKey,
+        myPlanKey,
         myCredentialsKey,
         myServicesKey,
         requestsNavKey,
@@ -106,6 +108,13 @@ const _steps = <String, _TourStep>{
     title: 'Earnings Summary',
     description: 'See a full breakdown of your income by job. '
         'Track payments and monitor your earnings over time.',
+    arrowDir: TourArrowDir.up,
+  ),
+  'myPlan': _TourStep(
+    title: 'My Plan',
+    description: 'View your current subscription tier and upgrade to '
+        'AYO Pro or Elite for more job slots, priority matching, '
+        'and featured placement.',
     arrowDir: TourArrowDir.up,
   ),
   'myCredentials': _TourStep(

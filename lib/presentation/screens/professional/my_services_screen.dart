@@ -281,7 +281,6 @@ class _MyServicesScreenState extends State<MyServicesScreen> {
               const SizedBox(height: 24),
               ElevatedButton.icon(
                 onPressed: widget.onProposeNew,
-                icon: const Icon(Icons.add_rounded, size: 18),
                 label: const Text('Propose a New Service'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,

@@ -23,12 +23,17 @@ class LoginScreen extends StatefulWidget {
   /// successful registration so the user doesn't have to retype their email.
   final String? initialEmail;
 
+  /// When true the header reads "Welcome to AYO!" (first-time user).
+  /// When false it reads "Welcome back!" (returning user).
+  final bool isFirstTime;
+
   const LoginScreen({
     super.key,
     this.onNavigateToRegister,
     this.onLogin,
     this.onContinueAsGuest,
-    this.initialEmail, // <-- NEW
+    this.initialEmail,
+    this.isFirstTime = false,
   });
 
   @override
@@ -284,9 +289,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ],
                               ),
                               const SizedBox(height: 20),
-                              const Text(
-                                'Welcome back!',
-                                style: TextStyle(
+                              Text(
+                                widget.isFirstTime
+                                    ? 'Welcome to AYO!'
+                                    : 'Welcome back!',
+                                style: const TextStyle(
                                   fontSize: 26,
                                   fontWeight: FontWeight.w700,
                                   color: Colors.white,
@@ -294,7 +301,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 10),
                               Text(
-                                'Sign in to continue booking services',
+                                widget.isFirstTime
+                                    ? 'Sign in to get started'
+                                    : 'Sign in to continue booking services',
                                 style: TextStyle(
                                   fontSize: 14,
                                   color: Colors.white.withOpacity(0.7),

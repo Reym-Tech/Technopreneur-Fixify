@@ -1,34 +1,18 @@
 // lib/presentation/screens/admin/approvals_admin.dart
 //
-// ApprovalsScreen — Admin screen to review:
-//   1. Handyman verification applications  (ApplicationModel pipeline)
-//   2. Service offer proposals             (ServiceProposalModel pipeline)
-//   3. Service selection requests          (ServiceSelectionRequestModel pipeline)
+// ApprovalsScreen — Admin reviews four pipelines:
+//   1. Handyman verification applications
+//   2. Service offer proposals
+//   3. Service selection requests
+//   4. Subscription upgrade requests
 //
-// Top-level tabs: "Handyman Apps" | "Service Proposals" | "Service Requests"
-// Each tab has sub-tabs: Pending / Approved / Rejected
-//
-// SERVICE SELECTION REQUEST PATCH:
-//   A handyman toggling a service on/off in MyServicesScreen now submits a
-//   ServiceSelectionRequestModel instead of writing directly to
-//   professional_services. The new third tab lets the admin review these
-//   requests, cross-check credentials, and approve or reject each one.
-//   On approval the Controller (main.dart) writes the actual
-//   professional_services record; on rejection it notifies the handyman.
-//
-// Key props:
-//   applications         → List<ApplicationModel>
-//   proposals            → List<ServiceProposalModel>
-//   serviceRequests      → List<ServiceSelectionRequestModel>
-//   onApprove            → Function(ApplicationModel)?
-//   onReject             → Function(ApplicationModel, String? note)?
-//   onApproveProposal    → Function(ServiceProposalModel)?
-//   onRejectProposal     → Function(ServiceProposalModel, String? note)?
-//   onApproveServiceRequest → Function(ServiceSelectionRequestModel)?
-//   onRejectServiceRequest  → Function(ServiceSelectionRequestModel, String?)?
-//   onBack               → VoidCallback?
-//   onNavTap             → Function(int)?
-//   currentNavIndex      → int
+// REDESIGN:
+//   • Single top TabBar on a white surface — no nested dark sub-tab bars.
+//   • Status filter (Pending / Approved / Rejected) as inline segment chips
+//     per pipeline — keeps the layout flat and readable.
+//   • Cards use a clean white shell with a small status dot; no border accents.
+//   • Consistent spacing, typography, and action zone across all four pipelines.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
@@ -39,33 +23,16 @@ import 'package:fixify/data/models/models.dart' show SubscriptionRequestModel;
 class ApprovalsScreen extends StatefulWidget {
   final List<ApplicationModel> applications;
   final List<ServiceProposalModel> proposals;
-
-  /// Pending / approved / rejected service selection requests from handymen.
   final List<ServiceSelectionRequestModel> serviceRequests;
-
-  /// Pending / approved / rejected subscription upgrade requests from handymen.
   final List<SubscriptionRequestModel> upgradeRequests;
-
   final Function(ApplicationModel)? onApprove;
   final Function(ApplicationModel, String?)? onReject;
   final Function(ServiceProposalModel)? onApproveProposal;
   final Function(ServiceProposalModel, String?)? onRejectProposal;
-
-  /// Called when the admin approves a service selection request.
-  /// The Controller (main.dart) is responsible for writing the actual
-  /// professional_services record after this callback resolves.
   final Function(ServiceSelectionRequestModel)? onApproveServiceRequest;
-
-  /// Called when the admin rejects a service selection request.
-  /// Optional admin note is passed as the second argument.
   final Function(ServiceSelectionRequestModel, String?)? onRejectServiceRequest;
-
-  /// Called when the admin approves a subscription upgrade request.
   final Function(SubscriptionRequestModel)? onApproveUpgrade;
-
-  /// Called when the admin rejects a subscription upgrade request.
   final Function(SubscriptionRequestModel, String?)? onRejectUpgrade;
-
   final VoidCallback? onBack;
   final Function(int)? onNavTap;
   final int currentNavIndex;
@@ -94,14 +61,14 @@ class ApprovalsScreen extends StatefulWidget {
 }
 
 class _ApprovalsScreenState extends State<ApprovalsScreen>
-    with TickerProviderStateMixin {
-  // Top-level: Handyman Apps | Service Proposals | Service Requests | Upgrades
+    with SingleTickerProviderStateMixin {
   late TabController _topTabs;
-  // Sub-tabs: Pending / Approved / Rejected — one per top-level tab
-  late TabController _appSubTabs;
-  late TabController _propSubTabs;
-  late TabController _sreqSubTabs;
-  late TabController _upgradeSubTabs;
+
+  // Per-pipeline status filter — 'pending' | 'approved' | 'rejected'
+  String _appFilter = 'pending';
+  String _propFilter = 'pending';
+  String _sreqFilter = 'pending';
+  String _upgradeFilter = 'pending';
 
   String? _processingId;
 
@@ -109,48 +76,50 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
   void initState() {
     super.initState();
     _topTabs = TabController(length: 4, vsync: this);
-    _appSubTabs = TabController(length: 3, vsync: this);
-    _propSubTabs = TabController(length: 3, vsync: this);
-    _sreqSubTabs = TabController(length: 3, vsync: this);
-    _upgradeSubTabs = TabController(length: 3, vsync: this);
   }
 
   @override
   void dispose() {
     _topTabs.dispose();
-    _appSubTabs.dispose();
-    _propSubTabs.dispose();
-    _sreqSubTabs.dispose();
-    _upgradeSubTabs.dispose();
     super.dispose();
   }
 
-  // ── Filtering helpers ──────────────────────────────────────────────────────
+  // ── Filtering ─────────────────────────────────────────────────────────────
 
-  List<ApplicationModel> _filteredApps(String status) =>
-      widget.applications.where((a) => a.status == status).toList();
+  List<ApplicationModel> _filteredApps(String s) =>
+      widget.applications.where((a) => a.status == s).toList();
 
-  List<ServiceProposalModel> _filteredProps(String status) =>
-      widget.proposals.where((p) => p.status == status).toList();
+  List<ServiceProposalModel> _filteredProps(String s) =>
+      widget.proposals.where((p) => p.status == s).toList();
 
-  List<ServiceSelectionRequestModel> _filteredSreqs(String status) =>
-      widget.serviceRequests.where((r) => r.status == status).toList();
+  List<ServiceSelectionRequestModel> _filteredSreqs(String s) =>
+      widget.serviceRequests.where((r) => r.status == s).toList();
 
-  List<SubscriptionRequestModel> _filteredUpgrades(String status) =>
-      widget.upgradeRequests.where((r) => r.status == status).toList();
+  List<SubscriptionRequestModel> _filteredUpgrades(String s) =>
+      widget.upgradeRequests.where((r) => r.status == s).toList();
+
+  int _pendingCount(String pipeline) {
+    switch (pipeline) {
+      case 'apps':
+        return _filteredApps('pending').length;
+      case 'props':
+        return _filteredProps('pending').length;
+      case 'sreqs':
+        return _filteredSreqs('pending').length;
+      case 'upgrades':
+        return _filteredUpgrades('pending').length;
+    }
+    return 0;
+  }
 
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final pendingApps = _filteredApps('pending');
-    final pendingProps = _filteredProps('pending');
-    final pendingSreqs = _filteredSreqs('pending');
-    final pendingUpgrades = _filteredUpgrades('pending');
-    final totalPending = pendingApps.length +
-        pendingProps.length +
-        pendingSreqs.length +
-        pendingUpgrades.length;
+    final totalPending = _pendingCount('apps') +
+        _pendingCount('props') +
+        _pendingCount('sreqs') +
+        _pendingCount('upgrades');
 
     return PopScope(
       canPop: false,
@@ -161,35 +130,26 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         backgroundColor: AppColors.backgroundLight,
         body: Column(children: [
           _buildHeader(totalPending),
-          // ── Top-level tab bar: Handyman Apps | Service Proposals | Service Requests
+          // ── Top tab bar — white background ────────────────────────
           Container(
-            color: const Color(0xFF0F3D2E),
+            color: Colors.white,
             child: TabBar(
               controller: _topTabs,
-              indicatorColor: Colors.white,
-              labelColor: Colors.white,
-              unselectedLabelColor: Colors.white54,
+              labelColor: AppColors.primary,
+              unselectedLabelColor: AppColors.textLight,
+              indicatorColor: AppColors.primary,
+              indicatorWeight: 2.5,
               labelStyle:
                   const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+              unselectedLabelStyle:
+                  const TextStyle(fontWeight: FontWeight.w400, fontSize: 12),
               isScrollable: true,
               tabAlignment: TabAlignment.start,
               tabs: [
-                Tab(
-                  text: 'Handyman Apps'
-                      '${pendingApps.isNotEmpty ? ' (${pendingApps.length})' : ''}',
-                ),
-                Tab(
-                  text: 'Service Proposals'
-                      '${pendingProps.isNotEmpty ? ' (${pendingProps.length})' : ''}',
-                ),
-                Tab(
-                  text: 'Service Requests'
-                      '${pendingSreqs.isNotEmpty ? ' (${pendingSreqs.length})' : ''}',
-                ),
-                Tab(
-                  text: 'Plan Upgrades'
-                      '${pendingUpgrades.isNotEmpty ? ' (${pendingUpgrades.length})' : ''}',
-                ),
+                _tabLabel('Applications', _pendingCount('apps')),
+                _tabLabel('Proposals', _pendingCount('props')),
+                _tabLabel('Selections', _pendingCount('sreqs')),
+                _tabLabel('Plan Upgrades', _pendingCount('upgrades')),
               ],
             ),
           ),
@@ -197,14 +157,54 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             child: TabBarView(
               controller: _topTabs,
               children: [
-                // ── Pipeline 1: Handyman Applications ──────────────────
-                _buildApplicationsPipeline(pendingApps),
-                // ── Pipeline 2: Service Proposals ───────────────────────
-                _buildProposalsPipeline(pendingProps),
-                // ── Pipeline 3: Service Selection Requests ──────────────
-                _buildServiceRequestsPipeline(pendingSreqs),
-                // ── Pipeline 4: Subscription Upgrade Requests ───────────
-                _buildUpgradeRequestsPipeline(pendingUpgrades),
+                _buildPipeline(
+                  filter: _appFilter,
+                  onFilterChange: (f) => setState(() => _appFilter = f),
+                  counts: {
+                    'pending': _filteredApps('pending').length,
+                    'approved': _filteredApps('approved').length,
+                    'rejected': _filteredApps('rejected').length,
+                  },
+                  items: _filteredApps(_appFilter),
+                  itemBuilder: (item, i) =>
+                      _buildAppCard(item as ApplicationModel, i),
+                ),
+                _buildPipeline(
+                  filter: _propFilter,
+                  onFilterChange: (f) => setState(() => _propFilter = f),
+                  counts: {
+                    'pending': _filteredProps('pending').length,
+                    'approved': _filteredProps('approved').length,
+                    'rejected': _filteredProps('rejected').length,
+                  },
+                  items: _filteredProps(_propFilter),
+                  itemBuilder: (item, i) =>
+                      _buildProposalCard(item as ServiceProposalModel, i),
+                ),
+                _buildPipeline(
+                  filter: _sreqFilter,
+                  onFilterChange: (f) => setState(() => _sreqFilter = f),
+                  counts: {
+                    'pending': _filteredSreqs('pending').length,
+                    'approved': _filteredSreqs('approved').length,
+                    'rejected': _filteredSreqs('rejected').length,
+                  },
+                  items: _filteredSreqs(_sreqFilter),
+                  itemBuilder: (item, i) => _buildServiceRequestCard(
+                      item as ServiceSelectionRequestModel, i),
+                ),
+                _buildPipeline(
+                  filter: _upgradeFilter,
+                  onFilterChange: (f) => setState(() => _upgradeFilter = f),
+                  counts: {
+                    'pending': _filteredUpgrades('pending').length,
+                    'approved': _filteredUpgrades('approved').length,
+                    'rejected': _filteredUpgrades('rejected').length,
+                  },
+                  items: _filteredUpgrades(_upgradeFilter),
+                  itemBuilder: (item, i) =>
+                      _buildUpgradeCard(item as SubscriptionRequestModel, i),
+                ),
               ],
             ),
           ),
@@ -214,778 +214,791 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
     );
   }
 
-  // ── Handyman Applications pipeline ────────────────────────────────────────
+  // ── Tab label with badge ──────────────────────────────────────────────────
 
-  Widget _buildApplicationsPipeline(List<ApplicationModel> pending) {
-    final approved = _filteredApps('approved');
-    final rejected = _filteredApps('rejected');
-    return Column(children: [
-      Container(
-        color: const Color(0xFF082218),
-        child: TabBar(
-          controller: _appSubTabs,
-          indicatorColor: const Color(0xFF34C759),
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white54,
-          labelStyle:
-              const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
-          tabs: [
-            Tab(
-                text:
-                    'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
-            Tab(
-                text:
-                    'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
-            Tab(
-                text:
-                    'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
-          ],
-        ),
-      ),
-      Expanded(
-        child: TabBarView(
-          controller: _appSubTabs,
-          children: [
-            _buildAppList(pending),
-            _buildAppList(approved),
-            _buildAppList(rejected),
-          ],
-        ),
-      ),
-    ]);
-  }
-
-  Widget _buildAppList(List<ApplicationModel> apps) {
-    if (apps.isEmpty) return _emptyState();
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-      itemCount: apps.length,
-      itemBuilder: (_, i) => _buildAppCard(apps[i], i),
-    );
-  }
-
-  // ── Service Proposals pipeline ────────────────────────────────────────────
-
-  Widget _buildProposalsPipeline(List<ServiceProposalModel> pending) {
-    final approved = _filteredProps('approved');
-    final rejected = _filteredProps('rejected');
-    return Column(children: [
-      Container(
-        color: const Color(0xFF082218),
-        child: TabBar(
-          controller: _propSubTabs,
-          indicatorColor: const Color(0xFFD4A843),
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white54,
-          labelStyle:
-              const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
-          tabs: [
-            Tab(
-                text:
-                    'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
-            Tab(
-                text:
-                    'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
-            Tab(
-                text:
-                    'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
-          ],
-        ),
-      ),
-      Expanded(
-        child: TabBarView(
-          controller: _propSubTabs,
-          children: [
-            _buildPropList(pending),
-            _buildPropList(approved),
-            _buildPropList(rejected),
-          ],
-        ),
-      ),
-    ]);
-  }
-
-  Widget _buildPropList(List<ServiceProposalModel> props) {
-    if (props.isEmpty) return _emptyState();
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-      itemCount: props.length,
-      itemBuilder: (_, i) => _buildProposalCard(props[i], i),
-    );
-  }
-
-  // ── Service Selection Requests pipeline ──────────────────────────────────
-
-  Widget _buildServiceRequestsPipeline(
-      List<ServiceSelectionRequestModel> pending) {
-    final approved = _filteredSreqs('approved');
-    final rejected = _filteredSreqs('rejected');
-    return Column(children: [
-      Container(
-        color: const Color(0xFF082218),
-        child: TabBar(
-          controller: _sreqSubTabs,
-          indicatorColor: const Color(0xFFFF9500),
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white54,
-          labelStyle:
-              const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
-          tabs: [
-            Tab(
-                text:
-                    'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
-            Tab(
-                text:
-                    'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
-            Tab(
-                text:
-                    'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
-          ],
-        ),
-      ),
-      Expanded(
-        child: TabBarView(
-          controller: _sreqSubTabs,
-          children: [
-            _buildSreqList(pending),
-            _buildSreqList(approved),
-            _buildSreqList(rejected),
-          ],
-        ),
-      ),
-    ]);
-  }
-
-  Widget _buildSreqList(List<ServiceSelectionRequestModel> reqs) {
-    if (reqs.isEmpty) return _emptyState();
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-      itemCount: reqs.length,
-      itemBuilder: (_, i) => _buildServiceRequestCard(reqs[i], i),
-    );
-  }
-
-  // ── Subscription Upgrade Requests pipeline ────────────────────────────────
-
-  Widget _buildUpgradeRequestsPipeline(List<SubscriptionRequestModel> pending) {
-    final approved = _filteredUpgrades('approved');
-    final rejected = _filteredUpgrades('rejected');
-    return Column(children: [
-      Container(
-        color: const Color(0xFF082218),
-        child: TabBar(
-          controller: _upgradeSubTabs,
-          indicatorColor: const Color(0xFFFF9500),
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white54,
-          labelStyle:
-              const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
-          tabs: [
-            Tab(
-                text:
-                    'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
-            Tab(
-                text:
-                    'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
-            Tab(
-                text:
-                    'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
-          ],
-        ),
-      ),
-      Expanded(
-        child: TabBarView(
-          controller: _upgradeSubTabs,
-          children: [
-            _buildUpgradeList(pending),
-            _buildUpgradeList(approved),
-            _buildUpgradeList(rejected),
-          ],
-        ),
-      ),
-    ]);
-  }
-
-  Widget _buildUpgradeList(List<SubscriptionRequestModel> reqs) {
-    if (reqs.isEmpty) return _emptyState();
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-      itemCount: reqs.length,
-      itemBuilder: (_, i) => _buildUpgradeCard(reqs[i], i),
-    );
-  }
-
-  Widget _buildUpgradeCard(SubscriptionRequestModel req, int index) {
-    final isPending = req.isPending;
-    final isLoading = _processingId == req.id;
-
-    // Tier colour: amber for Elite (2), blue for Pro (1)
-    final tierColor = req.requestedTier >= 2
-        ? const Color(0xFFFF9500)
-        : const Color(0xFF007AFF);
-    const tierIcon = Icons.workspace_premium_rounded;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border:
-            isPending ? Border.all(color: tierColor.withOpacity(0.25)) : null,
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4)),
-        ],
-      ),
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.all(18),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // ── Header row ──────────────────────────────────────────
-            Row(children: [
-              _avatar(req.handymanName, color: tierColor),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(req.handymanName ?? 'Unknown Handyman',
-                          style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textDark)),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Submitted ${_formatDate(req.createdAt)}',
-                        style: const TextStyle(
-                            fontSize: 12, color: AppColors.textLight),
-                      ),
-                    ]),
+  Tab _tabLabel(String label, int pending) => Tab(
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(label),
+          if (pending > 0) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF3B30),
+                borderRadius: BorderRadius.circular(8),
               ),
-              _statusChip(req.status),
-            ]),
-            const SizedBox(height: 14),
-            // ── Tier upgrade row ─────────────────────────────────────
-            Row(children: [
-              // Current tier chip
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8E8E93).withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.person_outline_rounded,
-                      size: 13, color: Color(0xFF8E8E93)),
-                  const SizedBox(width: 5),
-                  Text(req.currentTierLabel,
-                      style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF8E8E93))),
-                ]),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Icon(Icons.arrow_forward_rounded,
-                    size: 14, color: AppColors.textLight),
-              ),
-              // Requested tier chip
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: tierColor.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(tierIcon, size: 13, color: tierColor),
-                  const SizedBox(width: 5),
-                  Text(req.requestedTierLabel,
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: tierColor)),
-                ]),
-              ),
-            ]),
-            // ── Admin note on rejection ──────────────────────────────
-            if (req.adminNote != null && req.status == 'rejected') ...[
-              const SizedBox(height: 10),
-              _adminNoteChip(req.adminNote!),
-            ],
-          ]),
-        ),
-        // ── Approve / Reject row (pending only) ─────────────────────
-        if (isPending) ...[
-          const Divider(height: 1, color: Color(0xFFF0F0F0)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-            child: isLoading
-                ? Center(
-                    child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation(tierColor),
-                        strokeWidth: 2))
-                : _approveRejectRow(
-                    onReject: () => _confirmRejectUpgrade(req),
-                    onApprove: () => _approveUpgrade(req),
-                    approveColor: tierColor,
-                  ),
-          ),
-        ],
-      ]),
-    ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
-  }
-
-  // ── Actions — Upgrade Requests ────────────────────────────────────────────
-
-  Future<void> _approveUpgrade(SubscriptionRequestModel req) async {
-    setState(() => _processingId = req.id);
-    await widget.onApproveUpgrade?.call(req);
-    if (mounted) setState(() => _processingId = null);
-  }
-
-  Future<void> _confirmRejectUpgrade(SubscriptionRequestModel req) async {
-    final noteCtrl = TextEditingController();
-    final confirmed = await _rejectDialog(
-      ctx: context,
-      title: 'Reject Upgrade Request',
-      message: 'Reject ${req.handymanName ?? 'this handyman'}\'s request '
-          'to upgrade to ${req.requestedTierLabel}?',
-      noteCtrl: noteCtrl,
-    );
-    if (confirmed == true) {
-      setState(() => _processingId = req.id);
-      await widget.onRejectUpgrade?.call(
-          req, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
-      if (mounted) setState(() => _processingId = null);
-    }
-  }
-
-  // ── Empty state ────────────────────────────────────────────────────────────
-
-  Widget _emptyState() => Center(
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(Icons.check_circle_outline_rounded,
-              size: 52, color: AppColors.textLight.withOpacity(0.3)),
-          const SizedBox(height: 12),
-          const Text('Nothing here',
-              style: TextStyle(color: AppColors.textLight, fontSize: 15)),
+              child: Text('$pending',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700)),
+            ),
+          ],
         ]),
       );
 
-  // ── Handyman Application card ─────────────────────────────────────────────
+  // ── Generic pipeline layout ───────────────────────────────────────────────
 
-  Widget _buildAppCard(ApplicationModel app, int index) {
-    final isPending = app.status == 'pending';
-    final isLoading = _processingId == app.id;
+  Widget _buildPipeline({
+    required String filter,
+    required void Function(String) onFilterChange,
+    required Map<String, int> counts,
+    required List items,
+    required Widget Function(dynamic, int) itemBuilder,
+  }) {
+    return Column(children: [
+      // ── Segment filter ─────────────────────────────────────────
+      Container(
+        color: Colors.white,
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        child: Row(children: [
+          _segmentChip('Pending', filter == 'pending', counts['pending'] ?? 0,
+              const Color(0xFFFF9500), () => onFilterChange('pending')),
+          const SizedBox(width: 8),
+          _segmentChip(
+              'Approved',
+              filter == 'approved',
+              counts['approved'] ?? 0,
+              const Color(0xFF34C759),
+              () => onFilterChange('approved')),
+          const SizedBox(width: 8),
+          _segmentChip(
+              'Rejected',
+              filter == 'rejected',
+              counts['rejected'] ?? 0,
+              const Color(0xFFFF3B30),
+              () => onFilterChange('rejected')),
+        ]),
+      ),
+      const Divider(height: 1, color: Color(0xFFF0F0F0)),
+      // ── List ───────────────────────────────────────────────────
+      Expanded(
+        child: items.isEmpty
+            ? _emptyState(filter)
+            : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                itemCount: items.length,
+                itemBuilder: (_, i) => itemBuilder(items[i], i),
+              ),
+      ),
+    ]);
+  }
 
+  Widget _segmentChip(String label, bool selected, int count, Color color,
+          VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: 150.ms,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: selected ? color : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected ? color : const Color(0xFFDDDDDD),
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                        color: color.withOpacity(0.2),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2))
+                  ]
+                : null,
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(label,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: selected ? Colors.white : AppColors.textDark)),
+            const SizedBox(width: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: selected
+                    ? Colors.white.withOpacity(0.25)
+                    : color.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text('$count',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: selected ? Colors.white : color)),
+            ),
+          ]),
+        ),
+      );
+
+  // ── Empty state ───────────────────────────────────────────────────────────
+
+  Widget _emptyState(String filter) => Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.07),
+                shape: BoxShape.circle),
+            child: Icon(
+              filter == 'pending'
+                  ? Icons.inbox_rounded
+                  : filter == 'approved'
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.cancel_outlined,
+              size: 40,
+              color: AppColors.primary.withOpacity(0.5),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            filter == 'pending'
+                ? 'No pending items'
+                : filter == 'approved'
+                    ? 'Nothing approved yet'
+                    : 'Nothing rejected yet',
+            style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textDark),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            filter == 'pending' ? 'All caught up.' : 'Items will appear here.',
+            style: const TextStyle(fontSize: 13, color: AppColors.textLight),
+          ),
+        ]),
+      );
+
+  // ── Shared card shell ─────────────────────────────────────────────────────
+
+  Widget _cardShell({
+    required String status,
+    required int index,
+    required List<Widget> body,
+    Widget? docsSection,
+    Widget? includesSection,
+    bool isPending = false,
+    bool isLoading = false,
+    required VoidCallback onApprove,
+    required VoidCallback onReject,
+    Color approveColor = const Color(0xFF34C759),
+  }) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4)),
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 3)),
         ],
       ),
-      child: Column(children: [
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
-          padding: const EdgeInsets.all(18),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              _avatar(app.applicantName),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(app.applicantName ?? 'Unknown',
-                          style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textDark)),
-                      const SizedBox(height: 2),
-                      Text(app.applicantEmail ?? '',
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.textLight)),
-                    ]),
-              ),
-              _statusChip(app.status),
-            ]),
-            const SizedBox(height: 12),
-            _serviceBadge(app.serviceType, Icons.build_rounded),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: body),
+        ),
+        if (docsSection != null) ...[
+          const Divider(height: 1, color: Color(0xFFF2F2F2)),
+          docsSection,
+        ],
+        if (includesSection != null) ...[
+          const Divider(height: 1, color: Color(0xFFF2F2F2)),
+          includesSection,
+        ],
+        if (isPending) ...[
+          const Divider(height: 1, color: Color(0xFFF2F2F2)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: isLoading
+                ? Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation(approveColor)),
+                    ),
+                  )
+                : _actionRow(
+                    onReject: onReject,
+                    onApprove: onApprove,
+                    approveColor: approveColor,
+                  ),
+          ),
+        ],
+      ]),
+    ).animate().fadeIn(delay: (index * 60).ms).slideY(begin: 0.05, end: 0);
+  }
+
+  // ── Application card ──────────────────────────────────────────────────────
+
+  Widget _buildAppCard(ApplicationModel app, int index) => _cardShell(
+        status: app.status,
+        index: index,
+        isPending: app.status == 'pending',
+        isLoading: _processingId == app.id,
+        onApprove: () => _approveApp(app),
+        onReject: () => _confirmRejectApp(app),
+        body: [
+          _cardHeader(
+            name: app.applicantName,
+            subtitle: app.applicantEmail ?? '',
+            status: app.status,
+            avatarColor: AppColors.primary,
+            date: null,
+          ),
+          const SizedBox(height: 12),
+          _badge(app.serviceType, Icons.build_rounded, AppColors.primary),
+          const SizedBox(height: 10),
+          Wrap(spacing: 16, runSpacing: 6, children: [
+            _infoChip(
+                Icons.trending_up_rounded, '${app.yearsExp} yrs experience'),
+            if (app.priceMin != null)
+              _infoChip(Icons.payments_rounded,
+                  '₱${app.priceMin!.toStringAsFixed(0)}/hr'),
+          ]),
+          if (app.bio != null && app.bio!.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Row(children: [
-              _info(
-                  Icons.trending_up_rounded, '${app.yearsExp} yrs experience'),
-              if (app.priceMin != null) ...[
-                const SizedBox(width: 16),
-                _info(Icons.payments_rounded,
-                    '₱${app.priceMin!.toStringAsFixed(0)}/hr'),
-              ],
-            ]),
-            if (app.bio != null && app.bio!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(app.bio!,
-                  style: const TextStyle(
-                      fontSize: 12, color: AppColors.textMedium),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-            ],
-            if (app.adminNote != null && app.status == 'rejected') ...[
-              const SizedBox(height: 10),
-              _adminNoteChip(app.adminNote!),
-            ],
-          ]),
-        ),
-        if (app.credentialUrl != null || app.validIdUrl != null) ...[
-          const Divider(height: 1, color: Color(0xFFF0F0F0)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Submitted Documents',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textMedium,
-                      letterSpacing: 0.3)),
-              const SizedBox(height: 10),
-              Row(children: [
-                if (app.credentialUrl != null)
-                  _docTile('Credential', app.credentialUrl!,
-                      const Color(0xFFFF9500)),
-                if (app.credentialUrl != null && app.validIdUrl != null)
-                  const SizedBox(width: 10),
-                if (app.validIdUrl != null)
-                  _docTile(
-                      'Valid ID', app.validIdUrl!, const Color(0xFF007AFF)),
-              ]),
-            ]),
-          ),
+            Text(app.bio!,
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textMedium, height: 1.5),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis),
+          ],
+          if (app.adminNote != null && app.status == 'rejected') ...[
+            const SizedBox(height: 10),
+            _feedbackNote(app.adminNote!),
+          ],
         ],
-        if (isPending) ...[
-          const Divider(height: 1, color: Color(0xFFF0F0F0)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-            child: isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation(AppColors.primary),
-                        strokeWidth: 2))
-                : _approveRejectRow(
-                    onReject: () => _confirmRejectApp(app),
-                    onApprove: () => _approveApp(app),
-                  ),
-          ),
-        ],
-      ]),
-    ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
-  }
-
-  // ── Service Proposal card ─────────────────────────────────────────────────
-
-  Widget _buildProposalCard(ServiceProposalModel prop, int index) {
-    final isPending = prop.status == 'pending';
-    final isLoading = _processingId == prop.id;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4)),
-        ],
-      ),
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.all(18),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              _avatar(prop.proposerName, color: const Color(0xFFD4A843)),
-              const SizedBox(width: 12),
-              Expanded(
+        docsSection: (app.credentialUrl != null || app.validIdUrl != null)
+            ? Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(prop.proposerName ?? 'Unknown',
-                          style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textDark)),
-                      const SizedBox(height: 2),
-                      Text('Submitted ${_formatDate(prop.submittedAt)}',
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.textLight)),
+                      _sectionLabel('Submitted Documents'),
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        if (app.credentialUrl != null)
+                          _docTile('Credential', app.credentialUrl!,
+                              const Color(0xFFFF9500)),
+                        if (app.credentialUrl != null && app.validIdUrl != null)
+                          const SizedBox(width: 10),
+                        if (app.validIdUrl != null)
+                          _docTile('Valid ID', app.validIdUrl!,
+                              const Color(0xFF007AFF)),
+                      ]),
                     ]),
-              ),
-              _statusChip(prop.status),
-            ]),
-            const SizedBox(height: 12),
-            // Service name + type badges
-            Wrap(spacing: 8, runSpacing: 6, children: [
-              _serviceBadge(prop.serviceName, Icons.storefront_rounded),
-              _serviceBadge(prop.serviceType, Icons.build_rounded,
-                  color: const Color(0xFF5856D6)),
-            ]),
-            // Quick details
-            if (prop.priceRange != null || prop.duration != null) ...[
-              const SizedBox(height: 10),
-              Row(children: [
-                if (prop.priceRange != null)
-                  _info(Icons.payments_rounded, prop.priceRange!),
-                if (prop.priceRange != null && prop.duration != null)
-                  const SizedBox(width: 16),
-                if (prop.duration != null)
-                  _info(Icons.schedule_rounded, prop.duration!),
-              ]),
-            ],
-            if (prop.description != null && prop.description!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(prop.description!,
-                  style: const TextStyle(
-                      fontSize: 12, color: AppColors.textMedium),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-            ],
-            if (prop.adminNote != null && prop.status == 'rejected') ...[
-              const SizedBox(height: 10),
-              _adminNoteChip(prop.adminNote!),
-            ],
-          ]),
-        ),
-        // ── Service image preview ──────────────────────────────
-        if (prop.imageUrl != null && prop.imageUrl!.isNotEmpty) ...[
-          const Divider(height: 1, color: Color(0xFFF0F0F0)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Service Image',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textMedium,
-                      letterSpacing: 0.3)),
-              const SizedBox(height: 10),
-              Row(children: [
-                _docTile(
-                    'Service Image', prop.imageUrl!, const Color(0xFFD4A843)),
-              ]),
-            ]),
-          ),
-        ],
-        // ── Includes preview ───────────────────────────────────
-        if (prop.includes.isNotEmpty) ...[
-          const Divider(height: 1, color: Color(0xFFF0F0F0)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('What\'s Included',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textMedium)),
-              const SizedBox(height: 8),
-              ...prop.includes.take(3).map((item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.check_rounded,
-                              size: 13, color: Color(0xFF34C759)),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(item,
-                                style: const TextStyle(
-                                    fontSize: 12, color: AppColors.textMedium)),
-                          ),
-                        ]),
-                  )),
-              if (prop.includes.length > 3)
-                Text('+ ${prop.includes.length - 3} more',
-                    style: const TextStyle(
-                        fontSize: 11, color: AppColors.textLight)),
-            ]),
-          ),
-        ],
-        if (isPending) ...[
-          const Divider(height: 1, color: Color(0xFFF0F0F0)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-            child: isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation(Color(0xFFD4A843)),
-                        strokeWidth: 2))
-                : _approveRejectRow(
-                    onReject: () => _confirmRejectProposal(prop),
-                    onApprove: () => _approveProposal(prop),
-                    approveColor: const Color(0xFFD4A843),
-                  ),
-          ),
-        ],
-      ]),
-    ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
-  }
+              )
+            : null,
+      );
 
-  // ── Service Selection Request card ──────────────────────────────────────────
+  // ── Proposal card ─────────────────────────────────────────────────────────
+
+  Widget _buildProposalCard(ServiceProposalModel prop, int index) => _cardShell(
+        status: prop.status,
+        index: index,
+        isPending: prop.status == 'pending',
+        isLoading: _processingId == prop.id,
+        approveColor: const Color(0xFFD4A843),
+        onApprove: () => _approveProposal(prop),
+        onReject: () => _confirmRejectProposal(prop),
+        body: [
+          _cardHeader(
+            name: prop.proposerName,
+            subtitle: 'Submitted ${_formatDate(prop.submittedAt)}',
+            status: prop.status,
+            avatarColor: const Color(0xFFD4A843),
+            date: null,
+          ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 6, children: [
+            _badge(prop.serviceName, Icons.storefront_rounded,
+                const Color(0xFFD4A843)),
+            _badge(
+                prop.serviceType, Icons.build_rounded, const Color(0xFF5856D6)),
+          ]),
+          if (prop.priceRange != null || prop.duration != null) ...[
+            const SizedBox(height: 10),
+            Wrap(spacing: 16, runSpacing: 6, children: [
+              if (prop.priceRange != null)
+                _infoChip(Icons.payments_rounded, prop.priceRange!),
+              if (prop.duration != null)
+                _infoChip(Icons.schedule_rounded, prop.duration!),
+            ]),
+          ],
+          if (prop.description != null && prop.description!.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(prop.description!,
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textMedium, height: 1.5),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis),
+          ],
+          if (prop.adminNote != null && prop.status == 'rejected') ...[
+            const SizedBox(height: 10),
+            _feedbackNote(prop.adminNote!),
+          ],
+        ],
+        docsSection: (prop.imageUrl != null && prop.imageUrl!.isNotEmpty)
+            ? Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _sectionLabel('Service Image'),
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        _docTile('Service Image', prop.imageUrl!,
+                            const Color(0xFFD4A843)),
+                        const Expanded(child: SizedBox()),
+                      ]),
+                    ]),
+              )
+            : null,
+        includesSection: prop.includes.isNotEmpty
+            ? Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _sectionLabel("What's Included"),
+                      const SizedBox(height: 8),
+                      ...prop.includes.take(3).map((item) => Padding(
+                            padding: const EdgeInsets.only(bottom: 5),
+                            child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.check_rounded,
+                                      size: 13, color: Color(0xFF34C759)),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(item,
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            color: AppColors.textMedium)),
+                                  ),
+                                ]),
+                          )),
+                      if (prop.includes.length > 3)
+                        Text(
+                          '+ ${prop.includes.length - 3} more',
+                          style: const TextStyle(
+                              fontSize: 11, color: AppColors.textLight),
+                        ),
+                    ]),
+              )
+            : null,
+      );
+
+  // ── Service Request card ──────────────────────────────────────────────────
 
   Widget _buildServiceRequestCard(ServiceSelectionRequestModel req, int index) {
-    final isPending = req.status == 'pending';
-    final isLoading = _processingId == req.id;
     final isDeselect = req.action == 'deselect';
-
-    // Amber for select requests, purple for deselect requests — mirrors the
-    // action badge colours used in MyServicesScreen.
-    const selectColor = Color(0xFFFF9500);
-    const deselectColor = Color(0xFF5856D6);
-    final actionColor = isDeselect ? deselectColor : selectColor;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4)),
+    final actionColor =
+        isDeselect ? const Color(0xFF5856D6) : const Color(0xFFFF9500);
+    return _cardShell(
+      status: req.status,
+      index: index,
+      isPending: req.status == 'pending',
+      isLoading: _processingId == req.id,
+      approveColor: const Color(0xFFFF9500),
+      onApprove: () => _approveServiceRequest(req),
+      onReject: () => _confirmRejectServiceRequest(req),
+      body: [
+        _cardHeader(
+          name: req.handymanName,
+          subtitle: 'Submitted ${_formatDate(req.submittedAt)}',
+          status: req.status,
+          avatarColor: actionColor,
+          date: null,
+        ),
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, runSpacing: 6, children: [
+          _badge(req.serviceName ?? 'Unknown Service',
+              Icons.home_repair_service_rounded, AppColors.primary),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: actionColor.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(
+                isDeselect
+                    ? Icons.remove_circle_outline_rounded
+                    : Icons.add_circle_outline_rounded,
+                color: actionColor,
+                size: 13,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                isDeselect ? 'Remove Service' : 'Add Service',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: actionColor),
+              ),
+            ]),
+          ),
+          if (req.skillType != null)
+            _badge(
+                req.skillType!, Icons.build_rounded, const Color(0xFF5856D6)),
+        ]),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F8F8),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.info_outline_rounded,
+                size: 13, color: AppColors.textLight),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                isDeselect
+                    ? 'This handyman wants to stop offering this service. '
+                        'Approve if appropriate; reject to keep it active.'
+                    : 'This handyman wants to add this service to their profile. '
+                        'Verify their credentials before approving.',
+                style: const TextStyle(
+                    fontSize: 11, color: AppColors.textMedium, height: 1.45),
+              ),
+            ),
+          ]),
+        ),
+        if (req.adminNote != null && req.status == 'rejected') ...[
+          const SizedBox(height: 10),
+          _feedbackNote(req.adminNote!),
         ],
-      ),
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.all(18),
+      ],
+    );
+  }
+
+  // ── Upgrade card ──────────────────────────────────────────────────────────
+
+  Widget _buildUpgradeCard(SubscriptionRequestModel req, int index) {
+    final tierColor = req.requestedTier >= 2
+        ? const Color(0xFFFF9500)
+        : const Color(0xFF007AFF);
+    return _cardShell(
+      status: req.status,
+      index: index,
+      isPending: req.isPending,
+      isLoading: _processingId == req.id,
+      approveColor: tierColor,
+      onApprove: () => _approveUpgrade(req),
+      onReject: () => _confirmRejectUpgrade(req),
+      body: [
+        _cardHeader(
+          name: req.handymanName,
+          subtitle: 'Submitted ${_formatDate(req.createdAt)}',
+          status: req.status,
+          avatarColor: tierColor,
+          date: null,
+        ),
+        const SizedBox(height: 12),
+        // Tier upgrade arrow
+        Row(children: [
+          _badge(req.currentTierLabel, Icons.person_outline_rounded,
+              const Color(0xFF8E8E93)),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(Icons.arrow_forward_rounded,
+                size: 14, color: AppColors.textLight),
+          ),
+          _badge(req.requestedTierLabel, Icons.workspace_premium_rounded,
+              tierColor),
+        ]),
+        if (req.adminNote != null && req.status == 'rejected') ...[
+          const SizedBox(height: 10),
+          _feedbackNote(req.adminNote!),
+        ],
+      ],
+    );
+  }
+
+  // ── Shared widget helpers ─────────────────────────────────────────────────
+
+  Widget _cardHeader({
+    required String? name,
+    required String subtitle,
+    required String status,
+    required Color avatarColor,
+    required DateTime? date,
+  }) =>
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Avatar
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: avatarColor.withOpacity(0.12),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Text(
+              name?.isNotEmpty == true ? name![0].toUpperCase() : '?',
+              style: TextStyle(
+                  color: avatarColor,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 17),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // ── Header row: avatar + name + status chip ───────────────
-            Row(children: [
-              _avatar(req.handymanName, color: actionColor),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(req.handymanName ?? 'Unknown Handyman',
-                          style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textDark)),
-                      const SizedBox(height: 2),
-                      Text('Submitted ${_formatDate(req.submittedAt)}',
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.textLight)),
-                    ]),
-              ),
-              _statusChip(req.status),
-            ]),
-            const SizedBox(height: 12),
-            // ── Service name + action + skill type badges ─────────────
-            Wrap(spacing: 8, runSpacing: 6, children: [
-              _serviceBadge(req.serviceName ?? 'Unknown Service',
-                  Icons.home_repair_service_rounded),
-              // Action badge: "Add Service" or "Remove Service"
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: actionColor.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(
-                    isDeselect
-                        ? Icons.remove_circle_outline_rounded
-                        : Icons.add_circle_outline_rounded,
-                    color: actionColor,
-                    size: 13,
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    isDeselect ? 'Remove Service' : 'Add Service',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: actionColor),
-                  ),
-                ]),
-              ),
-              if (req.skillType != null)
-                _serviceBadge(req.skillType!, Icons.build_rounded,
-                    color: const Color(0xFF5856D6)),
-            ]),
-            const SizedBox(height: 10),
-            // ── Context note for the admin ────────────────────────────
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: actionColor.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: actionColor.withOpacity(0.2)),
-              ),
-              child:
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Icon(Icons.info_outline_rounded,
-                    size: 13, color: AppColors.textLight),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    isDeselect
-                        ? 'This handyman wants to stop offering this service. '
-                            'Approve if appropriate; reject to keep it active.'
-                        : 'This handyman wants to add this service to their profile. '
-                            'Verify their credentials before approving.',
-                    style: const TextStyle(
-                        fontSize: 11, color: AppColors.textMedium, height: 1.4),
+            Text(name ?? 'Unknown',
+                style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark)),
+            const SizedBox(height: 2),
+            Text(subtitle,
+                style:
+                    const TextStyle(fontSize: 11, color: AppColors.textLight)),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        _statusChip(status),
+      ]);
+
+  Widget _badge(String label, IconData icon, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: color, size: 12),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+        ]),
+      );
+
+  Widget _infoChip(IconData icon, String text) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 12, color: AppColors.textLight),
+        const SizedBox(width: 4),
+        Text(text,
+            style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textMedium,
+                fontWeight: FontWeight.w500)),
+      ]);
+
+  Widget _sectionLabel(String text) => Text(text,
+      style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: AppColors.textLight,
+          letterSpacing: 0.4));
+
+  Widget _feedbackNote(String note) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF3B30).withOpacity(0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFFF3B30).withOpacity(0.2)),
+        ),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.info_outline_rounded,
+              color: Color(0xFFFF3B30), size: 13),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(note,
+                style: const TextStyle(
+                    fontSize: 12, color: Color(0xFFCC2A20), height: 1.4)),
+          ),
+        ]),
+      );
+
+  Widget _statusChip(String status) {
+    final Color color;
+    final String label;
+    switch (status) {
+      case 'approved':
+        color = const Color(0xFF34C759);
+        label = 'Approved';
+        break;
+      case 'rejected':
+        color = const Color(0xFFFF3B30);
+        label = 'Rejected';
+        break;
+      default:
+        color = const Color(0xFFFF9500);
+        label = 'Pending';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+    );
+  }
+
+  Widget _actionRow({
+    required VoidCallback onReject,
+    required VoidCallback onApprove,
+    Color approveColor = const Color(0xFF34C759),
+  }) =>
+      Row(children: [
+        Expanded(
+          child: OutlinedButton(
+            onPressed: onReject,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFFF3B30),
+              side: const BorderSide(color: Color(0xFFFF3B30), width: 1),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(vertical: 11),
+            ),
+            child: const Text('Reject',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ElevatedButton(
+            onPressed: onApprove,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: approveColor,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(vertical: 11),
+            ),
+            child: const Text('Approve',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          ),
+        ),
+      ]);
+
+  Widget _docTile(String label, String url, Color color) => Expanded(
+        child: GestureDetector(
+          onTap: () => _showDocDialog(label, url),
+          child: Container(
+            height: 80,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: color.withOpacity(0.05),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(children: [
+                Image.network(url,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) return child;
+                      return Container(
+                        color: color.withOpacity(0.05),
+                        child: Center(
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: color.withOpacity(0.6)),
+                          ),
+                        ),
+                      );
+                    },
+                    errorBuilder: (_, __, ___) => Container(
+                          color: color.withOpacity(0.08),
+                          child: Center(
+                            child: Icon(Icons.image_outlined,
+                                color: color.withOpacity(0.4), size: 28),
+                          ),
+                        )),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    color: Colors.black.withOpacity(0.45),
+                    child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.zoom_in_rounded,
+                              color: Colors.white, size: 11),
+                          const SizedBox(width: 4),
+                          Text(label,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600)),
+                        ]),
                   ),
                 ),
               ]),
             ),
-            // ── Admin rejection note ──────────────────────────────────
-            if (req.adminNote != null && req.status == 'rejected') ...[
-              const SizedBox(height: 10),
-              _adminNoteChip(req.adminNote!),
-            ],
-          ]),
-        ),
-        // ── Approve / Reject row (pending only) ──────────────────────
-        if (isPending) ...[
-          const Divider(height: 1, color: Color(0xFFF0F0F0)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-            child: isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation(Color(0xFFFF9500)),
-                        strokeWidth: 2))
-                : _approveRejectRow(
-                    onReject: () => _confirmRejectServiceRequest(req),
-                    onApprove: () => _approveServiceRequest(req),
-                    approveColor: const Color(0xFFFF9500),
-                  ),
           ),
-        ],
-      ]),
-    ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
+        ),
+      );
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  Future<void> _approveApp(ApplicationModel app) async {
+    setState(() => _processingId = app.id);
+    await widget.onApprove?.call(app);
+    if (mounted) setState(() => _processingId = null);
   }
 
-  // ── Actions — Service Selection Requests ──────────────────────────────────
+  Future<void> _confirmRejectApp(ApplicationModel app) async {
+    final noteCtrl = TextEditingController();
+    final ok = await _rejectDialog(
+      title: 'Reject Application',
+      message: 'Reject ${app.applicantName ?? "this applicant"}'
+          '\'s application for ${app.serviceType}?',
+      noteCtrl: noteCtrl,
+    );
+    if (ok == true) {
+      setState(() => _processingId = app.id);
+      await widget.onReject?.call(
+          app, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
+      if (mounted) setState(() => _processingId = null);
+    }
+  }
+
+  Future<void> _approveProposal(ServiceProposalModel prop) async {
+    setState(() => _processingId = prop.id);
+    await widget.onApproveProposal?.call(prop);
+    if (mounted) setState(() => _processingId = null);
+  }
+
+  Future<void> _confirmRejectProposal(ServiceProposalModel prop) async {
+    final noteCtrl = TextEditingController();
+    final ok = await _rejectDialog(
+      title: 'Reject Proposal',
+      message: 'Reject ${prop.proposerName ?? "this handyman"}'
+          '\'s proposal for "${prop.serviceName}"?',
+      noteCtrl: noteCtrl,
+    );
+    if (ok == true) {
+      setState(() => _processingId = prop.id);
+      await widget.onRejectProposal?.call(
+          prop, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
+      if (mounted) setState(() => _processingId = null);
+    }
+  }
 
   Future<void> _approveServiceRequest(ServiceSelectionRequestModel req) async {
     setState(() => _processingId = req.id);
@@ -997,21 +1010,16 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
       ServiceSelectionRequestModel req) async {
     final noteCtrl = TextEditingController();
     final isDeselect = req.action == 'deselect';
-    final handymanName = req.handymanName ?? 'this handyman';
-    final serviceName = req.serviceName ?? 'this service';
-    final confirmed = await _rejectDialog(
-      ctx: context,
+    final ok = await _rejectDialog(
       title: isDeselect ? 'Reject Removal Request' : 'Reject Service Request',
       message: isDeselect
-          ? 'Reject $handymanName\'s request to remove '
-              '"$serviceName" from their profile?\n\n'
-              'The service will remain active on their profile.'
-          : 'Reject $handymanName\'s request to add '
-              '"$serviceName" to their profile?\n\n'
-              'You can provide feedback so they know what credentials are needed.',
+          ? 'Reject ${req.handymanName ?? "this handyman"}'
+              '\'s request to remove "${req.serviceName ?? "this service"}"?'
+          : 'Reject ${req.handymanName ?? "this handyman"}'
+              '\'s request to add "${req.serviceName ?? "this service"}"?',
       noteCtrl: noteCtrl,
     );
-    if (confirmed == true) {
+    if (ok == true) {
       setState(() => _processingId = req.id);
       await widget.onRejectServiceRequest?.call(
           req, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
@@ -1019,314 +1027,82 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
     }
   }
 
-  // ── Shared widget helpers ─────────────────────────────────────────────────
-
-  Widget _avatar(String? name, {Color color = const Color(0xFF34C759)}) =>
-      Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [color, color.withOpacity(0.6)]),
-          shape: BoxShape.circle,
-        ),
-        child: Center(
-          child: Text(
-            name?.isNotEmpty == true ? name![0].toUpperCase() : '?',
-            style: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
-          ),
-        ),
-      );
-
-  Widget _serviceBadge(String label, IconData icon,
-          {Color color = AppColors.primary}) =>
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, color: color, size: 13),
-          const SizedBox(width: 5),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w700, color: color)),
-        ]),
-      );
-
-  Widget _adminNoteChip(String note) => Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFF3B30).withOpacity(0.06),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFFF3B30).withOpacity(0.2)),
-        ),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Icon(Icons.info_outline_rounded,
-              color: Color(0xFFFF3B30), size: 13),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text('Feedback: $note',
-                style: const TextStyle(fontSize: 11, color: Color(0xFFFF3B30))),
-          ),
-        ]),
-      );
-
-  Widget _approveRejectRow({
-    required VoidCallback onReject,
-    required VoidCallback onApprove,
-    Color approveColor = const Color(0xFF34C759),
-  }) =>
-      Row(children: [
-        Expanded(
-          child: OutlinedButton(
-            onPressed: onReject,
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Color(0xFFFF3B30)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-            ),
-            child: const Text('Reject',
-                style: TextStyle(
-                    color: Color(0xFFFF3B30), fontWeight: FontWeight.w700)),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: ElevatedButton(
-            onPressed: onApprove,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: approveColor,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              elevation: 0,
-            ),
-            child: const Text('Approve',
-                style: TextStyle(fontWeight: FontWeight.w700)),
-          ),
-        ),
-      ]);
-
-  Widget _statusChip(String status) {
-    final info = <String, dynamic>{
-          'pending': {'label': 'Pending', 'color': const Color(0xFFFF9500)},
-          'approved': {'label': 'Approved', 'color': const Color(0xFF34C759)},
-          'rejected': {'label': 'Rejected', 'color': const Color(0xFFFF3B30)},
-        }[status] ??
-        {'label': status, 'color': AppColors.textLight};
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: (info['color'] as Color).withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: (info['color'] as Color).withOpacity(0.35)),
-      ),
-      child: Text(info['label'] as String,
-          style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: info['color'] as Color)),
-    );
-  }
-
-  Widget _info(IconData icon, String text) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: AppColors.textLight),
-          const SizedBox(width: 4),
-          Text(text,
-              style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textMedium,
-                  fontWeight: FontWeight.w500)),
-        ],
-      );
-
-  Widget _docTile(String label, String url, Color color) => Expanded(
-        child: GestureDetector(
-          onTap: () => _showDocDialog(label, url),
-          child: Container(
-            height: 80,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: color.withOpacity(0.3)),
-              color: color.withOpacity(0.05),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(11),
-              child: Stack(children: [
-                Image.network(
-                  url,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: double.infinity,
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return Container(
-                      color: color.withOpacity(0.05),
-                      child: Center(
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: color.withOpacity(0.6)),
-                        ),
-                      ),
-                    );
-                  },
-                  errorBuilder: (_, __, ___) => Container(
-                    color: color.withOpacity(0.08),
-                    child: Center(
-                      child: Icon(Icons.image_outlined,
-                          color: color.withOpacity(0.5), size: 28),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    decoration: BoxDecoration(color: color.withOpacity(0.85)),
-                    child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.zoom_in_rounded,
-                              color: Colors.white, size: 11),
-                          const SizedBox(width: 3),
-                          Text(label,
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700)),
-                        ]),
-                  ),
-                ),
-              ]),
-            ),
-          ),
-        ),
-      );
-
-  String _formatDate(DateTime dt) {
-    const m = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ];
-    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}';
-  }
-
-  // ── Actions — Applications ─────────────────────────────────────────────────
-
-  Future<void> _approveApp(ApplicationModel app) async {
-    setState(() => _processingId = app.id);
-    await widget.onApprove?.call(app);
+  Future<void> _approveUpgrade(SubscriptionRequestModel req) async {
+    setState(() => _processingId = req.id);
+    await widget.onApproveUpgrade?.call(req);
     if (mounted) setState(() => _processingId = null);
   }
 
-  Future<void> _confirmRejectApp(ApplicationModel app) async {
+  Future<void> _confirmRejectUpgrade(SubscriptionRequestModel req) async {
     final noteCtrl = TextEditingController();
-    final confirmed = await _rejectDialog(
-      ctx: context,
-      title: 'Reject Application',
-      message:
-          'Reject ${app.applicantName ?? "this applicant"}\'s application for ${app.serviceType}?',
+    final ok = await _rejectDialog(
+      title: 'Reject Upgrade Request',
+      message: 'Reject ${req.handymanName ?? "this handyman"}'
+          '\'s request to upgrade to ${req.requestedTierLabel}?',
       noteCtrl: noteCtrl,
     );
-    if (confirmed == true) {
-      setState(() => _processingId = app.id);
-      await widget.onReject?.call(
-          app, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
+    if (ok == true) {
+      setState(() => _processingId = req.id);
+      await widget.onRejectUpgrade?.call(
+          req, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
       if (mounted) setState(() => _processingId = null);
     }
   }
 
-  // ── Actions — Proposals ────────────────────────────────────────────────────
-
-  Future<void> _approveProposal(ServiceProposalModel prop) async {
-    setState(() => _processingId = prop.id);
-    await widget.onApproveProposal?.call(prop);
-    if (mounted) setState(() => _processingId = null);
-  }
-
-  Future<void> _confirmRejectProposal(ServiceProposalModel prop) async {
-    final noteCtrl = TextEditingController();
-    final confirmed = await _rejectDialog(
-      ctx: context,
-      title: 'Reject Proposal',
-      message:
-          'Reject ${prop.proposerName ?? "this handyman"}\'s proposal for "${prop.serviceName}"?\n\n'
-          'You can add feedback so they know what to fix.',
-      noteCtrl: noteCtrl,
-    );
-    if (confirmed == true) {
-      setState(() => _processingId = prop.id);
-      await widget.onRejectProposal?.call(
-          prop, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
-      if (mounted) setState(() => _processingId = null);
-    }
-  }
-
-  // ── Shared reject dialog ───────────────────────────────────────────────────
+  // ── Reject dialog ─────────────────────────────────────────────────────────
 
   Future<bool?> _rejectDialog({
-    required BuildContext ctx,
     required String title,
     required String message,
     required TextEditingController noteCtrl,
   }) =>
       showDialog<bool>(
-        context: ctx,
-        builder: (dialogCtx) => AlertDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title:
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          title: Text(title,
+              style:
+                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(message, style: const TextStyle(color: AppColors.textMedium)),
-            const SizedBox(height: 16),
+            Text(message,
+                style: const TextStyle(
+                    fontSize: 13, color: AppColors.textMedium, height: 1.5)),
+            const SizedBox(height: 14),
             TextField(
               controller: noteCtrl,
               maxLines: 3,
+              style: const TextStyle(fontSize: 13),
               decoration: InputDecoration(
                 hintText: 'Feedback for the handyman (optional)',
-                hintStyle: const TextStyle(fontSize: 13),
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                hintStyle:
+                    const TextStyle(fontSize: 13, color: AppColors.textLight),
+                filled: true,
+                fillColor: const Color(0xFFF8F8F8),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide:
-                      const BorderSide(color: AppColors.primary, width: 2),
+                      const BorderSide(color: AppColors.primary, width: 1.5),
                 ),
+                contentPadding: const EdgeInsets.all(12),
               ),
             ),
           ]),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogCtx, false),
+              onPressed: () => Navigator.pop(ctx, false),
               child: const Text('Cancel',
                   style: TextStyle(color: AppColors.textLight)),
             ),
             ElevatedButton(
-              onPressed: () => Navigator.pop(dialogCtx, true),
+              onPressed: () => Navigator.pop(ctx, true),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFFF3B30),
                 foregroundColor: Colors.white,
+                elevation: 0,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12)),
               ),
@@ -1337,9 +1113,11 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         ),
       );
 
+  // ── Doc viewer ────────────────────────────────────────────────────────────
+
   void _showDocDialog(String label, String url) => showDialog(
         context: context,
-        builder: (dialogCtx) => Dialog(
+        builder: (ctx) => Dialog(
           backgroundColor: Colors.black87,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -1356,7 +1134,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                 ),
                 IconButton(
                   icon: const Icon(Icons.close_rounded, color: Colors.white60),
-                  onPressed: () => Navigator.of(dialogCtx).pop(),
+                  onPressed: () => Navigator.of(ctx).pop(),
                 ),
               ]),
             ),
@@ -1368,39 +1146,37 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                 child: InteractiveViewer(
                   minScale: 0.8,
                   maxScale: 5.0,
-                  child: Image.network(
-                    url,
-                    fit: BoxFit.contain,
-                    loadingBuilder: (context, child, progress) {
-                      if (progress == null) return child;
-                      return SizedBox(
-                        height: 220,
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            value: progress.expectedTotalBytes != null
-                                ? progress.cumulativeBytesLoaded /
-                                    progress.expectedTotalBytes!
-                                : null,
-                            color: Colors.white,
+                  child: Image.network(url,
+                      fit: BoxFit.contain,
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return SizedBox(
+                          height: 220,
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              value: progress.expectedTotalBytes != null
+                                  ? progress.cumulativeBytesLoaded /
+                                      progress.expectedTotalBytes!
+                                  : null,
+                              color: Colors.white,
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                    errorBuilder: (_, __, ___) => Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-                      child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.broken_image_outlined,
-                                color: Colors.white30, size: 48),
-                            SizedBox(height: 10),
-                            Text('Image could not be loaded.',
-                                style: TextStyle(
-                                    color: Colors.white60, fontSize: 13),
-                                textAlign: TextAlign.center),
-                          ]),
-                    ),
-                  ),
+                        );
+                      },
+                      errorBuilder: (_, __, ___) => const Padding(
+                            padding: EdgeInsets.fromLTRB(24, 8, 24, 28),
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.broken_image_outlined,
+                                      color: Colors.white30, size: 48),
+                                  SizedBox(height: 10),
+                                  Text('Image could not be loaded.',
+                                      style: TextStyle(
+                                          color: Colors.white60, fontSize: 13),
+                                      textAlign: TextAlign.center),
+                                ]),
+                          )),
                 ),
               ),
             ),
@@ -1408,7 +1184,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         ),
       );
 
-  // ── Header ─────────────────────────────────────────────────────────────────
+  // ── Header ────────────────────────────────────────────────────────────────
 
   Widget _buildHeader(int totalPending) => Container(
         decoration: const BoxDecoration(
@@ -1417,11 +1193,12 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             end: Alignment.bottomRight,
             colors: [Color(0xFF082218), Color(0xFF0F3D2E), Color(0xFF1A5C43)],
           ),
+          borderRadius: BorderRadius.vertical(bottom: Radius.circular(0)),
         ),
         child: SafeArea(
           bottom: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
             child: Row(children: [
               GestureDetector(
                 onTap: widget.onBack ?? () => widget.onNavTap?.call(0),
@@ -1446,9 +1223,9 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                               fontSize: 18,
                               fontWeight: FontWeight.w700)),
                       SizedBox(height: 2),
-                      Text('Review applications & service proposals',
+                      Text('Review applications & proposals',
                           style:
-                              TextStyle(color: Colors.white70, fontSize: 12)),
+                              TextStyle(color: Colors.white60, fontSize: 11)),
                     ]),
               ),
               if (totalPending > 0)
@@ -1472,7 +1249,27 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         ),
       );
 
-  // ── Bottom nav ─────────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  String _formatDate(DateTime dt) {
+    const m = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}';
+  }
+
+  // ── Bottom nav ────────────────────────────────────────────────────────────
 
   Widget _buildBottomNav() {
     const items = [

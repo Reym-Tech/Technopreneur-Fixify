@@ -2,8 +2,14 @@
 //
 // AdminBookingOverviewScreen
 // ─────────────────────────────────────────────────────────────────────────────
-// Shows ALL platform bookings with status filtering and a detail bottom sheet
-// that includes completion proof photos for admin transaction tracking.
+// Shows ALL platform bookings with status filtering, search, pagination,
+// and a detail bottom sheet with completion proof photos.
+//
+// CHANGES:
+//   • Client-side pagination (10 per page); resets on filter/search change.
+//   • Header redesigned: gradient with rounded bottom + inline stats strip.
+//   • Filter chips show live per-status counts.
+//   • _BookingRow gets a status-colored left accent bar + cleaner layout.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -13,10 +19,7 @@ import 'package:intl/intl.dart';
 
 class AdminBookingOverviewScreen extends StatefulWidget {
   final List<BookingEntity> bookings;
-
-  /// Called to load completion proof photos for a specific booking.
   final Future<List<String>> Function(String bookingId) onLoadCompletionPhotos;
-
   final VoidCallback? onBack;
   final Future<void> Function()? onRefresh;
 
@@ -35,10 +38,14 @@ class AdminBookingOverviewScreen extends StatefulWidget {
 
 class _AdminBookingOverviewScreenState
     extends State<AdminBookingOverviewScreen> {
-  // ── Filter state ──────────────────────────────────────────────────────────
+  // ── Filter & search state ─────────────────────────────────────────────────
   String _selectedFilter = 'All';
   String _searchQuery = '';
   final _searchCtrl = TextEditingController();
+
+  // ── Pagination ────────────────────────────────────────────────────────────
+  static const _pageSize = 10;
+  int _page = 0;
 
   static const List<_FilterDef> _filters = [
     _FilterDef('All', Icons.list_alt_rounded, AppColors.primary),
@@ -57,8 +64,6 @@ class _AdminBookingOverviewScreenState
   // ── Filtering ─────────────────────────────────────────────────────────────
   List<BookingEntity> get _filtered {
     var list = widget.bookings;
-
-    // Status filter
     if (_selectedFilter != 'All') {
       list = list.where((b) {
         switch (_selectedFilter) {
@@ -81,8 +86,6 @@ class _AdminBookingOverviewScreenState
         }
       }).toList();
     }
-
-    // Search filter
     final q = _searchQuery.trim().toLowerCase();
     if (q.isNotEmpty) {
       list = list.where((b) {
@@ -96,8 +99,51 @@ class _AdminBookingOverviewScreenState
             address.contains(q);
       }).toList();
     }
-
     return list;
+  }
+
+  List<BookingEntity> get _paginated {
+    final f = _filtered;
+    final start = _page * _pageSize;
+    if (start >= f.length) return [];
+    return f.sublist(start, (start + _pageSize).clamp(0, f.length));
+  }
+
+  int get _totalPages => (_filtered.length / _pageSize).ceil().clamp(1, 999);
+
+  void _setFilter(String filter) => setState(() {
+        _selectedFilter = filter;
+        _page = 0;
+      });
+
+  void _setSearch(String q) => setState(() {
+        _searchQuery = q;
+        _page = 0;
+      });
+
+  // ── Per-filter counts ─────────────────────────────────────────────────────
+  int _countFor(String filter) {
+    if (filter == 'All') return widget.bookings.length;
+    return widget.bookings.where((b) {
+      switch (filter) {
+        case 'Pending':
+          return b.status == BookingStatus.pending ||
+              b.status == BookingStatus.accepted ||
+              b.status == BookingStatus.scheduleProposed ||
+              b.status == BookingStatus.scheduled;
+        case 'In Progress':
+          return b.status == BookingStatus.pendingArrivalConfirmation ||
+              b.status == BookingStatus.assessment ||
+              b.status == BookingStatus.inProgress ||
+              b.status == BookingStatus.pendingCustomerConfirmation;
+        case 'Completed':
+          return b.status == BookingStatus.completed;
+        case 'Cancelled':
+          return b.status == BookingStatus.cancelled;
+        default:
+          return false;
+      }
+    }).length;
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────────
@@ -120,6 +166,7 @@ class _AdminBookingOverviewScreenState
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
+    final paginated = _paginated;
 
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
@@ -131,64 +178,72 @@ class _AdminBookingOverviewScreenState
             color: AppColors.primary,
             child: CustomScrollView(
               slivers: [
-                // ── Stats strip ─────────────────────────────────────────
+                // ── Search bar ─────────────────────────────────────────
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-                    child: _buildStatsStrip(),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    child: _buildSearchBar(),
                   ).animate().fadeIn(delay: 80.ms),
                 ),
 
-                // ── Search bar ──────────────────────────────────────────
+                // ── Filter chips ───────────────────────────────────────
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                    child: _buildSearchBar(),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 0, 0),
+                    child: _buildFilterChips(),
                   ).animate().fadeIn(delay: 100.ms),
                 ),
 
-                // ── Filter chips ────────────────────────────────────────
+                // ── Count + page info ──────────────────────────────────
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 0, 8),
-                    child: _buildFilterChips(),
-                  ).animate().fadeIn(delay: 120.ms),
-                ),
-
-                // ── Count label ─────────────────────────────────────────
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
-                    child: Text(
-                      '${filtered.length} booking${filtered.length == 1 ? '' : 's'}',
-                      style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textLight,
-                          fontWeight: FontWeight.w500),
-                    ),
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                    child: Row(children: [
+                      Text(
+                        '${filtered.length} booking${filtered.length == 1 ? '' : 's'}',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textLight,
+                            fontWeight: FontWeight.w500),
+                      ),
+                      if (filtered.length > _pageSize) ...[
+                        const Spacer(),
+                        Text(
+                          'Page ${_page + 1} of $_totalPages',
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textLight),
+                        ),
+                      ],
+                    ]),
                   ),
                 ),
 
-                // ── Booking list ────────────────────────────────────────
-                filtered.isEmpty
-                    ? SliverFillRemaining(
-                        child: _buildEmpty(),
-                      )
+                // ── Booking list ───────────────────────────────────────
+                paginated.isEmpty
+                    ? SliverFillRemaining(child: _buildEmpty())
                     : SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                         sliver: SliverList(
                           delegate: SliverChildBuilderDelegate(
                             (context, i) => _BookingRow(
-                              booking: filtered[i],
-                              onTap: () => _showDetail(filtered[i]),
+                              booking: paginated[i],
+                              onTap: () => _showDetail(paginated[i]),
                             )
                                 .animate()
                                 .fadeIn(delay: (i * 30).ms)
                                 .slideX(begin: 0.03, end: 0),
-                            childCount: filtered.length,
+                            childCount: paginated.length,
                           ),
                         ),
                       ),
+
+                // ── Pagination footer ──────────────────────────────────
+                if (filtered.length > _pageSize)
+                  SliverToBoxAdapter(
+                    child: _buildPaginationFooter(),
+                  ),
+
+                const SliverToBoxAdapter(child: SizedBox(height: 40)),
               ],
             ),
           ),
@@ -204,109 +259,114 @@ class _AdminBookingOverviewScreenState
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF082218), Color(0xFF0F3D2E)],
+            colors: [Color(0xFF082218), Color(0xFF0F3D2E), Color(0xFF1A5C43)],
           ),
+          borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
         ),
         child: SafeArea(
           bottom: false,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Row(children: [
-              GestureDetector(
-                onTap: () {
-                  if (widget.onBack != null) {
-                    widget.onBack!();
-                  } else {
-                    Navigator.of(context).maybePop();
-                  }
-                },
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Title row
+                Row(children: [
+                  GestureDetector(
+                    onTap:
+                        widget.onBack ?? () => Navigator.of(context).maybePop(),
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white, size: 18),
+                    ),
                   ),
-                  child: const Icon(Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white, size: 18),
-                ),
-              ),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Booking Overview',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700)),
-                    Text('All platform bookings',
-                        style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w400)),
-                  ],
-                ),
-              ),
-            ]),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Booking Overview',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700)),
+                        Text('All platform bookings',
+                            style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w400)),
+                      ],
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 16),
+                // Stats — 2×2 grid
+                Column(children: [
+                  Row(children: [
+                    _headerStat(
+                        Icons.list_alt_rounded,
+                        '${widget.bookings.length}',
+                        'Total',
+                        const Color(0xFF60A5FA)),
+                    const SizedBox(width: 10),
+                    _headerStat(Icons.autorenew_rounded, '$_activeCount',
+                        'Active', const Color(0xFFA78BFA)),
+                  ]),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    _headerStat(Icons.check_circle_rounded, '$_completedCount',
+                        'Done', const Color(0xFF4ADE80)),
+                    const SizedBox(width: 10),
+                    _headerStat(
+                        Icons.payments_rounded,
+                        '₱${_totalRevenue >= 1000 ? '${(_totalRevenue / 1000).toStringAsFixed(1)}k' : _totalRevenue.toStringAsFixed(0)}',
+                        'Revenue',
+                        const Color(0xFFFBBF24)),
+                  ]),
+                ]),
+              ],
+            ),
           ),
         ),
       );
 
-  // ── STATS STRIP ───────────────────────────────────────────────────────────
-
-  Widget _buildStatsStrip() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 3))
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _statItem(Icons.list_alt_rounded, '${widget.bookings.length}',
-                'Total', AppColors.primary),
-            _vDivider(),
-            _statItem(Icons.autorenew_rounded, '$_activeCount', 'Active',
-                const Color(0xFF5856D6)),
-            _vDivider(),
-            _statItem(Icons.check_circle_rounded, '$_completedCount',
-                'Completed', const Color(0xFF34C759)),
-            _vDivider(),
-            _statItem(
-                Icons.payments_rounded,
-                '₱${_totalRevenue.toStringAsFixed(0)}',
-                'Revenue',
-                const Color(0xFFFF9500)),
-          ],
+  Widget _headerStat(IconData icon, String value, String label, Color color) =>
+      Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white.withOpacity(0.15)),
+          ),
+          child: Row(children: [
+            Icon(icon, color: color, size: 16),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(value,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800),
+                      overflow: TextOverflow.ellipsis),
+                  Text(label,
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.6), fontSize: 9)),
+                ],
+              ),
+            ),
+          ]),
         ),
       );
-
-  Widget _statItem(IconData icon, String value, String label, Color color) =>
-      Column(children: [
-        Icon(icon, color: color, size: 18),
-        const SizedBox(height: 4),
-        Text(value,
-            style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                color: AppColors.textDark)),
-        Text(label,
-            style: const TextStyle(
-                fontSize: 10,
-                color: AppColors.textLight,
-                fontWeight: FontWeight.w500)),
-      ]);
-
-  Widget _vDivider() =>
-      Container(width: 1, height: 36, color: const Color(0xFFEEEEEE));
 
   // ── SEARCH BAR ────────────────────────────────────────────────────────────
 
@@ -325,20 +385,20 @@ class _AdminBookingOverviewScreenState
         ),
         child: TextField(
           controller: _searchCtrl,
-          onChanged: (v) => setState(() => _searchQuery = v),
+          onChanged: _setSearch,
           style: const TextStyle(fontSize: 13, color: AppColors.textDark),
           decoration: InputDecoration(
-            hintText: 'Search by customer, handyman, service…',
+            hintText: 'Search customer, handyman, service…',
             hintStyle:
                 const TextStyle(fontSize: 13, color: AppColors.textLight),
             prefixIcon: const Icon(Icons.search_rounded,
                 size: 18, color: AppColors.textLight),
             suffixIcon: _searchQuery.isNotEmpty
                 ? GestureDetector(
-                    onTap: () => setState(() {
-                      _searchQuery = '';
+                    onTap: () {
                       _searchCtrl.clear();
-                    }),
+                      _setSearch('');
+                    },
                     child: const Icon(Icons.close_rounded,
                         size: 16, color: AppColors.textLight),
                   )
@@ -356,18 +416,19 @@ class _AdminBookingOverviewScreenState
         height: 36,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.only(right: 16),
           itemCount: _filters.length,
-          padding: const EdgeInsets.only(right: 20),
           separatorBuilder: (_, __) => const SizedBox(width: 8),
           itemBuilder: (_, i) {
             final f = _filters[i];
             final selected = _selectedFilter == f.label;
+            final count = _countFor(f.label);
             return GestureDetector(
-              onTap: () => setState(() => _selectedFilter = f.label),
+              onTap: () => _setFilter(f.label),
               child: AnimatedContainer(
                 duration: 150.ms,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: selected ? f.color : Colors.white,
                   borderRadius: BorderRadius.circular(20),
@@ -393,10 +454,118 @@ class _AdminBookingOverviewScreenState
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
                           color: selected ? Colors.white : AppColors.textDark)),
+                  const SizedBox(width: 5),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? Colors.white.withOpacity(0.25)
+                          : f.color.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text('$count',
+                        style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: selected ? Colors.white : f.color)),
+                  ),
                 ]),
               ),
             );
           },
+        ),
+      );
+
+  // ── PAGINATION FOOTER ─────────────────────────────────────────────────────
+
+  Widget _buildPaginationFooter() {
+    final hasPrev = _page > 0;
+    final hasNext = (_page + 1) < _totalPages;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      child: Row(children: [
+        _pageBtn(
+          icon: Icons.chevron_left_rounded,
+          label: 'Prev',
+          enabled: hasPrev,
+          onTap: () => setState(() => _page--),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Center(
+            child: Wrap(
+              spacing: 6,
+              children: List.generate(_totalPages, (i) {
+                final active = i == _page;
+                return GestureDetector(
+                  onTap: () => setState(() => _page = i),
+                  child: AnimatedContainer(
+                    duration: 150.ms,
+                    width: active ? 24 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: active
+                          ? AppColors.primary
+                          : AppColors.primary.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        _pageBtn(
+          icon: Icons.chevron_right_rounded,
+          label: 'Next',
+          enabled: hasNext,
+          onTap: () => setState(() => _page++),
+          iconAfter: true,
+        ),
+      ]),
+    );
+  }
+
+  Widget _pageBtn({
+    required IconData icon,
+    required String label,
+    required bool enabled,
+    required VoidCallback onTap,
+    bool iconAfter = false,
+  }) =>
+      GestureDetector(
+        onTap: enabled ? onTap : null,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: enabled ? Colors.white : const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: enabled
+                    ? AppColors.primary.withOpacity(0.3)
+                    : const Color(0xFFEEEEEE)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (!iconAfter) ...[
+              Icon(icon,
+                  size: 18,
+                  color: enabled ? AppColors.primary : AppColors.textLight),
+              const SizedBox(width: 4),
+            ],
+            Text(label,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: enabled ? AppColors.primary : AppColors.textLight)),
+            if (iconAfter) ...[
+              const SizedBox(width: 4),
+              Icon(icon,
+                  size: 18,
+                  color: enabled ? AppColors.primary : AppColors.textLight),
+            ],
+          ]),
         ),
       );
 
@@ -521,7 +690,6 @@ class _BookingRow extends StatelessWidget {
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -532,75 +700,77 @@ class _BookingRow extends StatelessWidget {
                 offset: const Offset(0, 2))
           ],
         ),
-        child: Row(children: [
-          // Status dot
-          Container(
-            width: 10,
-            height: 10,
-            margin: const EdgeInsets.only(right: 12),
-            decoration:
-                BoxDecoration(color: _statusColor, shape: BoxShape.circle),
-          ),
-          // Main info
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Expanded(
-                  child: Text(booking.serviceType,
-                      style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textDark),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: _statusColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(_statusLabel,
-                      style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: _statusColor)),
-                ),
-              ]),
-              const SizedBox(height: 4),
-              Text(
-                '${customer?.name ?? 'Customer'} → ${pro?.name ?? 'Unassigned'}',
-                style:
-                    const TextStyle(fontSize: 11, color: AppColors.textLight),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 3),
-              Row(children: [
-                const Icon(Icons.calendar_today_rounded,
-                    size: 10, color: AppColors.textLight),
-                const SizedBox(width: 4),
-                Text(
-                  DateFormat('MMM d, yyyy')
-                      .format(booking.scheduledDate.toLocal()),
-                  style:
-                      const TextStyle(fontSize: 10, color: AppColors.textLight),
-                ),
-                const Spacer(),
-                Text(price,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Row(children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Service + status chip
+                  Row(children: [
+                    Expanded(
+                      child: Text(booking.serviceType,
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textDark),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _statusColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(_statusLabel,
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: _statusColor)),
+                    ),
+                  ]),
+                  const SizedBox(height: 4),
+                  // Customer → Handyman
+                  Text(
+                    '${customer?.name ?? 'Customer'}  →  ${pro?.name ?? 'Unassigned'}',
                     style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textDark)),
-              ]),
-            ]),
-          ),
-          const SizedBox(width: 8),
-          const Icon(Icons.chevron_right_rounded,
-              color: AppColors.textLight, size: 18),
-        ]),
+                        fontSize: 11, color: AppColors.textLight),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  // Date + price
+                  Row(children: [
+                    const Icon(Icons.calendar_today_rounded,
+                        size: 10, color: AppColors.textLight),
+                    const SizedBox(width: 4),
+                    Text(
+                      DateFormat('MMM d, yyyy')
+                          .format(booking.scheduledDate.toLocal()),
+                      style: const TextStyle(
+                          fontSize: 10, color: AppColors.textLight),
+                    ),
+                    const Spacer(),
+                    Text(price,
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: booking.status == BookingStatus.completed
+                                ? const Color(0xFF34C759)
+                                : AppColors.textDark)),
+                  ]),
+                ],
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppColors.textLight, size: 18),
+          ]),
+        ),
       ),
     );
   }
@@ -627,7 +797,6 @@ class _BookingDetailSheetState extends State<_BookingDetailSheet> {
   @override
   void initState() {
     super.initState();
-    // Only load photos for completed/confirming bookings
     if (widget.booking.status == BookingStatus.completed ||
         widget.booking.status == BookingStatus.pendingCustomerConfirmation) {
       _photosFuture = widget.onLoadCompletionPhotos(widget.booking.id);
@@ -654,7 +823,6 @@ class _BookingDetailSheetState extends State<_BookingDetailSheet> {
         maxHeight: MediaQuery.of(context).size.height * 0.88,
       ),
       child: Column(children: [
-        // Drag handle
         const SizedBox(height: 12),
         Container(
           width: 40,
@@ -664,7 +832,6 @@ class _BookingDetailSheetState extends State<_BookingDetailSheet> {
               borderRadius: BorderRadius.circular(2)),
         ),
         const SizedBox(height: 16),
-        // Header
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(children: [
@@ -693,7 +860,7 @@ class _BookingDetailSheetState extends State<_BookingDetailSheet> {
         const SizedBox(height: 4),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Text('Booking ID: ${b.id.substring(0, 8).toUpperCase()}…',
+          child: Text('ID: ${b.id.substring(0, 8).toUpperCase()}…',
               style: const TextStyle(fontSize: 11, color: AppColors.textLight)),
         ),
         const SizedBox(height: 16),
@@ -702,7 +869,6 @@ class _BookingDetailSheetState extends State<_BookingDetailSheet> {
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // ── Info grid ──────────────────────────────────────────
               _infoCard([
                 _infoRow(
                     Icons.person_rounded, 'Customer', customer?.name ?? '—'),
@@ -722,14 +888,8 @@ class _BookingDetailSheetState extends State<_BookingDetailSheet> {
                   _infoRow(Icons.notes_rounded, 'Notes', b.notes!),
               ]),
               const SizedBox(height: 16),
-
-              // ── Issue photo (customer's upload) ─────────────────────
               if (b.photoUrl != null && b.photoUrl!.isNotEmpty) ...[
-                const Text('Issue Photo',
-                    style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textDark)),
+                _sectionLabel('Issue Photo'),
                 const SizedBox(height: 10),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(14),
@@ -738,14 +898,8 @@ class _BookingDetailSheetState extends State<_BookingDetailSheet> {
                 ),
                 const SizedBox(height: 16),
               ],
-
-              // ── Completion proof photos ─────────────────────────────
               if (_photosFuture != null) ...[
-                const Text('Completion Proof',
-                    style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textDark)),
+                _sectionLabel('Completion Proof'),
                 const SizedBox(height: 10),
                 FutureBuilder<List<String>>(
                   future: _photosFuture,
@@ -811,6 +965,12 @@ class _BookingDetailSheetState extends State<_BookingDetailSheet> {
       ]),
     );
   }
+
+  Widget _sectionLabel(String text) => Text(text,
+      style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: AppColors.textDark));
 
   Widget _infoCard(List<Widget> rows) => Container(
         padding: const EdgeInsets.all(16),

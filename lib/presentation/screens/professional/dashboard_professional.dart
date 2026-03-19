@@ -969,35 +969,41 @@ class _ProfessionalDashboardScreenState
           ),
         ),
         const SizedBox(height: 12),
-        // My Plan card — shows current tier with subtle upgrade hint
-        Builder(builder: (_) {
-          final tier = (widget.professional?.subscriptionTier ?? 0).clamp(0, 2);
-          const tierLabels = ['Free', 'AYO Pro', 'AYO Elite'];
-          const tierColors = [
-            Color(0xFF8E8E93),
-            Color(0xFF007AFF),
-            Color(0xFFFF9500),
-          ];
-          const tierIcons = [
-            Icons.person_outline_rounded,
-            Icons.workspace_premium_rounded,
-            Icons.star_rounded,
-          ];
-          const subtitles = [
-            'Upgrade to Pro or Elite to grow faster',
-            'You\'re on AYO Pro — tap to manage',
-            'You\'re on AYO Elite — tap to manage',
-          ];
-          return _menuCard(
-            icon: tierIcons[tier],
-            iconColor: tierColors[tier],
-            title: 'My Plan  ·  ${tierLabels[tier]}',
-            subtitle: subtitles[tier],
-            onTap: widget.onViewPlan,
-          );
-        }),
+        // TOUR STEP 8 — My Plan
+        ProfessionalTourShowcase.wrap(
+          key: _keys.myPlanKey,
+          stepName: 'myPlan',
+          showcaseContext: showcaseContext,
+          child: Builder(builder: (_) {
+            final tier =
+                (widget.professional?.subscriptionTier ?? 0).clamp(0, 2);
+            const tierLabels = ['Free', 'AYO Pro', 'AYO Elite'];
+            const tierColors = [
+              Color(0xFF8E8E93),
+              Color(0xFF007AFF),
+              Color(0xFFFF9500),
+            ];
+            const tierIcons = [
+              Icons.person_outline_rounded,
+              Icons.workspace_premium_rounded,
+              Icons.star_rounded,
+            ];
+            const subtitles = [
+              'Upgrade to Pro or Elite to grow faster',
+              'You\'re on AYO Pro — tap to manage',
+              'You\'re on AYO Elite — tap to manage',
+            ];
+            return _menuCard(
+              icon: tierIcons[tier],
+              iconColor: tierColors[tier],
+              title: 'My Plan  ·  ${tierLabels[tier]}',
+              subtitle: subtitles[tier],
+              onTap: widget.onViewPlan,
+            );
+          }),
+        ),
         const SizedBox(height: 12),
-        // TOUR STEP 7
+        // TOUR STEP 9
         ProfessionalTourShowcase.wrap(
           key: _keys.myCredentialsKey,
           stepName: 'myCredentials',
@@ -1013,7 +1019,7 @@ class _ProfessionalDashboardScreenState
           ),
         ),
         const SizedBox(height: 12),
-        // TOUR STEP 8
+        // TOUR STEP 10
         ProfessionalTourShowcase.wrap(
           key: _keys.myServicesKey,
           stepName: 'myServices',

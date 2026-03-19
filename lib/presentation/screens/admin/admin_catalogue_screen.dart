@@ -4,6 +4,13 @@
 // offers. All services created here are immediately 'approved' and visible
 // to professionals for selection and to customers on the dashboard.
 // Also shows pending professional proposals for review.
+//
+// CHANGES:
+//   • Client-side pagination (10 per page) on the catalogue tab.
+//   • Service type filter redesigned as an icon+label grid with per-type counts.
+//   • Header now shows total services + pending proposals stat strip.
+//   • Catalogue row gets a left-edge color accent keyed to service type.
+//   • Create sheet service type picker upgraded to match the filter grid style.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -11,26 +18,42 @@ import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/data/models/models.dart';
 import 'package:fixify/data/datasources/application_datasource.dart';
 
+// ── Service type metadata ─────────────────────────────────────────────────────
+
+class _TypeMeta {
+  final String label;
+  final IconData icon;
+  final Color color;
+  const _TypeMeta(this.label, this.icon, this.color);
+}
+
+const _kTypes = <String, _TypeMeta>{
+  'Plumber': _TypeMeta('Plumber', Icons.water_drop_rounded, Color(0xFF007AFF)),
+  'Electrician': _TypeMeta(
+      'Electrician', Icons.electrical_services_rounded, Color(0xFFFF9500)),
+  'Technician':
+      _TypeMeta('Technician', Icons.kitchen_rounded, Color(0xFF5856D6)),
+  'Carpenter':
+      _TypeMeta('Carpenter', Icons.handyman_rounded, Color(0xFFFF3B30)),
+  'Masonry':
+      _TypeMeta('Masonry', Icons.format_paint_rounded, Color(0xFF34C759)),
+};
+
+_TypeMeta _metaFor(String type) =>
+    _kTypes[type] ??
+    const _TypeMeta(
+        'Other', Icons.home_repair_service_rounded, AppColors.primary);
+
+// ── Screen ────────────────────────────────────────────────────────────────────
+
 class AdminCatalogueScreen extends StatefulWidget {
-  /// All approved service offers (admin-seeded + approved proposals).
   final List<ServiceOfferModel> services;
-
-  /// Pending professional proposals awaiting admin review.
   final List<ServiceProposalModel> pendingProposals;
-
-  /// Called to create a new admin-seeded service.
   final Future<void> Function(ServiceFormData data) onCreateService;
-
-  /// Called to delete a service offer by id.
   final Future<void> Function(String id) onDeleteService;
-
-  /// Called to approve a professional's proposal.
   final Future<void> Function(ServiceProposalModel proposal) onApproveProposal;
-
-  /// Called to reject a professional's proposal with an optional note.
   final Future<void> Function(ServiceProposalModel proposal, String? note)
       onRejectProposal;
-
   final VoidCallback? onBack;
   final Future<void> Function()? onRefresh;
 
@@ -54,21 +77,38 @@ class _AdminCatalogueScreenState extends State<AdminCatalogueScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabCtrl;
 
-  static const _serviceTypes = [
-    'Plumber',
-    'Electrician',
-    'Technician',
-    'Carpenter',
-    'Masonry',
-  ];
-
+  // ── Filter & pagination ───────────────────────────────────────────────────
   String _selectedType = 'All';
+  static const _pageSize = 10;
+  int _page = 0;
 
   List<ServiceOfferModel> get _filtered {
     if (_selectedType == 'All') return widget.services;
     return widget.services
         .where((s) => s.serviceType == _selectedType)
         .toList();
+  }
+
+  List<ServiceOfferModel> get _paginated {
+    final f = _filtered;
+    final start = _page * _pageSize;
+    if (start >= f.length) return [];
+    return f.sublist(start, (start + _pageSize).clamp(0, f.length));
+  }
+
+  int get _totalPages => (_filtered.length / _pageSize).ceil().clamp(1, 999);
+
+  void _setFilter(String type) {
+    setState(() {
+      _selectedType = type;
+      _page = 0;
+    });
+  }
+
+  // ── Per-type counts ───────────────────────────────────────────────────────
+  int _countFor(String type) {
+    if (type == 'All') return widget.services.length;
+    return widget.services.where((s) => s.serviceType == type).length;
   }
 
   @override
@@ -89,7 +129,6 @@ class _AdminCatalogueScreenState extends State<AdminCatalogueScreen>
       backgroundColor: AppColors.backgroundLight,
       body: Column(children: [
         _buildTopBar(),
-        // Tab bar
         Container(
           color: Colors.white,
           child: TabBar(
@@ -101,32 +140,29 @@ class _AdminCatalogueScreenState extends State<AdminCatalogueScreen>
             labelStyle:
                 const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
             tabs: [
-              const Tab(text: 'Service Catalogue'),
+              const Tab(text: 'Catalogue'),
               Tab(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Proposals'),
-                    if (widget.pendingProposals.isNotEmpty) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFF3B30),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${widget.pendingProposals.length}',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700),
-                        ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Text('Proposals'),
+                  if (widget.pendingProposals.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF3B30),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                    ],
+                      child: Text(
+                        '${widget.pendingProposals.length}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
                   ],
-                ),
+                ]),
               ),
             ],
           ),
@@ -145,7 +181,6 @@ class _AdminCatalogueScreenState extends State<AdminCatalogueScreen>
         onPressed: () => _showCreateSheet(context),
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_rounded),
         label: const Text('Add Service',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
       ),
@@ -159,123 +194,335 @@ class _AdminCatalogueScreenState extends State<AdminCatalogueScreen>
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF082218), Color(0xFF0F3D2E)],
+            colors: [Color(0xFF082218), Color(0xFF0F3D2E), Color(0xFF1A5C43)],
           ),
+          borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
         ),
         child: SafeArea(
           bottom: false,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Row(children: [
-              GestureDetector(
-                onTap: widget.onBack ?? () => Navigator.of(context).maybePop(),
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  GestureDetector(
+                    onTap:
+                        widget.onBack ?? () => Navigator.of(context).maybePop(),
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white, size: 18),
+                    ),
                   ),
-                  child: const Icon(Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white, size: 18),
-                ),
-              ),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Service Catalogue',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700)),
-                      Text('Manage platform service offers',
-                          style: TextStyle(
-                              color: Colors.white54,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w400)),
-                    ]),
-              ),
-            ]),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Service Catalogue',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700)),
+                          Text('Manage platform service offers',
+                              style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w400)),
+                        ]),
+                  ),
+                ]),
+                const SizedBox(height: 16),
+                // ── Stats strip ────────────────────────────────────────
+                Row(children: [
+                  _headerStat(
+                    icon: Icons.home_repair_service_rounded,
+                    value: '${widget.services.length}',
+                    label: 'Services',
+                    color: const Color(0xFF4ADE80),
+                  ),
+                  const SizedBox(width: 12),
+                  _headerStat(
+                    icon: Icons.category_rounded,
+                    value: '${_kTypes.length}',
+                    label: 'Categories',
+                    color: const Color(0xFF60A5FA),
+                  ),
+                  const SizedBox(width: 12),
+                  _headerStat(
+                    icon: Icons.pending_actions_rounded,
+                    value: '${widget.pendingProposals.length}',
+                    label: 'Pending',
+                    color: const Color(0xFFFBBF24),
+                  ),
+                ]),
+              ],
+            ),
           ),
+        ),
+      );
+
+  Widget _headerStat({
+    required IconData icon,
+    required String value,
+    required String label,
+    required Color color,
+  }) =>
+      Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white.withOpacity(0.15)),
+          ),
+          child: Row(children: [
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 8),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(value,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800)),
+              Text(label,
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.6), fontSize: 10)),
+            ]),
+          ]),
         ),
       );
 
   // ── CATALOGUE TAB ─────────────────────────────────────────────────────────
 
   Widget _buildCatalogueTab() {
+    final paginated = _paginated;
     final filtered = _filtered;
     return RefreshIndicator(
       onRefresh: widget.onRefresh ?? () async {},
       color: AppColors.primary,
       child: CustomScrollView(
         slivers: [
-          // Type filter chips
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: 48,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                children: ['All', ..._serviceTypes].map((t) {
-                  final sel = _selectedType == t;
-                  return GestureDetector(
-                    onTap: () => setState(() => _selectedType = t),
-                    child: AnimatedContainer(
-                      duration: 150.ms,
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: sel ? AppColors.primary : Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                            color: sel
-                                ? Colors.transparent
-                                : const Color(0xFFDDDDDD)),
-                      ),
-                      child: Text(t,
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: sel ? Colors.white : AppColors.textDark)),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-          ),
-          // Count
+          // ── Type filter grid ─────────────────────────────────────────
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
-              child: Text(
-                '${filtered.length} service${filtered.length == 1 ? '' : 's'}',
-                style:
-                    const TextStyle(fontSize: 12, color: AppColors.textLight),
-              ),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+              child: _buildTypeFilterGrid(),
             ),
           ),
-          // List
-          filtered.isEmpty
+          // ── Count + page info ────────────────────────────────────────
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+              child: Row(children: [
+                Text(
+                  '${filtered.length} service${filtered.length == 1 ? '' : 's'}',
+                  style:
+                      const TextStyle(fontSize: 12, color: AppColors.textLight),
+                ),
+                if (filtered.length > _pageSize) ...[
+                  const Spacer(),
+                  Text(
+                    'Page ${_page + 1} of $_totalPages',
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textLight),
+                  ),
+                ],
+              ]),
+            ),
+          ),
+          // ── Service list ──────────────────────────────────────────────
+          paginated.isEmpty
               ? SliverFillRemaining(child: _buildCatalogueEmpty())
               : SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 100),
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, i) => _CatalogueRow(
-                        service: filtered[i],
-                        onDelete: () => _confirmDelete(context, filtered[i]),
+                        service: paginated[i],
+                        onDelete: () => _confirmDelete(context, paginated[i]),
                       )
                           .animate()
                           .fadeIn(delay: (i * 30).ms)
                           .slideX(begin: 0.03, end: 0),
-                      childCount: filtered.length,
+                      childCount: paginated.length,
                     ),
                   ),
                 ),
+          // ── Pagination footer ─────────────────────────────────────────
+          if (filtered.length > _pageSize)
+            SliverToBoxAdapter(
+              child: _buildPaginationFooter(),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTypeFilterGrid() {
+    final types = ['All', ..._kTypes.keys];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: types.map((t) {
+        final sel = _selectedType == t;
+        final meta = t == 'All'
+            ? const _TypeMeta('All', Icons.grid_view_rounded, AppColors.primary)
+            : _metaFor(t);
+        final count = _countFor(t);
+        return GestureDetector(
+          onTap: () => _setFilter(t),
+          child: AnimatedContainer(
+            duration: 150.ms,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: sel ? meta.color : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: sel ? meta.color : meta.color.withOpacity(0.25),
+                width: sel ? 0 : 1,
+              ),
+              boxShadow: sel
+                  ? [
+                      BoxShadow(
+                          color: meta.color.withOpacity(0.25),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3))
+                    ]
+                  : [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2))
+                    ],
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(meta.icon, size: 15, color: sel ? Colors.white : meta.color),
+              const SizedBox(width: 6),
+              Text(meta.label,
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: sel ? Colors.white : AppColors.textDark)),
+              const SizedBox(width: 5),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: sel
+                      ? Colors.white.withOpacity(0.25)
+                      : meta.color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text('$count',
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: sel ? Colors.white : meta.color)),
+              ),
+            ]),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildPaginationFooter() {
+    final hasPrev = _page > 0;
+    final hasNext = (_page + 1) < _totalPages;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      child: Row(children: [
+        // Prev
+        _pageBtn(
+          icon: Icons.chevron_left_rounded,
+          label: 'Prev',
+          enabled: hasPrev,
+          onTap: () => setState(() => _page--),
+        ),
+        const SizedBox(width: 10),
+        // Page dots
+        Expanded(
+          child: Center(
+            child: Wrap(
+              spacing: 6,
+              children: List.generate(_totalPages, (i) {
+                final active = i == _page;
+                return GestureDetector(
+                  onTap: () => setState(() => _page = i),
+                  child: AnimatedContainer(
+                    duration: 150.ms,
+                    width: active ? 24 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: active
+                          ? AppColors.primary
+                          : AppColors.primary.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        // Next
+        _pageBtn(
+          icon: Icons.chevron_right_rounded,
+          label: 'Next',
+          enabled: hasNext,
+          onTap: () => setState(() => _page++),
+          iconAfter: true,
+        ),
+      ]),
+    );
+  }
+
+  Widget _pageBtn({
+    required IconData icon,
+    required String label,
+    required bool enabled,
+    required VoidCallback onTap,
+    bool iconAfter = false,
+  }) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: enabled ? Colors.white : const Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: enabled
+                  ? AppColors.primary.withOpacity(0.3)
+                  : const Color(0xFFEEEEEE)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (!iconAfter) ...[
+            Icon(icon,
+                size: 18,
+                color: enabled ? AppColors.primary : AppColors.textLight),
+            const SizedBox(width: 4),
+          ],
+          Text(label,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: enabled ? AppColors.primary : AppColors.textLight)),
+          if (iconAfter) ...[
+            const SizedBox(width: 4),
+            Icon(icon,
+                size: 18,
+                color: enabled ? AppColors.primary : AppColors.textLight),
+          ],
+        ]),
       ),
     );
   }
@@ -344,7 +591,7 @@ class _AdminCatalogueScreenState extends State<AdminCatalogueScreen>
       );
     }
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
       itemCount: pending.length,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, i) => _ProposalReviewCard(
@@ -423,9 +670,9 @@ class _CatalogueRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final meta = _metaFor(service.serviceType);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -436,92 +683,104 @@ class _CatalogueRow extends StatelessWidget {
               offset: const Offset(0, 2))
         ],
       ),
-      child: Row(children: [
-        // Thumbnail
-        ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: service.imageUrl != null
-              ? Image.network(service.imageUrl!,
-                  width: 52,
-                  height: 52,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _placeholder())
-              : _placeholder(),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(service.serviceName,
-                style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textDark)),
-            const SizedBox(height: 3),
-            Row(children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(service.serviceType,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(children: [
+          // Thumbnail
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: service.imageUrl != null
+                ? Image.network(service.imageUrl!,
+                    width: 52,
+                    height: 52,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _placeholder(meta))
+                : _placeholder(meta),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(service.serviceName,
                     style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.primary)),
-              ),
-              if (service.priceRange != null) ...[
-                const SizedBox(width: 8),
-                Text(service.priceRange!,
-                    style: const TextStyle(
-                        fontSize: 11, color: AppColors.textLight)),
-              ],
-              // Warranty badge — only shown when warrantyDays > 0
-              if (service.warrantyDays > 0) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF30B0C7).withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                        color: const Color(0xFF30B0C7).withOpacity(0.35)),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.verified_user_rounded,
-                        size: 9, color: Color(0xFF30B0C7)),
-                    const SizedBox(width: 3),
-                    Text(
-                      _warrantyLabel(service.warrantyDays),
-                      style: const TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF30B0C7)),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textDark)),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: meta.color.withOpacity(0.10),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(meta.icon, size: 10, color: meta.color),
+                        const SizedBox(width: 4),
+                        Text(service.serviceType,
+                            style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: meta.color)),
+                      ]),
                     ),
-                  ]),
+                    if (service.priceRange != null)
+                      Text(service.priceRange!,
+                          style: const TextStyle(
+                              fontSize: 11, color: AppColors.textLight)),
+                    if (service.warrantyDays > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF30B0C7).withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                              color: const Color(0xFF30B0C7).withOpacity(0.35)),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.verified_user_rounded,
+                              size: 9, color: Color(0xFF30B0C7)),
+                          const SizedBox(width: 3),
+                          Text(
+                            _warrantyLabel(service.warrantyDays),
+                            style: const TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF30B0C7)),
+                          ),
+                        ]),
+                      ),
+                  ],
                 ),
               ],
-            ]),
-          ]),
-        ),
-        IconButton(
-          onPressed: onDelete,
-          icon: const Icon(Icons.delete_outline_rounded,
-              color: Color(0xFFFF3B30), size: 20),
-          tooltip: 'Delete',
-        ),
-      ]),
+            ),
+          ),
+          IconButton(
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline_rounded,
+                color: Color(0xFFFF3B30), size: 20),
+            tooltip: 'Delete',
+          ),
+        ]),
+      ),
     );
   }
 
-  Widget _placeholder() => Container(
+  Widget _placeholder(_TypeMeta meta) => Container(
         width: 52,
         height: 52,
-        color: const Color(0xFFF0F4F2),
-        child: const Icon(Icons.home_repair_service_rounded,
-            color: AppColors.textLight, size: 24),
+        decoration: BoxDecoration(
+          color: meta.color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(meta.icon, color: meta.color.withOpacity(0.6), size: 24),
       );
 
   static String _warrantyLabel(int days) {
@@ -549,6 +808,7 @@ class _ProposalReviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final meta = _metaFor(proposal.serviceType);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -580,14 +840,18 @@ class _ProposalReviewCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.08),
+              color: meta.color.withOpacity(0.10),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text(proposal.serviceType,
-                style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.primary)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(meta.icon, size: 10, color: meta.color),
+              const SizedBox(width: 4),
+              Text(proposal.serviceType,
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: meta.color)),
+            ]),
           ),
         ]),
         const SizedBox(height: 10),
@@ -712,9 +976,6 @@ class ServiceFormData {
   final String duration;
   final String? tips;
   final String? imageUrl;
-
-  /// Warranty period in days. 0 means no warranty is offered.
-  /// Written to service_proposals.warranty_days on create/update.
   final int warrantyDays;
 
   const ServiceFormData({
@@ -732,7 +993,6 @@ class ServiceFormData {
 
 class _CreateServiceSheet extends StatefulWidget {
   final Future<void> Function(ServiceFormData data) onSubmit;
-
   const _CreateServiceSheet({required this.onSubmit});
 
   @override
@@ -751,14 +1011,6 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
   final _warrantyCtrl = TextEditingController();
   String? _serviceType;
   bool _submitting = false;
-
-  static const _serviceTypes = [
-    'Plumber',
-    'Electrician',
-    'Technician',
-    'Carpenter',
-    'Masonry',
-  ];
 
   @override
   void dispose() {
@@ -791,10 +1043,7 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty)
           .toList();
-
-      // Parse warranty days — default 0 if blank or invalid.
       final warrantyDays = int.tryParse(_warrantyCtrl.text.trim()) ?? 0;
-
       await widget.onSubmit(ServiceFormData(
         serviceName: _nameCtrl.text.trim(),
         serviceType: _serviceType!,
@@ -827,7 +1076,6 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
           BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.92),
       child: Column(children: [
         const SizedBox(height: 12),
-        // Drag handle
         Center(
           child: Container(
             width: 36,
@@ -872,38 +1120,56 @@ class _CreateServiceSheetState extends State<_CreateServiceSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _label('Service Type'),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
+                    // ── Type picker — Wrap so chips self-size, never overflow ──
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _serviceTypes.map((t) {
-                        final sel = _serviceType == t;
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: _kTypes.entries.map((e) {
+                        final sel = _serviceType == e.key;
+                        final meta = e.value;
                         return GestureDetector(
-                          onTap: () => setState(() => _serviceType = t),
+                          onTap: () => setState(() => _serviceType = e.key),
                           child: AnimatedContainer(
                             duration: 150.ms,
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 8),
+                                horizontal: 14, vertical: 10),
                             decoration: BoxDecoration(
-                              color: sel ? AppColors.primary : Colors.white,
-                              borderRadius: BorderRadius.circular(20),
+                              color: sel ? meta.color : Colors.white,
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                  color: sel
-                                      ? Colors.transparent
-                                      : const Color(0xFFDDDDDD)),
+                                color: sel
+                                    ? meta.color
+                                    : meta.color.withOpacity(0.3),
+                              ),
+                              boxShadow: sel
+                                  ? [
+                                      BoxShadow(
+                                          color: meta.color.withOpacity(0.3),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 3))
+                                    ]
+                                  : [],
                             ),
-                            child: Text(t,
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: sel
-                                        ? Colors.white
-                                        : AppColors.textDark)),
+                            child:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(meta.icon,
+                                  size: 16,
+                                  color: sel ? Colors.white : meta.color),
+                              const SizedBox(width: 7),
+                              Text(meta.label,
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: sel
+                                          ? Colors.white
+                                          : AppColors.textDark)),
+                            ]),
                           ),
                         );
                       }).toList(),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 18),
                     _label('Service Name *'),
                     const SizedBox(height: 8),
                     _field(_nameCtrl,

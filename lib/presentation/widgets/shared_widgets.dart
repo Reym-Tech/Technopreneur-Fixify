@@ -291,17 +291,33 @@ class ProfessionalCard extends StatelessWidget {
         professional.phone != null && professional.phone!.trim().isNotEmpty;
     final tier = professional.effectiveTier;
 
+    // ── Tier-based card highlight ────────────────────────────────────────────
+    // Elite (2): prominent gold left accent + warm tinted background + gold shadow.
+    // Pro   (1): subtle blue left accent  + cool tinted background + blue shadow.
+    // Free  (0): plain white — no visual treatment.
+    final Color? highlightAccent = tier >= 2
+        ? const Color(0xFFFFB300)
+        : tier == 1
+            ? const Color(0xFF1E88E5)
+            : null;
+    final Color? highlightBg = tier >= 2
+        ? const Color(0xFFFFFBF0)
+        : tier == 1
+            ? const Color(0xFFF0F6FF)
+            : null;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: highlightBg ?? Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
+              color: highlightAccent != null
+                  ? highlightAccent.withValues(alpha: tier >= 2 ? 0.18 : 0.12)
+                  : Colors.black.withValues(alpha: 0.06),
               blurRadius: 16,
               offset: const Offset(0, 4),
             ),
@@ -375,6 +391,9 @@ class ProfessionalCard extends StatelessWidget {
                       ),
                       // Tier badge — only Pro (1) and Elite (2) shown
                       if (tier >= 1) ...[
+                        const SizedBox(width: 4),
+                        VerifiedBadge(
+                            isVerified: professional.verified, small: true),
                         const SizedBox(width: 4),
                         _TierBadge(tier: tier),
                       ] else ...[

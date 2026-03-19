@@ -1,16 +1,33 @@
 // lib/presentation/screens/admin/super_admin_analytics.dart
+//
+// SuperAdminAnalytics — platform-wide analytics for the admin.
+//
+// All stats are derived from real data passed as props:
+//   bookings    → List<BookingEntity>  — all platform bookings
+//   professionals → List<ProfessionalEntity> — all professionals
+//   reviews     → List<ReviewEntity>  — all reviews
+//
+// Period filter (Today / This Week / This Month / This Year) slices
+// _filteredBookings and all derived stats.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
+import 'package:fixify/domain/entities/entities.dart';
 
 class SuperAdminAnalytics extends StatefulWidget {
+  final List<BookingEntity> bookings;
+  final List<ProfessionalEntity> professionals;
+  final List<ReviewEntity> reviews;
   final VoidCallback? onBack;
   final Function(int)? onNavTap;
   final int currentNavIndex;
 
   const SuperAdminAnalytics({
     super.key,
+    this.bookings = const [],
+    this.professionals = const [],
+    this.reviews = const [],
     this.onBack,
     this.onNavTap,
     this.currentNavIndex = 2,
@@ -22,192 +39,186 @@ class SuperAdminAnalytics extends StatefulWidget {
 
 class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
     with TickerProviderStateMixin {
-  late TabController _periodTabController;
-  late TabController _chartTabController;
+  late final TabController _tabCtrl;
 
-  // Date range selection
   String _selectedPeriod = 'This Month';
-  final List<String> _periods = [
-    'Today',
-    'This Week',
-    'This Month',
-    'This Year',
-    'Custom',
-  ];
+  static const _periods = ['Today', 'This Week', 'This Month', 'This Year'];
 
-  // Hardcoded mock earnings data
-  final Map<String, dynamic> _earningsData = {
-    'totalRevenue': 458750.00,
-    'platformFees': 22937.50,
-    'handymanPayouts': 435812.50,
-    'growth': 15.8,
-    'averageOrderValue': 1250.00,
-    'projectedRevenue': 525000.00,
-  };
+  // Chart mode for the revenue/bookings/handymen switcher
+  String _chartMode = 'Revenue';
 
-  // Hardcoded monthly earnings data for charts
-  final List<Map<String, dynamic>> _monthlyEarnings = [
-    {'month': 'Jan', 'revenue': 32500.0, 'bookings': 28, 'handymen': 12},
-    {'month': 'Feb', 'revenue': 38900.0, 'bookings': 34, 'handymen': 14},
-    {'month': 'Mar', 'revenue': 41200.0, 'bookings': 38, 'handymen': 15},
-    {'month': 'Apr', 'revenue': 45600.0, 'bookings': 42, 'handymen': 16},
-    {'month': 'May', 'revenue': 48900.0, 'bookings': 45, 'handymen': 18},
-    {'month': 'Jun', 'revenue': 52300.0, 'bookings': 48, 'handymen': 19},
-    {'month': 'Jul', 'revenue': 55800.0, 'bookings': 52, 'handymen': 20},
-    {'month': 'Aug', 'revenue': 59200.0, 'bookings': 55, 'handymen': 22},
-    {'month': 'Sep', 'revenue': 62700.0, 'bookings': 58, 'handymen': 23},
-    {'month': 'Oct', 'revenue': 66100.0, 'bookings': 62, 'handymen': 25},
-    {'month': 'Nov', 'revenue': 69500.0, 'bookings': 65, 'handymen': 26},
-    {'month': 'Dec', 'revenue': 72900.0, 'bookings': 68, 'handymen': 28},
-  ];
+  // ── Period filtering ────────────────────────────────────────────────────
 
-  // Hardcoded service category breakdown
-  final List<Map<String, dynamic>> _serviceBreakdown = [
-    {
-      'service': 'Electrical',
-      'revenue': 142500,
-      'percentage': 31,
-      'color': Colors.amber,
-      'bookings': 120,
-    },
-    {
-      'service': 'Plumbing',
-      'revenue': 98500,
-      'percentage': 21,
-      'color': Colors.blue,
-      'bookings': 85,
-    },
-    {
-      'service': 'Carpentry',
-      'revenue': 87650,
-      'percentage': 19,
-      'color': Colors.brown,
-      'bookings': 72,
-    },
-    {
-      'service': 'Aircon',
-      'revenue': 76500,
-      'percentage': 17,
-      'color': Colors.teal,
-      'bookings': 58,
-    },
-    {
-      'service': 'Painting',
-      'revenue': 32500,
-      'percentage': 7,
-      'color': Colors.purple,
-      'bookings': 28,
-    },
-    {
-      'service': 'Others',
-      'revenue': 20900,
-      'percentage': 5,
-      'color': Colors.grey,
-      'bookings': 18,
-    },
-  ];
+  List<BookingEntity> get _filteredBookings {
+    final now = DateTime.now();
+    DateTime start;
+    switch (_selectedPeriod) {
+      case 'Today':
+        start = DateTime(now.year, now.month, now.day);
+        break;
+      case 'This Week':
+        start = now.subtract(Duration(days: now.weekday - 1));
+        start = DateTime(start.year, start.month, start.day);
+        break;
+      case 'This Year':
+        start = DateTime(now.year, 1, 1);
+        break;
+      default: // This Month
+        start = DateTime(now.year, now.month, 1);
+    }
+    return widget.bookings
+        .where((b) => !b.scheduledDate.isBefore(start))
+        .toList();
+  }
 
-  // Hardcoded top handymen
-  final List<Map<String, dynamic>> _topHandymen = [
-    {
-      'name': 'Juan Dela Cruz',
-      'avatar': 'JD',
-      'specialization': 'Electrician',
-      'earnings': 38400,
-      'bookings': 48,
-      'rating': 4.8,
-    },
-    {
-      'name': 'Maria Santos',
-      'avatar': 'MS',
-      'specialization': 'Plumber',
-      'earnings': 33600,
-      'bookings': 42,
-      'rating': 4.7,
-    },
-    {
-      'name': 'Pedro Reyes',
-      'avatar': 'PR',
-      'specialization': 'Carpenter',
-      'earnings': 29750,
-      'bookings': 35,
-      'rating': 4.9,
-    },
-    {
-      'name': 'Ana Garcia',
-      'avatar': 'AG',
-      'specialization': 'Aircon Tech',
-      'earnings': 40300,
-      'bookings': 31,
-      'rating': 4.6,
-    },
-    {
-      'name': 'Jose Mercado',
-      'avatar': 'JM',
-      'specialization': 'Electrician',
-      'earnings': 28900,
-      'bookings': 26,
-      'rating': 4.5,
-    },
-  ];
+  List<BookingEntity> get _completedBookings => _filteredBookings
+      .where((b) => b.status == BookingStatus.completed)
+      .toList();
 
-  // Hardcoded top customers
-  final List<Map<String, dynamic>> _topCustomers = [
-    {
-      'name': 'Maria Santos',
-      'avatar': 'MS',
-      'location': 'Makati',
-      'spent': 8750,
-      'bookings': 12,
-      'lastBooking': '2 days ago',
-    },
-    {
-      'name': 'Juan Dela Cruz',
-      'avatar': 'JD',
-      'location': 'Quezon City',
-      'spent': 6200,
-      'bookings': 8,
-      'lastBooking': '5 days ago',
-    },
-    {
-      'name': 'Ana Garcia',
-      'avatar': 'AG',
-      'location': 'Pasig',
-      'spent': 4850,
-      'bookings': 6,
-      'lastBooking': '1 week ago',
-    },
-    {
-      'name': 'Pedro Reyes',
-      'avatar': 'PR',
-      'location': 'Mandaluyong',
-      'spent': 12300,
-      'bookings': 15,
-      'lastBooking': '3 days ago',
-    },
-  ];
+  List<BookingEntity> get _activeBookings => _filteredBookings
+      .where((b) =>
+          b.status != BookingStatus.completed &&
+          b.status != BookingStatus.cancelled)
+      .toList();
 
-  // Hardcoded location data
-  final List<Map<String, dynamic>> _locationData = [
-    {'city': 'Quezon City', 'bookings': 245, 'revenue': 285000},
-    {'city': 'Manila', 'bookings': 198, 'revenue': 225000},
-    {'city': 'Makati', 'bookings': 167, 'revenue': 195000},
-    {'city': 'Pasig', 'bookings': 132, 'revenue': 152000},
-    {'city': 'Taguig', 'bookings': 98, 'revenue': 112000},
-    {'city': 'Mandaluyong', 'bookings': 85, 'revenue': 98000},
-  ];
+  // ── Revenue helpers ─────────────────────────────────────────────────────
+
+  double _effectivePrice(BookingEntity b) {
+    final ap = b.assessmentPrice;
+    return (ap != null && ap > 0) ? ap : (b.priceEstimate ?? 0.0);
+  }
+
+  double get _totalRevenue =>
+      _completedBookings.fold(0.0, (s, b) => s + _effectivePrice(b));
+
+  double get _avgOrderValue => _completedBookings.isEmpty
+      ? 0
+      : _totalRevenue / _completedBookings.length;
+
+  double get _completionRate {
+    final relevant = _filteredBookings
+        .where((b) =>
+            b.status == BookingStatus.completed ||
+            b.status == BookingStatus.cancelled)
+        .length;
+    if (relevant == 0) return 0;
+    return (_completedBookings.length / relevant) * 100;
+  }
+
+  // ── Monthly aggregation (last 6 months, ignores period filter) ───────────
+
+  List<_MonthData> get _last6Months {
+    final now = DateTime.now();
+    return List.generate(6, (i) {
+      final m = DateTime(now.year, now.month - (5 - i), 1);
+      final inMonth = widget.bookings.where((b) =>
+          b.scheduledDate.year == m.year && b.scheduledDate.month == m.month);
+      final completed =
+          inMonth.where((b) => b.status == BookingStatus.completed);
+      final revenue = completed.fold(0.0, (s, b) => s + _effectivePrice(b));
+      const months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec'
+      ];
+      return _MonthData(
+        label: months[m.month - 1],
+        revenue: revenue,
+        bookings: inMonth.length,
+        handymen: widget.professionals.length,
+      );
+    });
+  }
+
+  // ── Service breakdown ────────────────────────────────────────────────────
+
+  List<_ServiceData> get _serviceBreakdown {
+    final map = <String, _ServiceData>{};
+    final palette = [
+      const Color(0xFFFF9500),
+      const Color(0xFF007AFF),
+      const Color(0xFF34C759),
+      const Color(0xFF5856D6),
+      const Color(0xFFFF3B30),
+      AppColors.primary,
+    ];
+    int ci = 0;
+    for (final b in _completedBookings) {
+      final t = b.serviceType;
+      final p = _effectivePrice(b);
+      final existing = map[t];
+      final color = existing?.color ?? palette[ci++ % palette.length];
+      map[t] = _ServiceData(
+        type: t,
+        revenue: (existing?.revenue ?? 0) + p,
+        bookings: (existing?.bookings ?? 0) + 1,
+        color: color,
+      );
+    }
+    final list = map.values.toList()
+      ..sort((a, b) => b.revenue.compareTo(a.revenue));
+    final total = list.fold(0.0, (s, d) => s + d.revenue);
+    return list
+        .map((d) => _ServiceData(
+              type: d.type,
+              revenue: d.revenue,
+              bookings: d.bookings,
+              color: d.color,
+              pct: total > 0 ? d.revenue / total : 0,
+            ))
+        .toList();
+  }
+
+  // ── Top professionals ────────────────────────────────────────────────────
+
+  List<_TopProData> get _topPros {
+    final map = <String, _TopProData>{};
+    for (final b in _completedBookings) {
+      final pro = b.professional;
+      if (pro == null) continue;
+      final p = _effectivePrice(b);
+      final existing = map[pro.id];
+      map[pro.id] = _TopProData(
+        id: pro.id,
+        name: pro.name,
+        skill: pro.skills.isNotEmpty ? pro.skills.first : '',
+        earnings: (existing?.earnings ?? 0) + p,
+        bookings: (existing?.bookings ?? 0) + 1,
+        rating: pro.rating,
+      );
+    }
+    return (map.values.toList()
+          ..sort((a, b) => b.earnings.compareTo(a.earnings)))
+        .take(5)
+        .toList();
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  String _fmt(double v) {
+    if (v >= 1000000) return '₱${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000) return '₱${(v / 1000).toStringAsFixed(1)}k';
+    return '₱${v.toStringAsFixed(0)}';
+  }
 
   @override
   void initState() {
     super.initState();
-    _periodTabController = TabController(length: 2, vsync: this);
-    _chartTabController = TabController(length: 3, vsync: this);
+    _tabCtrl = TabController(length: 2, vsync: this);
   }
 
   @override
   void dispose() {
-    _periodTabController.dispose();
-    _chartTabController.dispose();
+    _tabCtrl.dispose();
     super.dispose();
   }
 
@@ -216,45 +227,60 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) widget.onNavTap?.call(0); // back → Dashboard
+        if (!didPop) widget.onNavTap?.call(0);
       },
       child: Scaffold(
         backgroundColor: AppColors.backgroundLight,
-        body: Column(
-          children: [
-            _buildHeader(),
-            _buildTabBar(),
-            Expanded(
-              child: TabBarView(
-                controller: _periodTabController,
-                children: [_buildOverviewTab(), _buildReportsTab()],
-              ),
+        body: Column(children: [
+          _buildHeader(),
+          // White tab bar
+          Container(
+            color: Colors.white,
+            child: TabBar(
+              controller: _tabCtrl,
+              labelColor: AppColors.primary,
+              unselectedLabelColor: AppColors.textLight,
+              indicatorColor: AppColors.primary,
+              indicatorWeight: 2.5,
+              labelStyle:
+                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              tabs: const [
+                Tab(text: 'Overview'),
+                Tab(text: 'Reports'),
+              ],
             ),
-          ],
-        ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabCtrl,
+              children: [_buildOverviewTab(), _buildReportsTab()],
+            ),
+          ),
+        ]),
         bottomNavigationBar: _buildBottomNav(),
       ),
     );
   }
 
-  Widget _buildHeader() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF082218), Color(0xFF0F3D2E), Color(0xFF1A5C43)],
+  // ── HEADER ────────────────────────────────────────────────────────────────
+
+  Widget _buildHeader() => Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF082218), Color(0xFF0F3D2E), Color(0xFF1A5C43)],
+          ),
+          borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
         ),
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(0)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-          child: Column(
-            children: [
-              Row(
-                children: [
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
                   GestureDetector(
                     onTap: widget.onBack ?? () => widget.onNavTap?.call(0),
                     child: Container(
@@ -264,1304 +290,776 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
                         color: Colors.white.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white,
-                        size: 18,
-                      ),
+                      child: const Icon(Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white, size: 18),
                     ),
                   ),
                   const SizedBox(width: 14),
-                  Expanded(
+                  const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Analytics',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Platform insights and statistics',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.65),
-                            fontSize: 12,
-                          ),
-                        ),
+                        Text('Analytics',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700)),
+                        SizedBox(height: 2),
+                        Text('Platform insights and statistics',
+                            style:
+                                TextStyle(color: Colors.white54, fontSize: 11)),
                       ],
                     ),
                   ),
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _selectedPeriod,
-                        dropdownColor: const Color(0xFF1E5F4B),
-                        icon: const Icon(Icons.arrow_drop_down,
-                            color: Colors.white),
-                        style:
-                            const TextStyle(color: Colors.white, fontSize: 13),
-                        items: _periods.map((period) {
-                          return DropdownMenuItem(
-                              value: period, child: Text(period));
-                        }).toList(),
-                        onChanged: (value) {
-                          if (value != null) {
-                            setState(() {
-                              _selectedPeriod = value;
-                            });
-                          }
-                        },
+                  // Period picker pill
+                  GestureDetector(
+                    onTap: _showPeriodPicker,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(20),
+                        border:
+                            Border.all(color: Colors.white.withOpacity(0.25)),
                       ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text(_selectedPeriod,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.keyboard_arrow_down_rounded,
+                            color: Colors.white, size: 16),
+                      ]),
                     ),
                   ),
-                ],
-              ),
-            ],
+                ]),
+                const SizedBox(height: 16),
+                // Stats strip — 2×2
+                Column(children: [
+                  Row(children: [
+                    _headerStat(Icons.payments_rounded, _fmt(_totalRevenue),
+                        'Revenue', const Color(0xFF4ADE80)),
+                    const SizedBox(width: 10),
+                    _headerStat(
+                        Icons.check_circle_rounded,
+                        '${_completedBookings.length}',
+                        'Completed',
+                        const Color(0xFF60A5FA)),
+                  ]),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    _headerStat(
+                        Icons.autorenew_rounded,
+                        '${_activeBookings.length}',
+                        'Active',
+                        const Color(0xFFA78BFA)),
+                    const SizedBox(width: 10),
+                    _headerStat(
+                        Icons.engineering_rounded,
+                        '${widget.professionals.length}',
+                        'Professionals',
+                        const Color(0xFFFBBF24)),
+                  ]),
+                ]),
+              ],
+            ),
           ),
         ),
-      ),
-    );
-  }
+      );
 
-  Widget _buildTabBar() {
-    return Container(
-      color: const Color(0xFF0F3D2E),
-      child: TabBar(
-        controller: _periodTabController,
-        indicatorColor: Colors.white,
-        labelColor: Colors.white,
-        unselectedLabelColor: Colors.white54,
-        labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-        tabs: const [
-          Tab(text: 'Overview'),
-          Tab(text: 'Reports'),
-        ],
-      ),
-    );
-  }
+  Widget _headerStat(IconData icon, String value, String label, Color color) =>
+      Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white.withOpacity(0.15)),
+          ),
+          child: Row(children: [
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(value,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800),
+                      overflow: TextOverflow.ellipsis),
+                  Text(label,
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.6), fontSize: 10)),
+                ],
+              ),
+            ),
+          ]),
+        ),
+      );
+
+  // ── OVERVIEW TAB ─────────────────────────────────────────────────────────
 
   Widget _buildOverviewTab() {
+    final months = _last6Months;
+    final breakdown = _serviceBreakdown;
+    final topPros = _topPros;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Key Metrics Cards
+          // ── Key metric cards ──────────────────────────────────────
+          Column(children: [
+            Row(children: [
+              Expanded(
+                child: _metricCard(
+                  title: 'Total Revenue',
+                  value: _fmt(_totalRevenue),
+                  sub: '${_completedBookings.length} completed jobs',
+                  icon: Icons.payments_rounded,
+                  color: const Color(0xFF34C759),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _metricCard(
+                  title: 'Avg. Job Value',
+                  value: _fmt(_avgOrderValue),
+                  sub: 'Per completed booking',
+                  icon: Icons.receipt_rounded,
+                  color: const Color(0xFF007AFF),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: _metricCard(
+                  title: 'Completion Rate',
+                  value: '${_completionRate.toStringAsFixed(0)}%',
+                  sub: 'Of all closed bookings',
+                  icon: Icons.check_circle_outline_rounded,
+                  color: const Color(0xFF5856D6),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _metricCard(
+                  title: 'Total Bookings',
+                  value: '${_filteredBookings.length}',
+                  sub: '${_activeBookings.length} currently active',
+                  icon: Icons.calendar_today_rounded,
+                  color: const Color(0xFFFF9500),
+                ),
+              ),
+            ]),
+          ]).animate().fadeIn(delay: 60.ms),
+
+          const SizedBox(height: 20),
+
+          // ── Monthly chart card ────────────────────────────────────
+          _card(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _cardTitle('6-Month Trend'),
+                    // Chart mode chips
+                    Row(children: [
+                      _chartChip('Revenue'),
+                      const SizedBox(width: 6),
+                      _chartChip('Bookings'),
+                      const SizedBox(width: 6),
+                      _chartChip('Handymen'),
+                    ]),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 180,
+                  child: LayoutBuilder(builder: (ctx, constraints) {
+                    return CustomPaint(
+                      size: Size(constraints.maxWidth, 180),
+                      painter: _BarChartPainter(
+                        months: months,
+                        mode: _chartMode,
+                        color: _chartMode == 'Revenue'
+                            ? const Color(0xFF2A7F6E)
+                            : _chartMode == 'Bookings'
+                                ? const Color(0xFF007AFF)
+                                : const Color(0xFF5856D6),
+                      ),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 8),
+                // Month labels
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: months
+                      .map((m) => Text(m.label,
+                          style: const TextStyle(
+                              fontSize: 10, color: AppColors.textLight)))
+                      .toList(),
+                ),
+              ],
+            ),
+          ).animate().fadeIn(delay: 80.ms),
+
+          const SizedBox(height: 16),
+
+          // ── Service breakdown ─────────────────────────────────────
+          if (breakdown.isNotEmpty)
+            _card(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _cardTitle('Revenue by Service'),
+                  const SizedBox(height: 14),
+                  ...breakdown.map((s) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: Column(children: [
+                        Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(children: [
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                      color: s.color, shape: BoxShape.circle),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(s.type,
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        color: AppColors.textDark)),
+                              ]),
+                              Text(_fmt(s.revenue),
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.textDark)),
+                            ]),
+                        const SizedBox(height: 6),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: s.pct,
+                            backgroundColor: const Color(0xFFF0F0F0),
+                            valueColor: AlwaysStoppedAnimation<Color>(s.color),
+                            minHeight: 7,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('${s.bookings} bookings',
+                                  style: const TextStyle(
+                                      fontSize: 10,
+                                      color: AppColors.textLight)),
+                              Text('${(s.pct * 100).toStringAsFixed(1)}%',
+                                  style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: s.color)),
+                            ]),
+                      ]),
+                    );
+                  }),
+                ],
+              ),
+            ).animate().fadeIn(delay: 100.ms)
+          else
+            _emptyCard(
+                'No completed bookings yet',
+                'Revenue by service will appear once bookings complete.',
+                Icons.pie_chart_outline_rounded),
+
+          const SizedBox(height: 16),
+
+          // ── Top professionals ─────────────────────────────────────
+          _card(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _cardTitle('Top Professionals'),
+                const SizedBox(height: 12),
+                if (topPros.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(
+                      child: Text('No completed bookings yet',
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textLight)),
+                    ),
+                  )
+                else
+                  ...topPros.asMap().entries.map((e) {
+                    final i = e.key;
+                    final pro = e.value;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(children: [
+                        // Rank
+                        SizedBox(
+                          width: 24,
+                          child: Text('${i + 1}',
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  color: i == 0
+                                      ? const Color(0xFFFFB800)
+                                      : AppColors.textLight)),
+                        ),
+                        // Avatar
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.10),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              pro.name.isNotEmpty
+                                  ? pro.name[0].toUpperCase()
+                                  : 'P',
+                              style: const TextStyle(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(pro.name,
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textDark),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                              Text(
+                                  '${pro.skill.isEmpty ? 'Handyman' : pro.skill}  ·  ${pro.bookings} jobs',
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textLight)),
+                            ],
+                          ),
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(_fmt(pro.earnings),
+                                style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.textDark)),
+                            Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Icon(Icons.star_rounded,
+                                  size: 11, color: Color(0xFFFFB800)),
+                              const SizedBox(width: 2),
+                              Text(pro.rating.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textLight)),
+                            ]),
+                          ],
+                        ),
+                      ]),
+                    );
+                  }),
+              ],
+            ),
+          ).animate().fadeIn(delay: 120.ms),
+
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
+  }
+
+  Widget _chartChip(String label) {
+    final selected = _chartMode == label;
+    return GestureDetector(
+      onTap: () => setState(() => _chartMode = label),
+      child: AnimatedContainer(
+        duration: 150.ms,
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.primary : const Color(0xFFF0F0F0),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : AppColors.textLight)),
+      ),
+    );
+  }
+
+  // ── REPORTS TAB ───────────────────────────────────────────────────────────
+
+  Widget _buildReportsTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Subtitle
+          const Text('Generate Reports',
+              style: TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textLight,
+                  fontWeight: FontWeight.w500)),
+          const SizedBox(height: 12),
           GridView.count(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             crossAxisCount: 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 1.5,
+            childAspectRatio: 1.15,
             children: [
-              _buildMetricCard(
-                title: 'Total Revenue',
-                value: '₱${_earningsData['totalRevenue'].toStringAsFixed(0)}',
-                change: '+${_earningsData['growth']}%',
-                icon: Icons.attach_money,
-                color: Colors.green,
-                isPositive: true,
+              _reportCard(
+                title: 'Revenue Report',
+                description: 'Earnings and payout breakdown',
+                icon: Icons.payments_rounded,
+                color: const Color(0xFF34C759),
               ),
-              _buildMetricCard(
-                title: 'Platform Fees',
-                value: '₱${_earningsData['platformFees'].toStringAsFixed(0)}',
-                change: '5% fee',
-                icon: Icons.account_balance,
-                color: Colors.blue,
-                isPositive: true,
+              _reportCard(
+                title: 'Handyman Report',
+                description: 'Performance metrics per pro',
+                icon: Icons.engineering_rounded,
+                color: const Color(0xFF007AFF),
               ),
-              _buildMetricCard(
-                title: 'Handyman Payouts',
-                value:
-                    '₱${_earningsData['handymanPayouts'].toStringAsFixed(0)}',
-                change: '95% of revenue',
-                icon: Icons.payment,
-                color: Colors.orange,
-                isPositive: true,
+              _reportCard(
+                title: 'Customer Report',
+                description: 'Customer activity and spend',
+                icon: Icons.people_rounded,
+                color: const Color(0xFFFF9500),
               ),
-              _buildMetricCard(
-                title: 'Avg. Order Value',
-                value:
-                    '₱${_earningsData['averageOrderValue'].toStringAsFixed(0)}',
-                change: '+8% vs last month',
-                icon: Icons.shopping_cart,
-                color: Colors.purple,
-                isPositive: true,
+              _reportCard(
+                title: 'Booking Report',
+                description: 'Trends, status distribution',
+                icon: Icons.calendar_today_rounded,
+                color: const Color(0xFF5856D6),
               ),
             ],
           ),
-
           const SizedBox(height: 20),
 
-          // Revenue Chart Card
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
+          // Quick stats for the current period
+          _card(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Revenue Overview',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E5F4B),
-                      ),
-                    ),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.grey[100],
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: TabBar(
-                        controller: _chartTabController,
-                        indicator: BoxDecoration(
-                          color: const Color(0xFF2A7F6E),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        labelColor: Colors.white,
-                        unselectedLabelColor: Colors.grey[600],
-                        labelStyle: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        unselectedLabelStyle: const TextStyle(fontSize: 11),
-                        tabs: const [
-                          Tab(text: 'Revenue'),
-                          Tab(text: 'Bookings'),
-                          Tab(text: 'Handymen'),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-
-                // Chart
-                SizedBox(
-                  height: 200,
-                  child: TabBarView(
-                    controller: _chartTabController,
-                    children: [
-                      _buildRevenueChart(),
-                      _buildBookingsChart(),
-                      _buildHandymenChart(),
-                    ],
-                  ),
-                ),
-
-                const Divider(height: 30),
-
-                // Legend and summary
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _buildChartLegend(
-                      color: const Color(0xFF2A7F6E),
-                      label: 'Revenue',
-                      value:
-                          '₱${_earningsData['totalRevenue'].toStringAsFixed(0)}',
-                    ),
-                    _buildChartLegend(
-                      color: Colors.orange,
-                      label: 'Projected',
-                      value:
-                          '₱${_earningsData['projectedRevenue'].toStringAsFixed(0)}',
-                      isProjected: true,
-                    ),
-                  ],
-                ),
+                _cardTitle('Period Summary  ·  $_selectedPeriod'),
+                const SizedBox(height: 14),
+                _summaryRow('Total Bookings', '${_filteredBookings.length}'),
+                _summaryRow('Completed', '${_completedBookings.length}'),
+                _summaryRow('Active', '${_activeBookings.length}'),
+                _summaryRow('Cancelled',
+                    '${_filteredBookings.where((b) => b.status == BookingStatus.cancelled).length}'),
+                _summaryRow('Total Revenue', _fmt(_totalRevenue)),
+                _summaryRow('Avg. Job Value', _fmt(_avgOrderValue)),
+                _summaryRow('Completion Rate',
+                    '${_completionRate.toStringAsFixed(1)}%'),
+                _summaryRow('Active Professionals',
+                    '${widget.professionals.where((p) => p.available).length}'),
               ],
             ),
           ),
-
-          const SizedBox(height: 20),
-
-          // Service Breakdown
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Revenue by Service',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E5F4B),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _showServiceDetails,
-                      child: const Text('View Details'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                // Service breakdown bars
-                ..._serviceBreakdown.map((service) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: service['color'],
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  service['service'],
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              '₱${service['revenue'].toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1E5F4B),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: service['percentage'] / 100,
-                            backgroundColor: Colors.grey[200],
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              service['color'],
-                            ),
-                            minHeight: 8,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              '${service['bookings']} bookings',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey[500],
-                              ),
-                            ),
-                            Text(
-                              '${service['percentage']}%',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: service['color'],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          // Top Handymen and Customers
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Top Handymen
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Top Handymen',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1E5F4B),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: _showAllHandymen,
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              minimumSize: const Size(0, 0),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            child: const Text('View All'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      ..._topHandymen.take(4).map((handyman) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [
-                                      Color(0xFF2A7F6E),
-                                      Color(0xFF1E5F4B),
-                                    ],
-                                  ),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    handyman['avatar'],
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      handyman['name'],
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    Text(
-                                      handyman['specialization'],
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.grey[500],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    '₱${handyman['earnings']}',
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF1E5F4B),
-                                    ),
-                                  ),
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.star,
-                                        size: 8,
-                                        color: Colors.amber,
-                                      ),
-                                      const SizedBox(width: 2),
-                                      Text(
-                                        '${handyman['rating']}',
-                                        style: TextStyle(
-                                          fontSize: 8,
-                                          color: Colors.grey[600],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-
-              // Top Customers
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Top Customers',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1E5F4B),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: _showAllCustomers,
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              minimumSize: const Size(0, 0),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            child: const Text('View All'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      ..._topCustomers.take(4).map((customer) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [
-                                      Color(0xFF2A7F6E),
-                                      Color(0xFF1E5F4B),
-                                    ],
-                                  ),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    customer['avatar'],
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      customer['name'],
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    Text(
-                                      customer['location'],
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.grey[500],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    '₱${customer['spent']}',
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF1E5F4B),
-                                    ),
-                                  ),
-                                  Text(
-                                    '${customer['bookings']} bookings',
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      color: Colors.grey[500],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 20),
-
-          // Geographic Distribution
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Geographic Distribution',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E5F4B),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // Location list
-                ..._locationData.map((location) {
-                  double percentage =
-                      location['revenue'] / _earningsData['totalRevenue'] * 100;
-
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              location['city'],
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            Text(
-                              '₱${location['revenue'].toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1E5F4B),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: percentage / 100,
-                            backgroundColor: Colors.grey[200],
-                            valueColor: const AlwaysStoppedAnimation<Color>(
-                              Color(0xFF2A7F6E),
-                            ),
-                            minHeight: 6,
-                          ),
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              '${location['bookings']} bookings',
-                              style: TextStyle(
-                                fontSize: 9,
-                                color: Colors.grey[500],
-                              ),
-                            ),
-                            Text(
-                              '${percentage.toStringAsFixed(1)}%',
-                              style: const TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF2A7F6E),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ],
-            ),
-          ),
+          const SizedBox(height: 80),
         ],
       ),
     );
   }
 
-  Widget _buildReportsTab() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // Quick Reports Grid
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 1.2,
+  Widget _summaryRow(String label, String value) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            _buildReportCard(
-              title: 'Revenue Report',
-              description: 'Detailed revenue breakdown',
-              icon: Icons.attach_money,
-              color: Colors.green,
-              onTap: () => _generateReport('Revenue'),
-            ),
-            _buildReportCard(
-              title: 'Handyman Report',
-              description: 'Handyman performance metrics',
-              icon: Icons.handyman,
-              color: Colors.blue,
-              onTap: () => _generateReport('Handyman'),
-            ),
-            _buildReportCard(
-              title: 'Customer Report',
-              description: 'Customer activity analysis',
-              icon: Icons.people,
-              color: Colors.orange,
-              onTap: () => _generateReport('Customer'),
-            ),
-            _buildReportCard(
-              title: 'Booking Report',
-              description: 'Booking trends and patterns',
-              icon: Icons.calendar_today,
-              color: Colors.purple,
-              onTap: () => _generateReport('Booking'),
-            ),
+            Text(label,
+                style:
+                    const TextStyle(fontSize: 13, color: AppColors.textMedium)),
+            Text(value,
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark)),
           ],
         ),
+      );
 
-        const SizedBox(height: 24),
-
-        // Scheduled Reports
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Scheduled Reports',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E5F4B),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: _scheduleReport,
-                    child: const Text('+ Schedule New'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              _buildScheduledReportItem(
-                title: 'Weekly Revenue Summary',
-                frequency: 'Every Monday',
-                format: 'PDF',
-                recipients: 'admin@ayo.com',
-                enabled: true,
-              ),
-              const Divider(),
-              _buildScheduledReportItem(
-                title: 'Monthly Performance Report',
-                frequency: '1st of every month',
-                format: 'Excel',
-                recipients: 'finance@ayo.com, admin@ayo.com',
-                enabled: true,
-              ),
-              const Divider(),
-              _buildScheduledReportItem(
-                title: 'Daily Booking Report',
-                frequency: 'Every day at 9 AM',
-                format: 'PDF',
-                recipients: 'ops@ayo.com',
-                enabled: false,
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 20),
-
-        // Export History
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Recent Exports',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E5F4B),
-                ),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.description,
-                      color: Colors.green, size: 20),
-                ),
-                title: const Text('Revenue Report - March 2026'),
-                subtitle: const Text('Exported 2 hours ago • 2.5 MB'),
-                trailing: const Icon(Icons.download_done, color: Colors.green),
-              ),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.table_chart,
-                      color: Colors.blue, size: 20),
-                ),
-                title: const Text('Handyman Performance - Q1 2026'),
-                subtitle: const Text('Exported yesterday • 3.1 MB'),
-                trailing: const Icon(Icons.download_done, color: Colors.green),
-              ),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.pie_chart,
-                      color: Colors.orange, size: 20),
-                ),
-                title: const Text('Customer Analytics - March 2026'),
-                subtitle: const Text('Exported 3 days ago • 1.8 MB'),
-                trailing: const Icon(Icons.download_done, color: Colors.green),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMetricCard({
-    required String title,
-    required String value,
-    required String change,
-    required IconData icon,
-    required Color color,
-    required bool isPositive,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: color, size: 16),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: isPositive
-                      ? Colors.green.withOpacity(0.1)
-                      : Colors.red.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      isPositive ? Icons.arrow_upward : Icons.arrow_downward,
-                      size: 10,
-                      color: isPositive ? Colors.green : Colors.red,
-                    ),
-                    const SizedBox(width: 2),
-                    Text(
-                      change,
-                      style: TextStyle(
-                        fontSize: 8,
-                        color: isPositive ? Colors.green : Colors.red,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1E5F4B),
-            ),
-          ),
-          Text(
-            title,
-            style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRevenueChart() {
-    return Container(
-      height: 180,
-      child: CustomPaint(painter: LineChartPainter(_monthlyEarnings)),
-    );
-  }
-
-  Widget _buildBookingsChart() {
-    return Container(
-      height: 180,
-      child: Center(
-        child: Text(
-          'Bookings chart visualization',
-          style: TextStyle(color: Colors.grey[400]),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHandymenChart() {
-    return Container(
-      height: 180,
-      child: Center(
-        child: Text(
-          'Handymen growth chart',
-          style: TextStyle(color: Colors.grey[400]),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChartLegend({
-    required Color color,
-    required String label,
-    required String value,
-    bool isProjected = false,
-  }) {
-    return Row(
-      children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 6),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-            ),
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: isProjected ? Colors.grey : const Color(0xFF1E5F4B),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildReportCard({
+  Widget _reportCard({
     required String title,
     required String description,
     required IconData icon,
     required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
+  }) =>
+      GestureDetector(
+        onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$title — coming soon'),
+          backgroundColor: AppColors.primary,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 2),
+        )),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3)),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const SizedBox(height: 12),
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textDark)),
+              const SizedBox(height: 3),
+              Text(description,
+                  style:
+                      const TextStyle(fontSize: 11, color: AppColors.textLight),
+                  maxLines: 2),
+            ],
+          ),
+        ),
+      );
+
+  // ── Shared card widgets ───────────────────────────────────────────────────
+
+  Widget _card({required Widget child}) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 3)),
+          ],
+        ),
+        child: child,
+      );
+
+  Widget _cardTitle(String text) => Text(text,
+      style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: AppColors.textDark));
+
+  Widget _metricCard({
+    required String title,
+    required String value,
+    required String sub,
+    required IconData icon,
+    required Color color,
+  }) =>
+      Container(
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey[200]!),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 3)),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(7),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
+                color: color.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, color: color, size: 20),
+              child: Icon(icon, color: color, size: 17),
             ),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1E5F4B),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              description,
-              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-            ),
+            const SizedBox(height: 10),
+            Text(value,
+                style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textDark)),
+            const SizedBox(height: 1),
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textDark)),
+            Text(sub,
+                style:
+                    const TextStyle(fontSize: 10, color: AppColors.textLight),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
           ],
         ),
-      ),
-    );
-  }
+      );
 
-  Widget _buildScheduledReportItem({
-    required String title,
-    required String frequency,
-    required String format,
-    required String recipients,
-    required bool enabled,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: enabled ? const Color(0xFF1E5F4B) : Colors.grey[500],
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '$frequency • $format',
-                  style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  recipients,
-                  style: TextStyle(fontSize: 9, color: Colors.grey[400]),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: enabled,
-            onChanged: (value) {},
-            activeColor: const Color(0xFF2A7F6E),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _emptyCard(String title, String sub, IconData icon) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 3)),
+          ],
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 36, color: AppColors.textLight.withOpacity(0.35)),
+          const SizedBox(height: 10),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textLight)),
+          const SizedBox(height: 4),
+          Text(sub,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 11, color: AppColors.textLight)),
+        ]),
+      );
 
-  void _showServiceDetails() {
+  // ── Period picker sheet ───────────────────────────────────────────────────
+
+  void _showPeriodPicker() {
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          minChildSize: 0.5,
-          maxChildSize: 0.9,
-          expand: false,
-          builder: (context, scrollController) {
-            return Container(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: const Color(0xFFDDDDDD),
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Select Period',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textDark)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ..._periods.map((p) {
+            final selected = _selectedPeriod == p;
+            return InkWell(
+              onTap: () {
+                setState(() => _selectedPeriod = p);
+                Navigator.pop(context);
+              },
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                child: Row(children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppColors.primary.withOpacity(0.12)
+                          : const Color(0xFFF5F5F5),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      p == 'Today'
+                          ? Icons.today_rounded
+                          : p == 'This Week'
+                              ? Icons.date_range_rounded
+                              : p == 'This Month'
+                                  ? Icons.calendar_month_rounded
+                                  : Icons.calendar_today_rounded,
+                      size: 18,
+                      color: selected ? AppColors.primary : AppColors.textLight,
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Service Category Details',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E5F4B),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
+                  const SizedBox(width: 14),
                   Expanded(
-                    child: ListView.builder(
-                      controller: scrollController,
-                      itemCount: _serviceBreakdown.length,
-                      itemBuilder: (context, index) {
-                        final service = _serviceBreakdown[index];
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.grey[200]!),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: service['color'].withOpacity(0.1),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    '${service['percentage']}%',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: service['color'],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      service['service'],
-                                      style: const TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF1E5F4B),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${service['bookings']} bookings',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey[500],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    '₱${service['revenue']}',
-                                    style: const TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF1E5F4B),
-                                    ),
-                                  ),
-                                  Text(
-                                    '${service['percentage']}% of total',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: service['color'],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                    child: Text(p,
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight:
+                                selected ? FontWeight.w700 : FontWeight.w400,
+                            color: selected
+                                ? AppColors.primary
+                                : AppColors.textDark)),
                   ),
-                ],
+                  if (selected)
+                    const Icon(Icons.check_rounded,
+                        color: AppColors.primary, size: 18),
+                ]),
               ),
             );
-          },
-        );
-      },
-    );
-  }
-
-  void _showAllHandymen() {
-    _showComingSoon('All Handymen List');
-  }
-
-  void _showAllCustomers() {
-    _showComingSoon('All Customers List');
-  }
-
-  void _generateReport(String type) {
-    _showComingSoon('Generate $type Report');
-  }
-
-  void _scheduleReport() {
-    _showComingSoon('Schedule Report');
-  }
-
-  void _showComingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature feature coming soon!'),
-        backgroundColor: const Color(0xFF2A7F6E),
-        duration: const Duration(seconds: 2),
+          }),
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 12),
+        ]),
       ),
     );
   }
+
+  // ── Bottom nav ────────────────────────────────────────────────────────────
 
   Widget _buildBottomNav() {
     const items = [
@@ -1575,10 +1073,9 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
-          ),
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 20,
+              offset: const Offset(0, -4))
         ],
       ),
       child: SafeArea(
@@ -1601,27 +1098,20 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        items[i]['icon'] as IconData,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(items[i]['icon'] as IconData,
                         color: active ? AppColors.primary : AppColors.textLight,
-                        size: 24,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        items[i]['label'] as String,
+                        size: 24),
+                    const SizedBox(height: 4),
+                    Text(items[i]['label'] as String,
                         style: TextStyle(
-                          fontSize: 11,
-                          fontWeight:
-                              active ? FontWeight.w700 : FontWeight.w400,
-                          color:
-                              active ? AppColors.primary : AppColors.textLight,
-                        ),
-                      ),
-                    ],
-                  ),
+                            fontSize: 11,
+                            fontWeight:
+                                active ? FontWeight.w700 : FontWeight.w400,
+                            color: active
+                                ? AppColors.primary
+                                : AppColors.textLight)),
+                  ]),
                 ),
               );
             }),
@@ -1632,77 +1122,161 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
   }
 }
 
-// Custom painter for line chart
-class LineChartPainter extends CustomPainter {
-  final List<Map<String, dynamic>> data;
+// ── Data models ───────────────────────────────────────────────────────────────
 
-  LineChartPainter(this.data);
+class _MonthData {
+  final String label;
+  final double revenue;
+  final int bookings;
+  final int handymen;
+  const _MonthData({
+    required this.label,
+    required this.revenue,
+    required this.bookings,
+    required this.handymen,
+  });
+}
+
+class _ServiceData {
+  final String type;
+  final double revenue;
+  final int bookings;
+  final Color color;
+  final double pct;
+  const _ServiceData({
+    required this.type,
+    required this.revenue,
+    required this.bookings,
+    required this.color,
+    this.pct = 0,
+  });
+}
+
+class _TopProData {
+  final String id;
+  final String name;
+  final String skill;
+  final double earnings;
+  final int bookings;
+  final double rating;
+  const _TopProData({
+    required this.id,
+    required this.name,
+    required this.skill,
+    required this.earnings,
+    required this.bookings,
+    required this.rating,
+  });
+}
+
+// ── Bar chart painter ─────────────────────────────────────────────────────────
+
+class _BarChartPainter extends CustomPainter {
+  final List<_MonthData> months;
+  final String mode;
+  final Color color;
+
+  const _BarChartPainter({
+    required this.months,
+    required this.mode,
+    required this.color,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (data.isEmpty) return;
+    if (months.isEmpty) return;
 
-    final paint = Paint()
-      ..color = const Color(0xFF2A7F6E)
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke;
+    const topPad = 20.0;
+    const bottomPad = 4.0;
+    final chartH = size.height - topPad - bottomPad;
+    final n = months.length;
+    final slotW = size.width / n;
+    final barW = (slotW * 0.55).clamp(8.0, 32.0);
 
-    final fillPaint = Paint()
-      ..color = const Color(0xFF2A7F6E).withOpacity(0.1)
-      ..style = PaintingStyle.fill;
+    double maxVal = 0;
+    for (final m in months) {
+      double v = mode == 'Revenue'
+          ? m.revenue
+          : mode == 'Bookings'
+              ? m.bookings.toDouble()
+              : m.handymen.toDouble();
+      if (v > maxVal) maxVal = v;
+    }
+    if (maxVal == 0) maxVal = 1;
 
-    final pointPaint = Paint()
-      ..color = const Color(0xFF2A7F6E)
-      ..style = PaintingStyle.fill;
+    final gridPaint = Paint()
+      ..color = const Color(0xFFEEEEEE)
+      ..strokeWidth = 1;
 
-    final double width = size.width;
-    final double height = size.height;
-    final double stepX = width / (data.length - 1);
-
-    // Find max value for scaling (safely cast revenue to double)
-    double maxValue = 0;
-    if (data.isNotEmpty) {
-      maxValue = data
-          .map((e) => (e['revenue'] as num).toDouble())
-          .reduce((a, b) => a > b ? a : b);
+    // Grid lines
+    for (int i = 0; i <= 3; i++) {
+      final y = topPad + chartH * (1 - i / 3);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
 
-    // avoid divide by zero or invalid drawing
-    if (maxValue == 0) return;
+    final valuePainter = TextPainter(textDirection: TextDirection.ltr);
 
-    // Create path
-    final path = Path();
-    final List<Offset> points = [];
+    for (int i = 0; i < n; i++) {
+      final m = months[i];
+      double val = mode == 'Revenue'
+          ? m.revenue
+          : mode == 'Bookings'
+              ? m.bookings.toDouble()
+              : m.handymen.toDouble();
 
-    for (int i = 0; i < data.length; i++) {
-      final revenue = (data[i]['revenue'] as num).toDouble();
-      double x = data.length > 1 ? i * stepX : width / 2;
-      double y = height - (revenue / maxValue) * (height * 0.8) - 20;
-      points.add(Offset(x, y));
+      final cx = slotW * i + slotW / 2;
+      final barH = (val / maxVal) * chartH;
+      final barTop = topPad + chartH - barH;
+      final barLeft = cx - barW / 2;
 
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
+      // Track
+      canvas.drawRRect(
+        RRect.fromRectAndCorners(
+          Rect.fromLTWH(barLeft, topPad, barW, chartH),
+          topLeft: const Radius.circular(4),
+          topRight: const Radius.circular(4),
+        ),
+        Paint()..color = color.withOpacity(0.07),
+      );
+
+      // Bar
+      if (val > 0) {
+        canvas.drawRRect(
+          RRect.fromRectAndCorners(
+            Rect.fromLTWH(barLeft, barTop, barW, barH),
+            topLeft: const Radius.circular(4),
+            topRight: const Radius.circular(4),
+          ),
+          Paint()
+            ..shader = LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [color.withOpacity(0.5), color],
+            ).createShader(Rect.fromLTWH(barLeft, barTop, barW, barH)),
+        );
+
+        // Value label
+        String vLabel;
+        if (mode == 'Revenue') {
+          vLabel = val >= 1000
+              ? '₱${(val / 1000).toStringAsFixed(0)}k'
+              : '₱${val.toStringAsFixed(0)}';
+        } else {
+          vLabel = '${val.toInt()}';
+        }
+        valuePainter.text = TextSpan(
+          text: vLabel,
+          style:
+              TextStyle(fontSize: 8, fontWeight: FontWeight.w600, color: color),
+        );
+        valuePainter.layout();
+        final vY = (barTop - valuePainter.height - 2).clamp(0.0, barTop);
+        valuePainter.paint(canvas, Offset(cx - valuePainter.width / 2, vY));
       }
-    }
-
-    // Draw fill
-    final fillPath = Path.from(path);
-    fillPath.lineTo(points.last.dx, height - 10);
-    fillPath.lineTo(points.first.dx, height - 10);
-    fillPath.close();
-    canvas.drawPath(fillPath, fillPaint);
-
-    // Draw line
-    canvas.drawPath(path, paint);
-
-    // Draw points
-    for (var point in points) {
-      canvas.drawCircle(point, 4, pointPaint);
     }
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(_BarChartPainter old) =>
+      old.months != months || old.mode != mode || old.color != color;
 }

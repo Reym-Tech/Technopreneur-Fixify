@@ -2008,6 +2008,8 @@ class _MainAppState extends State<MainApp> {
 
     if (_navIndex == 2) {
       return SuperAdminAnalytics(
+        bookings: _adminBookings.map((b) => b.toEntity()).toList(),
+        professionals: _professionals.map((p) => p.toEntity()).toList(),
         onBack: () => setState(() => _navIndex = 0),
         onNavTap: (i) => setState(() => _navIndex = i),
         currentNavIndex: _navIndex,
@@ -3109,7 +3111,9 @@ class _MainAppState extends State<MainApp> {
   Widget _customerFlow() {
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
     // _navIndex==1 → Explore tab (AllProfessionalsScreen)
-    if (_navIndex == 1) {
+    // Allow fall-through to the switch when a pro profile is open so
+    // _screen == 'professional_profile' is handled correctly.
+    if (_navIndex == 1 && _screen != 'professional_profile') {
       return AllProfessionalsScreen(
         ds: _ds,
         currentNavIndex: _navIndex,
@@ -3258,7 +3262,24 @@ class _MainAppState extends State<MainApp> {
                       ? ' Estimated range: ${result.priceRange}.'
                       : '';
 
-              for (final pro in result.matchedPros) {
+              // ── Priority notification fanout ───────────────────────────────
+              // Tier 2 (Elite) receives the push first, then Tier 1 (Pro) after
+              // a short delay, then Tier 0 (Free) last. This gives higher-tier
+              // professionals a head start on seeing and claiming the booking.
+              // Direct bookings skip the delay since there is only one recipient.
+              final sortedPros = [...result.matchedPros]..sort(
+                  (a, b) => b.subscriptionTier.compareTo(a.subscriptionTier));
+
+              int? lastTier;
+              for (final pro in sortedPros) {
+                final tier = pro.subscriptionTier;
+                // Insert a 3-second delay each time the tier drops, but only
+                // for open (non-direct) bookings with multiple recipients.
+                if (!isDirectBooking && lastTier != null && tier < lastTier) {
+                  await Future.delayed(const Duration(seconds: 3));
+                }
+                lastTier = tier;
+
                 try {
                   await _notifDs.pushToUser(
                     targetUserId: pro.userId,
@@ -3266,7 +3287,9 @@ class _MainAppState extends State<MainApp> {
                     type: NotificationTypeStrings.bookingRequest,
                     title: isDirectBooking
                         ? 'New Direct Booking Request'
-                        : 'New Booking Request',
+                        : tier >= 2
+                            ? '⚡ New Booking Request'
+                            : 'New Booking Request',
                     message: isDirectBooking
                         ? 'A customer has requested you directly for '
                             '${result.serviceType} service near '
@@ -3322,7 +3345,10 @@ class _MainAppState extends State<MainApp> {
           professional: (_selectedProFresh ?? _selectedPro!).toEntity(),
           reviews: _proReviews.map((r) => r.toEntity()).toList(),
           onBack: () => setState(() {
-            _screen = _profileReturnScreen;
+            // If opened from the Explore nav-tab (_navIndex==1), just reset
+            // _screen to 'home' — the _navIndex==1 guard will re-render the
+            // tab version of AllProfessionalsScreen without a back button.
+            _screen = _navIndex == 1 ? 'home' : _profileReturnScreen;
             _proReviews = [];
             _selectedProFresh = null;
           }),

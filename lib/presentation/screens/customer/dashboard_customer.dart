@@ -604,7 +604,13 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             try {
               final prefs = await SharedPreferences.getInstance();
               final seen = prefs.getBool(kCustomerTourSeenKey) ?? false;
-              if (!seen && mounted) _startTour(showcaseContext);
+              if (!seen && mounted) {
+                // Mark as seen immediately so navigating away and back
+                // never re-triggers the auto-start, even if the widget
+                // is recreated before onFinish fires.
+                await prefs.setBool(kCustomerTourSeenKey, true);
+                _startTour(showcaseContext);
+              }
             } catch (e) {
               debugPrint('[CustomerTour] Could not read prefs: $e');
             }
@@ -763,11 +769,12 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                       ),
                       Row(
                         children: [
-                          // TOUR STEP 5 — notifications bell
+                          // TOUR STEP 8 — notifications bell (always last)
                           CustomerTourShowcase.wrap(
                             key: _keys.notificationsKey,
                             stepName: 'notifications',
                             showcaseContext: _showcaseContext,
+                            isLast: true,
                             child: IconButton(
                               onPressed: () async {
                                 await Navigator.push(
@@ -1098,7 +1105,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   // ── RECENT BOOKINGS ───────────────────────────────────────────────────────
 
   Widget _buildRecentBookings() =>
-      // TOUR STEP 8 — recent bookings row (only shown when bookings exist)
+      // TOUR STEP 4 — recent bookings row (only shown when bookings exist)
       CustomerTourShowcase.wrap(
         key: _keys.recentBookingsKey,
         stepName: 'recentBookings',
@@ -1339,7 +1346,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: List.generate(items.length, (i) {
                 final active = i == widget.currentNavIndex;
-                final isLastStep = !widget.recentBookings.isNotEmpty;
                 final navItem = GestureDetector(
                   onTap: () => widget.onNavTap?.call(i),
                   child: AnimatedContainer(
@@ -1369,7 +1375,7 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                     ]),
                   ),
                 );
-                // TOUR STEP 4 — Explore tab
+                // TOUR STEP 5 — Explore tab
                 if (i == 1) {
                   return CustomerTourShowcase.wrapAnchor(
                     key: _keys.exploreTabKey,
@@ -1387,13 +1393,13 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                     child: navItem,
                   );
                 }
-                // TOUR STEP 7 — Profile tab (now index 3)
+                // TOUR STEP 7 — Profile tab (now index 3) — never last
                 if (i == 3) {
                   return CustomerTourShowcase.wrapAnchor(
                     key: _keys.profileTabKey,
                     stepName: 'profileTab',
                     showcaseContext: _showcaseContext,
-                    isLast: isLastStep,
+                    isLast: false,
                     child: navItem,
                   );
                 }
