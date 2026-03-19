@@ -59,6 +59,10 @@ class ProfessionalDashboardScreen extends StatefulWidget {
   /// In Stage 1 (manual flow) the controller shows a contact/request sheet.
   /// In Stage 2 (PayMongo) this triggers the payment link flow.
   final VoidCallback? onRequestUpgrade;
+
+  /// True when the handyman already has a pending upgrade request awaiting
+  /// admin review. Suppresses the upgrade button to prevent duplicate requests.
+  final bool hasPendingUpgrade;
   final List<ReviewEntity> reviews;
   final Function(bool)? onToggleAvailability;
   final Function(int)? onNavTap;
@@ -85,6 +89,7 @@ class ProfessionalDashboardScreen extends StatefulWidget {
     this.onManageServices,
     this.onShareProfile,
     this.onRequestUpgrade,
+    this.hasPendingUpgrade = false,
     this.reviews = const [],
     this.onToggleAvailability,
     this.onNavTap,
@@ -790,35 +795,75 @@ class _ProfessionalDashboardScreenState
             ),
           ],
 
-          // ── Upgrade CTA ──────────────────────────────────────────────────
+          // ── Upgrade CTA / Pending state ──────────────────────────────────
           if (hasUpgrade) ...[
             const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: widget.onRequestUpgrade,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: color,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+            if (widget.hasPendingUpgrade)
+              // Pending banner — request already submitted, awaiting admin
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9500).withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: const Color(0xFFFF9500).withOpacity(0.3)),
                 ),
-                child: Text('Upgrade to $nextLabel',
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w700)),
+                child: Row(children: [
+                  const Icon(Icons.hourglass_top_rounded,
+                      size: 16, color: Color(0xFFFF9500)),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Upgrade Request Pending',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFFF9500))),
+                        SizedBox(height: 2),
+                        Text(
+                          'Your request is under review. '
+                          'You will be notified when it is approved.',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textMedium,
+                              height: 1.4),
+                        ),
+                      ],
+                    ),
+                  ),
+                ]),
+              )
+            else ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: widget.onRequestUpgrade,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: color,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: Text('Upgrade to $nextLabel',
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w700)),
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Center(
-              child: Text(
-                'Contact us to upgrade — activation within 24 hours.',
-                style:
-                    const TextStyle(fontSize: 11, color: AppColors.textLight),
-                textAlign: TextAlign.center,
+              const SizedBox(height: 6),
+              const Center(
+                child: Text(
+                  'Submit a request — admin will activate within 24 hours.',
+                  style: TextStyle(fontSize: 11, color: AppColors.textLight),
+                  textAlign: TextAlign.center,
+                ),
               ),
-            ),
+            ],
           ],
         ],
       ),

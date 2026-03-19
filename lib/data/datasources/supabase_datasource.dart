@@ -180,7 +180,13 @@ class SupabaseDataSource {
   Future<ProfessionalModel?> getProfessionalById(String id) async {
     final data = await _client
         .from(AppConfig.professionalsTable)
-        .select('*, users(id, name, avatar_url, phone, email)')
+        .select(
+          'id, user_id, skills, verified, rating, review_count, '
+          'price_range, price_min, price_max, city, bio, '
+          'years_experience, available, latitude, longitude, '
+          'subscription_tier, tier_expires_at, '
+          'users(id, name, avatar_url, phone, email)',
+        )
         .eq('id', id)
         .single();
     return ProfessionalModel.fromJson(data);
@@ -189,7 +195,13 @@ class SupabaseDataSource {
   Future<ProfessionalModel?> getProfessionalByUserId(String userId) async {
     final data = await _client
         .from(AppConfig.professionalsTable)
-        .select('*, users(id, name, avatar_url, phone)')
+        .select(
+          'id, user_id, skills, verified, rating, review_count, '
+          'price_range, price_min, price_max, city, bio, '
+          'years_experience, available, latitude, longitude, '
+          'subscription_tier, tier_expires_at, '
+          'users(id, name, avatar_url, phone)',
+        )
         .eq('user_id', userId)
         .maybeSingle();
     if (data == null) return null;
@@ -239,7 +251,13 @@ class SupabaseDataSource {
           'years_experience': yearsExperience,
           'available': true,
         })
-        .select('*, users(id, name, avatar_url, phone)')
+        .select(
+          'id, user_id, skills, verified, rating, review_count, '
+          'price_range, price_min, price_max, city, bio, '
+          'years_experience, available, latitude, longitude, '
+          'subscription_tier, tier_expires_at, '
+          'users(id, name, avatar_url, phone)',
+        )
         .single();
     return ProfessionalModel.fromJson(data);
   }
@@ -1622,11 +1640,23 @@ class SupabaseDataSource {
     required int tier,
     DateTime? expiresAt,
   }) async {
-    await _client.from(AppConfig.professionalsTable).update({
-      'subscription_tier': tier,
-      'tier_expires_at': expiresAt?.toUtc().toIso8601String(),
-      'tier_updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', professionalId);
+    final result = await _client
+        .from(AppConfig.professionalsTable)
+        .update({
+          'subscription_tier': tier,
+          'tier_expires_at': expiresAt?.toUtc().toIso8601String(),
+          'tier_updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', professionalId)
+        .select('id');
+
+    // If no rows were updated, RLS is blocking the write.
+    if ((result as List).isEmpty) {
+      throw Exception(
+          'Could not update subscription tier — the admin account may not '
+          'have permission to update the professionals table. '
+          'Check the UPDATE policy in Supabase.');
+    }
   }
 
   /// Returns the current effective tier for a professional, accounting for
@@ -1648,6 +1678,90 @@ class SupabaseDataSource {
     } catch (e) {
       return 0;
     }
+  }
+
+  // ── SUBSCRIPTION REQUESTS ──────────────────────────────────────────────────
+
+  /// Submits a tier upgrade request from a handyman.
+  /// Guards against duplicate pending requests for the same tier.
+  Future<void> submitUpgradeRequest({
+    required String professionalId,
+    required int currentTier,
+    required int requestedTier,
+  }) async {
+    // Check for an existing pending request to avoid duplicates.
+    final existing = await _client
+        .from('subscription_requests')
+        .select('id')
+        .eq('professional_id', professionalId)
+        .eq('status', 'pending')
+        .maybeSingle();
+
+    if (existing != null) {
+      throw Exception('You already have a pending upgrade request. '
+          'Please wait for it to be reviewed.');
+    }
+
+    await _client.from('subscription_requests').insert({
+      'professional_id': professionalId,
+      'current_tier': currentTier,
+      'requested_tier': requestedTier,
+      'status': 'pending',
+    });
+  }
+
+  /// Admin: fetch all upgrade requests with handyman name joined.
+  Future<List<SubscriptionRequestModel>> getUpgradeRequests() async {
+    final data = await _client
+        .from('subscription_requests')
+        .select(
+          'id, professional_id, requested_tier, current_tier, '
+          'status, admin_note, created_at, updated_at, '
+          'professionals(id, users(name))',
+        )
+        .order('created_at', ascending: false);
+
+    return (data as List)
+        .map(
+            (j) => SubscriptionRequestModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Admin: approve an upgrade request.
+  /// Updates the request status and the professional's subscription tier.
+  /// Sets tier_expires_at to 30 days from now by default.
+  Future<void> approveUpgradeRequest({
+    required String requestId,
+    required String professionalId,
+    required int tier,
+    Duration duration = const Duration(days: 30),
+  }) async {
+    final expiresAt = DateTime.now().toUtc().add(duration);
+
+    // Mark request as approved.
+    await _client.from('subscription_requests').update({
+      'status': 'approved',
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', requestId);
+
+    // Apply the tier upgrade.
+    await updateSubscriptionTier(
+      professionalId: professionalId,
+      tier: tier,
+      expiresAt: expiresAt,
+    );
+  }
+
+  /// Admin: reject an upgrade request with an optional note.
+  Future<void> rejectUpgradeRequest({
+    required String requestId,
+    String? adminNote,
+  }) async {
+    await _client.from('subscription_requests').update({
+      'status': 'rejected',
+      'admin_note': adminNote,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', requestId);
   }
 
   // ── USER PROFILE ──────────────────────────────────────────

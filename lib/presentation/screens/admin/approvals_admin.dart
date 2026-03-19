@@ -29,12 +29,12 @@
 //   onBack               → VoidCallback?
 //   onNavTap             → Function(int)?
 //   currentNavIndex      → int
-
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/data/datasources/application_datasource.dart';
 import 'package:fixify/data/datasources/service_selection_request_datasource.dart';
+import 'package:fixify/data/models/models.dart' show SubscriptionRequestModel;
 
 class ApprovalsScreen extends StatefulWidget {
   final List<ApplicationModel> applications;
@@ -42,6 +42,9 @@ class ApprovalsScreen extends StatefulWidget {
 
   /// Pending / approved / rejected service selection requests from handymen.
   final List<ServiceSelectionRequestModel> serviceRequests;
+
+  /// Pending / approved / rejected subscription upgrade requests from handymen.
+  final List<SubscriptionRequestModel> upgradeRequests;
 
   final Function(ApplicationModel)? onApprove;
   final Function(ApplicationModel, String?)? onReject;
@@ -57,6 +60,12 @@ class ApprovalsScreen extends StatefulWidget {
   /// Optional admin note is passed as the second argument.
   final Function(ServiceSelectionRequestModel, String?)? onRejectServiceRequest;
 
+  /// Called when the admin approves a subscription upgrade request.
+  final Function(SubscriptionRequestModel)? onApproveUpgrade;
+
+  /// Called when the admin rejects a subscription upgrade request.
+  final Function(SubscriptionRequestModel, String?)? onRejectUpgrade;
+
   final VoidCallback? onBack;
   final Function(int)? onNavTap;
   final int currentNavIndex;
@@ -66,12 +75,15 @@ class ApprovalsScreen extends StatefulWidget {
     this.applications = const [],
     this.proposals = const [],
     this.serviceRequests = const [],
+    this.upgradeRequests = const [],
     this.onApprove,
     this.onReject,
     this.onApproveProposal,
     this.onRejectProposal,
     this.onApproveServiceRequest,
     this.onRejectServiceRequest,
+    this.onApproveUpgrade,
+    this.onRejectUpgrade,
     this.onBack,
     this.onNavTap,
     this.currentNavIndex = 1,
@@ -83,22 +95,24 @@ class ApprovalsScreen extends StatefulWidget {
 
 class _ApprovalsScreenState extends State<ApprovalsScreen>
     with TickerProviderStateMixin {
-  // Top-level: Handyman Apps | Service Proposals | Service Requests
+  // Top-level: Handyman Apps | Service Proposals | Service Requests | Upgrades
   late TabController _topTabs;
   // Sub-tabs: Pending / Approved / Rejected — one per top-level tab
   late TabController _appSubTabs;
   late TabController _propSubTabs;
   late TabController _sreqSubTabs;
+  late TabController _upgradeSubTabs;
 
   String? _processingId;
 
   @override
   void initState() {
     super.initState();
-    _topTabs = TabController(length: 3, vsync: this);
+    _topTabs = TabController(length: 4, vsync: this);
     _appSubTabs = TabController(length: 3, vsync: this);
     _propSubTabs = TabController(length: 3, vsync: this);
     _sreqSubTabs = TabController(length: 3, vsync: this);
+    _upgradeSubTabs = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -107,6 +121,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
     _appSubTabs.dispose();
     _propSubTabs.dispose();
     _sreqSubTabs.dispose();
+    _upgradeSubTabs.dispose();
     super.dispose();
   }
 
@@ -121,6 +136,9 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
   List<ServiceSelectionRequestModel> _filteredSreqs(String status) =>
       widget.serviceRequests.where((r) => r.status == status).toList();
 
+  List<SubscriptionRequestModel> _filteredUpgrades(String status) =>
+      widget.upgradeRequests.where((r) => r.status == status).toList();
+
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
@@ -128,8 +146,11 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
     final pendingApps = _filteredApps('pending');
     final pendingProps = _filteredProps('pending');
     final pendingSreqs = _filteredSreqs('pending');
-    final totalPending =
-        pendingApps.length + pendingProps.length + pendingSreqs.length;
+    final pendingUpgrades = _filteredUpgrades('pending');
+    final totalPending = pendingApps.length +
+        pendingProps.length +
+        pendingSreqs.length +
+        pendingUpgrades.length;
 
     return PopScope(
       canPop: false,
@@ -165,6 +186,10 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                   text: 'Service Requests'
                       '${pendingSreqs.isNotEmpty ? ' (${pendingSreqs.length})' : ''}',
                 ),
+                Tab(
+                  text: 'Plan Upgrades'
+                      '${pendingUpgrades.isNotEmpty ? ' (${pendingUpgrades.length})' : ''}',
+                ),
               ],
             ),
           ),
@@ -178,6 +203,8 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                 _buildProposalsPipeline(pendingProps),
                 // ── Pipeline 3: Service Selection Requests ──────────────
                 _buildServiceRequestsPipeline(pendingSreqs),
+                // ── Pipeline 4: Subscription Upgrade Requests ───────────
+                _buildUpgradeRequestsPipeline(pendingUpgrades),
               ],
             ),
           ),
@@ -336,6 +363,207 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
       itemCount: reqs.length,
       itemBuilder: (_, i) => _buildServiceRequestCard(reqs[i], i),
     );
+  }
+
+  // ── Subscription Upgrade Requests pipeline ────────────────────────────────
+
+  Widget _buildUpgradeRequestsPipeline(List<SubscriptionRequestModel> pending) {
+    final approved = _filteredUpgrades('approved');
+    final rejected = _filteredUpgrades('rejected');
+    return Column(children: [
+      Container(
+        color: const Color(0xFF082218),
+        child: TabBar(
+          controller: _upgradeSubTabs,
+          indicatorColor: const Color(0xFFFF9500),
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white54,
+          labelStyle:
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+          tabs: [
+            Tab(
+                text:
+                    'Pending${pending.isNotEmpty ? ' (${pending.length})' : ''}'),
+            Tab(
+                text:
+                    'Approved${approved.isNotEmpty ? ' (${approved.length})' : ''}'),
+            Tab(
+                text:
+                    'Rejected${rejected.isNotEmpty ? ' (${rejected.length})' : ''}'),
+          ],
+        ),
+      ),
+      Expanded(
+        child: TabBarView(
+          controller: _upgradeSubTabs,
+          children: [
+            _buildUpgradeList(pending),
+            _buildUpgradeList(approved),
+            _buildUpgradeList(rejected),
+          ],
+        ),
+      ),
+    ]);
+  }
+
+  Widget _buildUpgradeList(List<SubscriptionRequestModel> reqs) {
+    if (reqs.isEmpty) return _emptyState();
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+      itemCount: reqs.length,
+      itemBuilder: (_, i) => _buildUpgradeCard(reqs[i], i),
+    );
+  }
+
+  Widget _buildUpgradeCard(SubscriptionRequestModel req, int index) {
+    final isPending = req.isPending;
+    final isLoading = _processingId == req.id;
+
+    // Tier colour: amber for Elite (2), blue for Pro (1)
+    final tierColor = req.requestedTier >= 2
+        ? const Color(0xFFFF9500)
+        : const Color(0xFF007AFF);
+    const tierIcon = Icons.workspace_premium_rounded;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border:
+            isPending ? Border.all(color: tierColor.withOpacity(0.25)) : null,
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(18),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // ── Header row ──────────────────────────────────────────
+            Row(children: [
+              _avatar(req.handymanName, color: tierColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(req.handymanName ?? 'Unknown Handyman',
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textDark)),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Submitted ${_formatDate(req.createdAt)}',
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.textLight),
+                      ),
+                    ]),
+              ),
+              _statusChip(req.status),
+            ]),
+            const SizedBox(height: 14),
+            // ── Tier upgrade row ─────────────────────────────────────
+            Row(children: [
+              // Current tier chip
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF8E8E93).withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.person_outline_rounded,
+                      size: 13, color: Color(0xFF8E8E93)),
+                  const SizedBox(width: 5),
+                  Text(req.currentTierLabel,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF8E8E93))),
+                ]),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Icon(Icons.arrow_forward_rounded,
+                    size: 14, color: AppColors.textLight),
+              ),
+              // Requested tier chip
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: tierColor.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(tierIcon, size: 13, color: tierColor),
+                  const SizedBox(width: 5),
+                  Text(req.requestedTierLabel,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: tierColor)),
+                ]),
+              ),
+            ]),
+            // ── Admin note on rejection ──────────────────────────────
+            if (req.adminNote != null && req.status == 'rejected') ...[
+              const SizedBox(height: 10),
+              _adminNoteChip(req.adminNote!),
+            ],
+          ]),
+        ),
+        // ── Approve / Reject row (pending only) ─────────────────────
+        if (isPending) ...[
+          const Divider(height: 1, color: Color(0xFFF0F0F0)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            child: isLoading
+                ? Center(
+                    child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation(tierColor),
+                        strokeWidth: 2))
+                : _approveRejectRow(
+                    onReject: () => _confirmRejectUpgrade(req),
+                    onApprove: () => _approveUpgrade(req),
+                    approveColor: tierColor,
+                  ),
+          ),
+        ],
+      ]),
+    ).animate().fadeIn(delay: (index * 70).ms).slideY(begin: 0.06, end: 0);
+  }
+
+  // ── Actions — Upgrade Requests ────────────────────────────────────────────
+
+  Future<void> _approveUpgrade(SubscriptionRequestModel req) async {
+    setState(() => _processingId = req.id);
+    await widget.onApproveUpgrade?.call(req);
+    if (mounted) setState(() => _processingId = null);
+  }
+
+  Future<void> _confirmRejectUpgrade(SubscriptionRequestModel req) async {
+    final noteCtrl = TextEditingController();
+    final confirmed = await _rejectDialog(
+      ctx: context,
+      title: 'Reject Upgrade Request',
+      message: 'Reject ${req.handymanName ?? 'this handyman'}\'s request '
+          'to upgrade to ${req.requestedTierLabel}?',
+      noteCtrl: noteCtrl,
+    );
+    if (confirmed == true) {
+      setState(() => _processingId = req.id);
+      await widget.onRejectUpgrade?.call(
+          req, noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim());
+      if (mounted) setState(() => _processingId = null);
+    }
   }
 
   // ── Empty state ────────────────────────────────────────────────────────────

@@ -433,6 +433,7 @@ class _MainAppState extends State<MainApp> {
   List<ApplicationModel> _applications = [];
   List<ServiceProposalModel> _proposals =
       []; // admin: all proposals; pro: own proposals
+  List<SubscriptionRequestModel> _upgradeRequests = [];
   List<ServiceOfferModel> _serviceOffers =
       []; // customer: approved proposals as offers
   List<ReviewModel> _reviews = [];
@@ -1097,6 +1098,13 @@ class _MainAppState extends State<MainApp> {
             _proposals = await _proposalDs.getMyProposals(_pro!.id);
             _reviews = await _ds.getProfessionalReviews(_pro!.id);
             _myServiceIds = await _ds.getMyProfessionalServices(_pro!.id);
+            // Load this handyman's upgrade requests so hasPendingUpgrade is
+            // accurate on the subscription card without a manual refresh.
+            try {
+              _upgradeRequests = await _ds.getUpgradeRequests();
+            } catch (e) {
+              debugPrint('[Pro] Could not load upgrade requests: $e');
+            }
 
             // Load pending service selection requests for this professional
             // so MyServicesScreen can show the pending-state badge on init.
@@ -1230,6 +1238,11 @@ class _MainAppState extends State<MainApp> {
             _serviceSelectionRequests = await _selectionDs.getAllRequests();
           } catch (e) {
             debugPrint('[Admin] Could not load service selection requests: $e');
+          }
+          try {
+            _upgradeRequests = await _ds.getUpgradeRequests();
+          } catch (e) {
+            debugPrint('[Admin] Could not load upgrade requests: $e');
           }
           try {
             _adminBookings = await _ds.getAllBookings();
@@ -1603,20 +1616,20 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
-  // ── UPGRADE REQUEST (Stage 1 — manual flow) ───────────────────────────────
-  // Shows a bottom sheet explaining the upgrade process. In Stage 1 the
-  // handyman contacts AYO support to upgrade; in Stage 2 this triggers
-  // the PayMongo payment link flow. The sheet is intentionally simple —
-  // it sets expectations and gives the handyman a clear next action.
+  // ── UPGRADE REQUEST ───────────────────────────────────────────────────────
+  // Shows a confirmation bottom sheet then submits a subscription_requests
+  // row to the DB. Admin reviews and approves in the Approvals screen.
+  // Stage 2: swap the DB call for a PayMongo payment link.
 
-  void _handleRequestUpgrade() {
+  Future<void> _handleRequestUpgrade() async {
     if (_pro == null || !mounted) return;
     final currentTier = _pro!.subscriptionTier;
     final targetTier = currentTier < 1 ? 1 : 2;
     const tierNames = ['Free', 'AYO Pro', 'AYO Elite'];
     final targetName = tierNames[targetTier];
 
-    showModalBottomSheet(
+    // Confirm before submitting
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
@@ -1645,14 +1658,14 @@ class _MainAppState extends State<MainApp> {
                     fontWeight: FontWeight.w800,
                     color: Color(0xFF1C1C1E))),
             const SizedBox(height: 8),
-            Text(
-              'To upgrade your plan, send us a message on our support channel. '
-              'We will activate your $targetName plan within 24 hours.',
-              style: const TextStyle(
+            const Text(
+              'Your request will be sent to the AYO admin for review. '
+              'You will be notified once it is approved — '
+              'usually within 24 hours.',
+              style: TextStyle(
                   fontSize: 13, color: Color(0xFF8E8E93), height: 1.5),
             ),
             const SizedBox(height: 20),
-            // Tier summary
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -1700,17 +1713,7 @@ class _MainAppState extends State<MainApp> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  // Copy upgrade request text to clipboard so the handyman
-                  // can paste it directly into WhatsApp or any support channel.
-                  final proName = _user?.name ?? 'A handyman';
-                  final msg = 'Hi AYO, I would like to upgrade to $targetName. '
-                      'My name is $proName and my account ID is ${_pro!.id}.';
-                  await Clipboard.setData(ClipboardData(text: msg));
-                  _notify(
-                      'Upgrade request copied. Paste it into our support channel.');
-                },
+                onPressed: () => Navigator.pop(context, true),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
@@ -1719,7 +1722,7 @@ class _MainAppState extends State<MainApp> {
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14)),
                 ),
-                child: const Text('Copy Upgrade Request',
+                child: const Text('Submit Upgrade Request',
                     style:
                         TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               ),
@@ -1728,6 +1731,19 @@ class _MainAppState extends State<MainApp> {
         ),
       ),
     );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await _ds.submitUpgradeRequest(
+        professionalId: _pro!.id,
+        currentTier: currentTier,
+        requestedTier: targetTier,
+      );
+      _notify('Upgrade request submitted. We will review it within 24 hours.');
+    } on Exception catch (e) {
+      _notify(e.toString().replaceFirst('Exception: ', ''));
+    }
   }
 
   Future<void> _refreshProfessionalDashboard() async {
@@ -1737,16 +1753,23 @@ class _MainAppState extends State<MainApp> {
       final open = await _ds.getOpenBookingRequests(
           skills: _pro!.skills, professionalId: _pro!.id);
       final reviews = await _ds.getProfessionalReviews(_pro!.id);
+      // Always re-fetch _pro so subscription_tier is never stale.
       final updatedPro = await _ds.getProfessionalByUserId(_user!.id);
+      // Re-fetch upgrade requests so hasPendingUpgrade reflects current state.
+      List<SubscriptionRequestModel> updatedUpgrades = _upgradeRequests;
+      try {
+        updatedUpgrades = await _ds.getUpgradeRequests();
+      } catch (e) {
+        debugPrint('[Pro refresh] Could not reload upgrade requests: $e');
+      }
       if (mounted)
         setState(() {
           _bookings = _deduped(bookings);
-          // MODEL — re-apply this handyman's skip list so that refreshing the
-          // dashboard never resurfaces bookings they already dismissed.
           _openRequests =
               open.where((r) => !_skippedRequestIds.contains(r.id)).toList();
           _reviews = reviews;
           if (updatedPro != null) _pro = updatedPro;
+          _upgradeRequests = updatedUpgrades;
         });
     } catch (e) {
       debugPrint('Pull-to-refresh (professional) error: $e');
@@ -1849,6 +1872,7 @@ class _MainAppState extends State<MainApp> {
         applications: _applications,
         proposals: _proposals,
         serviceRequests: _serviceSelectionRequests,
+        upgradeRequests: _upgradeRequests,
         onBack: () => setState(() => _navIndex = 0),
         onApprove: (app) async {
           try {
@@ -1959,6 +1983,67 @@ class _MainAppState extends State<MainApp> {
             _notify('Service request rejected.');
           } catch (e) {
             _notify('Error rejecting service request: $e');
+          }
+        },
+        onApproveUpgrade: (req) async {
+          try {
+            await _ds.approveUpgradeRequest(
+              requestId: req.id,
+              professionalId: req.professionalId,
+              tier: req.requestedTier,
+            );
+            // Refresh professionals so the new tier is reflected everywhere.
+            _professionals = await _ds.getProfessionals();
+            _upgradeRequests = await _ds.getUpgradeRequests();
+            setState(() {});
+            // Notify the handyman.
+            final proUserId =
+                await _ds.getUserIdFromProfessionalId(req.professionalId);
+            if (proUserId != null) {
+              await _notifDs.pushToUser(
+                targetUserId: proUserId,
+                role: 'professional',
+                type: NotificationTypeStrings.bookingAccepted,
+                title: 'Plan Upgrade Approved',
+                message: 'Your upgrade to ${req.requestedTierLabel} has been '
+                    'approved. Your new plan is now active.',
+                referenceId: req.id,
+                referenceType: 'subscription_request',
+              );
+            }
+            _notify('${req.requestedTierLabel} plan activated for '
+                '${req.handymanName ?? 'handyman'}.');
+          } catch (e) {
+            _notify('Error approving upgrade: $e');
+          }
+        },
+        onRejectUpgrade: (req, note) async {
+          try {
+            await _ds.rejectUpgradeRequest(
+              requestId: req.id,
+              adminNote: note,
+            );
+            _upgradeRequests = await _ds.getUpgradeRequests();
+            setState(() {});
+            // Notify the handyman.
+            final proUserId =
+                await _ds.getUserIdFromProfessionalId(req.professionalId);
+            if (proUserId != null) {
+              await _notifDs.pushToUser(
+                targetUserId: proUserId,
+                role: 'professional',
+                type: NotificationTypeStrings.bookingCancelled,
+                title: 'Plan Upgrade Not Approved',
+                message: note != null && note.isNotEmpty
+                    ? 'Your upgrade request was not approved. Feedback: $note'
+                    : 'Your upgrade request was not approved at this time.',
+                referenceId: req.id,
+                referenceType: 'subscription_request',
+              );
+            }
+            _notify('Upgrade request rejected.');
+          } catch (e) {
+            _notify('Error rejecting upgrade: $e');
           }
         },
         onNavTap: (i) => setState(() => _navIndex = i),
@@ -2157,7 +2242,8 @@ class _MainAppState extends State<MainApp> {
 
     final pending = _applications.where((a) => a.status == 'pending').length +
         _proposals.where((p) => p.status == 'pending').length +
-        _serviceSelectionRequests.where((r) => r.status == 'pending').length;
+        _serviceSelectionRequests.where((r) => r.status == 'pending').length +
+        _upgradeRequests.where((r) => r.status == 'pending').length;
     // Use _adminBookings for accurate stats; fall back to _bookings if empty.
     final statsSource = _adminBookings.isNotEmpty ? _adminBookings : _bookings;
     return AdminDashboardScreen(
@@ -2788,6 +2874,8 @@ class _MainAppState extends State<MainApp> {
       onManageServices: () => setState(() => _screen = 'my_services'),
       onShareProfile: () => _shareProProfile(),
       onRequestUpgrade: () => _handleRequestUpgrade(),
+      hasPendingUpgrade: _upgradeRequests
+          .any((r) => r.professionalId == _pro!.id && r.status == 'pending'),
       onToggleAvailability: (isAvailable) async {
         if (_pro == null) return;
         try {

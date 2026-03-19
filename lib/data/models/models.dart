@@ -149,8 +149,6 @@ class ProfessionalModel extends Equatable {
   final String? phone;
   final double? latitude;
   final double? longitude;
-
-  // ── SUBSCRIPTION TIER ─────────────────────────────────────────────────────
   final int subscriptionTier;
   final DateTime? tierExpiresAt;
 
@@ -268,8 +266,16 @@ class ProfessionalModel extends Equatable {
       };
 
   @override
-  List<Object?> get props =>
-      [id, userId, name, skills, verified, rating, reviewCount];
+  List<Object?> get props => [
+        id,
+        userId,
+        name,
+        skills,
+        verified,
+        rating,
+        reviewCount,
+        subscriptionTier
+      ];
 }
 
 // ─────────────────────────────────────────
@@ -760,4 +766,107 @@ class ServiceOfferModel extends Equatable {
 
   @override
   List<Object?> get props => [id, slug, serviceName, serviceType];
+}
+
+// ─────────────────────────────────────────
+// SUBSCRIPTION REQUEST MODEL
+// ─────────────────────────────────────────
+
+class SubscriptionRequestModel extends Equatable {
+  final String id;
+  final String professionalId;
+  final String? handymanName;
+  final int requestedTier;
+  final int currentTier;
+  final String status;
+  final String? adminNote;
+  final DateTime createdAt;
+  final DateTime? updatedAt;
+
+  const SubscriptionRequestModel({
+    required this.id,
+    required this.professionalId,
+    this.handymanName,
+    required this.requestedTier,
+    required this.currentTier,
+    required this.status,
+    this.adminNote,
+    required this.createdAt,
+    this.updatedAt,
+  });
+
+  factory SubscriptionRequestModel.fromJson(Map<String, dynamic> json) {
+    final proJson = json['professionals'] as Map<String, dynamic>?;
+    final userJson = proJson?['users'] as Map<String, dynamic>?;
+    final handymanName = userJson?['name'] as String?;
+    DateTime createdAt;
+    try {
+      createdAt = DateTime.parse(json['created_at'] as String);
+    } catch (_) {
+      createdAt = DateTime.now();
+    }
+    DateTime? updatedAt;
+    try {
+      final ua = json['updated_at'] as String?;
+      if (ua != null) updatedAt = DateTime.parse(ua);
+    } catch (_) {}
+    return SubscriptionRequestModel(
+      id: json['id'] as String,
+      professionalId: json['professional_id'] as String,
+      handymanName: handymanName,
+      requestedTier: json['requested_tier'] as int? ?? 1,
+      currentTier: json['current_tier'] as int? ?? 0,
+      status: json['status'] as String? ?? 'pending',
+      adminNote: json['admin_note'] as String?,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  SubscriptionRequestEntity toEntity() => SubscriptionRequestEntity(
+        id: id,
+        professionalId: professionalId,
+        handymanName: handymanName,
+        requestedTier: requestedTier,
+        currentTier: currentTier,
+        status: status,
+        adminNote: adminNote,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+      );
+
+  String get requestedTierLabel {
+    switch (requestedTier) {
+      case 2:
+        return 'AYO Elite';
+      case 1:
+        return 'AYO Pro';
+      default:
+        return 'Free';
+    }
+  }
+
+  String get currentTierLabel {
+    switch (currentTier) {
+      case 2:
+        return 'AYO Elite';
+      case 1:
+        return 'AYO Pro';
+      default:
+        return 'Free';
+    }
+  }
+
+  bool get isPending => status == 'pending';
+
+  Map<String, dynamic> toJson() => {
+        'professional_id': professionalId,
+        'requested_tier': requestedTier,
+        'current_tier': currentTier,
+        'status': status,
+        if (adminNote != null) 'admin_note': adminNote,
+      };
+
+  @override
+  List<Object?> get props => [id, professionalId, requestedTier, status];
 }
