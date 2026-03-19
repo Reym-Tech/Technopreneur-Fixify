@@ -20,12 +20,14 @@
 //   onLogout          → VoidCallback?
 
 import 'dart:io';
+import 'package:fixify/presentation/screens/customer/customer_tour_keys.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CustomerProfileScreen extends StatefulWidget {
   final UserEntity? user;
@@ -38,6 +40,10 @@ class CustomerProfileScreen extends StatefulWidget {
   final VoidCallback? onPrivacyPolicy;
   final VoidCallback? onLogout;
 
+  /// Called after the tour prefs key is cleared so the parent can navigate
+  /// back to the dashboard where the tour will auto-start.
+  final VoidCallback? onReplayTour;
+
   const CustomerProfileScreen({
     super.key,
     this.user,
@@ -47,6 +53,7 @@ class CustomerProfileScreen extends StatefulWidget {
     this.onUploadAvatar,
     this.onPrivacyPolicy,
     this.onLogout,
+    this.onReplayTour,
   });
 
   @override
@@ -644,6 +651,19 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     }
   }
 
+  // ── TOUR REPLAY ───────────────────────────────────────────
+
+  Future<void> _resetAndReplayTour() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(kCustomerTourSeenKey);
+    } catch (e) {
+      debugPrint('[Tour] Could not reset tour prefs: $e');
+    }
+    // Navigate back to the dashboard — the tour auto-starts on next build.
+    widget.onReplayTour?.call();
+  }
+
   // ── BUILD ─────────────────────────────────────────────────
 
   @override
@@ -952,6 +972,13 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
           icon: Icons.shield_outlined,
           label: 'Privacy Policy',
           onTap: widget.onPrivacyPolicy,
+        ),
+        const Divider(
+            height: 1, indent: 20, endIndent: 20, color: Color(0xFFEEEEEE)),
+        _actionRow(
+          icon: Icons.lightbulb_outline_rounded,
+          label: 'App Tour',
+          onTap: _resetAndReplayTour,
         ),
       ]),
     );

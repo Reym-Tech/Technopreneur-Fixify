@@ -233,33 +233,56 @@ class _TourCardState extends State<TourCard> {
                 const SizedBox(height: 12),
                 Container(height: 1, color: const Color(0xFFEEEEEE)),
                 const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: GestureDetector(
-                    onTap: () {
-                      if (widget.isLast) {
-                        ShowCaseWidget.of(widget.showcaseContext).dismiss();
-                      } else {
-                        ShowCaseWidget.of(widget.showcaseContext).next();
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: kTourButtonBg,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        widget.isLast ? 'Done' : 'Next',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: kTourPrimary,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Skip button — dismisses the entire tour
+                    if (!widget.isLast)
+                      GestureDetector(
+                        onTap: () =>
+                            ShowCaseWidget.of(widget.showcaseContext).dismiss(),
+                        child: const Padding(
+                          padding:
+                              EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+                          child: Text(
+                            'Skip',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: kTourBodyColor,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      const SizedBox.shrink(),
+                    // Next / Done button
+                    GestureDetector(
+                      onTap: () {
+                        if (widget.isLast) {
+                          ShowCaseWidget.of(widget.showcaseContext).dismiss();
+                        } else {
+                          ShowCaseWidget.of(widget.showcaseContext).next();
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: kTourButtonBg,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          widget.isLast ? 'Done' : 'Next',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: kTourPrimary,
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ],
             ),

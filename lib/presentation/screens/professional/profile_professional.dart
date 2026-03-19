@@ -25,6 +25,7 @@
 //   onLogout          → VoidCallback?
 
 import 'dart:io';
+import 'package:fixify/presentation/screens/professional/professional_tour_keys.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart'; // Factory, EagerGestureRecognizer
 import 'package:flutter/material.dart';
@@ -36,6 +37,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProfessionalProfileScreen
@@ -58,6 +60,10 @@ class ProfessionalProfileScreen extends StatefulWidget {
   final VoidCallback? onPrivacyPolicy;
   final VoidCallback? onLogout;
 
+  /// Called after the tour prefs key is cleared so the parent can navigate
+  /// back to the dashboard where the tour will auto-start.
+  final VoidCallback? onReplayTour;
+
   const ProfessionalProfileScreen({
     super.key,
     this.user,
@@ -71,6 +77,7 @@ class ProfessionalProfileScreen extends StatefulWidget {
     this.onPayoutSettings,
     this.onPrivacyPolicy,
     this.onLogout,
+    this.onReplayTour,
   });
 
   @override
@@ -909,6 +916,18 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
     );
   }
 
+  // ── TOUR REPLAY ───────────────────────────────────────────
+
+  Future<void> _resetAndReplayTour() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(kProfessionalTourSeenKey);
+    } catch (e) {
+      debugPrint('[Tour] Could not reset tour prefs: $e');
+    }
+    widget.onReplayTour?.call();
+  }
+
   // ── BUILD ─────────────────────────────────────────────────
 
   @override
@@ -1211,11 +1230,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
             value:
                 '${widget.professional?.yearsExperience ?? 0} year${(widget.professional?.yearsExperience ?? 0) != 1 ? 's' : ''}'),
         _divider(),
-        _infoRow(
-            icon: Icons.attach_money_rounded,
-            label: 'Price Range',
-            value: price),
-        _divider(),
 
         // ── Service Location row ───────────────────────────
         GestureDetector(
@@ -1276,67 +1290,6 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
           ),
         ),
         _divider(),
-
-        // Verification status
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Row(children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: (verified
-                        ? const Color(0xFF34C759)
-                        : const Color(0xFFFF9500))
-                    .withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(Icons.verified_user_outlined,
-                  color: verified
-                      ? const Color(0xFF34C759)
-                      : const Color(0xFFFF9500),
-                  size: 20),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Verification Status',
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.textLight)),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: (verified
-                                ? const Color(0xFF34C759)
-                                : const Color(0xFFFF9500))
-                            .withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: (verified
-                                  ? const Color(0xFF34C759)
-                                  : const Color(0xFFFF9500))
-                              .withOpacity(0.4),
-                        ),
-                      ),
-                      child: Text(
-                        verified ? 'APPROVED' : 'PENDING',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                            color: verified
-                                ? const Color(0xFF34C759)
-                                : const Color(0xFFFF9500),
-                            letterSpacing: 0.5),
-                      ),
-                    ),
-                  ]),
-            ),
-          ]),
-        ),
       ],
     );
   }
@@ -1356,6 +1309,12 @@ class _ProfessionalProfileScreenState extends State<ProfessionalProfileScreen> {
           icon: Icons.shield_outlined,
           label: 'Privacy Policy',
           onTap: widget.onPrivacyPolicy,
+        ),
+        _divider(),
+        _actionRow(
+          icon: Icons.lightbulb_outline_rounded,
+          label: 'App Tour',
+          onTap: _resetAndReplayTour,
         ),
       ],
     );
@@ -1622,7 +1581,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
           p.subLocality ?? p.subAdministrativeArea,
           p.locality,
           p.administrativeArea,
-        ].where((s) => s != null && s!.isNotEmpty).toList();
+        ].where((s) => s != null && s.isNotEmpty).toList();
 
         // City — matches requestservice_customer.dart logic
         final city = (p.locality ?? '').trim();

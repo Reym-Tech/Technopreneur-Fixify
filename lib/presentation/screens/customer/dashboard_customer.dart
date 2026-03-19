@@ -9,6 +9,7 @@
 import 'dart:ui';
 import 'package:fixify/data/datasources/notification_datasource.dart';
 import 'package:fixify/data/models/models.dart';
+import 'package:fixify/presentation/screens/customer/customer_tour_keys.dart';
 import 'package:fixify/presentation/screens/customer/notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -16,6 +17,8 @@ import 'package:fixify/core/theme/app_theme.dart';
 import 'package:fixify/domain/entities/entities.dart';
 import 'package:fixify/presentation/widgets/shared_widgets.dart';
 import 'package:fixify/presentation/screens/customer/serviceoffers/service_detail_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:showcaseview/showcaseview.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shimmer/shimmer.dart';
 
@@ -375,6 +378,11 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   // ── Unread count — owned entirely by this state, fetched from Supabase ──
   int _unreadNotifCount = 0;
 
+  // ── Tour ──────────────────────────────────────────────────────────────────
+  final _keys = CustomerTourKeys.instance;
+  bool _tourScheduled = false;
+  late BuildContext _showcaseContext;
+
   @override
   void initState() {
     super.initState();
@@ -402,6 +410,23 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
   Future<void> _handleRefresh() async {
     await widget.onRefresh?.call();
     await _fetchUnreadCount();
+  }
+
+  // ── Tour helpers ─────────────────────────────────────────────────────────
+
+  void _startTour(BuildContext showcaseContext) {
+    ShowCaseWidget.of(showcaseContext).startShowCase(
+      _keys.orderedKeys(hasRecentBookings: widget.recentBookings.isNotEmpty),
+    );
+  }
+
+  Future<void> _markTourSeen() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(kCustomerTourSeenKey, true);
+    } catch (e) {
+      debugPrint('[CustomerTour] Could not write prefs: $e');
+    }
   }
 
   // ── Top Professionals helpers ─────────────────────────────────────────
@@ -620,92 +645,126 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     final topThree = _topThree;
     final verifiedCount = _verifiedSorted.length;
 
-    return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
-      // ── Pull-to-refresh wraps the entire CustomScrollView ──────────────
-      body: RefreshIndicator(
-        onRefresh: _handleRefresh,
-        color: AppColors.primary,
-        backgroundColor: Colors.white,
-        displacement: 60,
-        child: CustomScrollView(
-          // physics must allow overscroll for RefreshIndicator to trigger
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(child: _buildHeader()),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                child: _buildRequestCTA(),
-              ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
-            ),
-            // ── Featured handymen row (AYO Elite — Tier 2 only) ──────────────
-            // Only rendered when there is at least one Elite handyman available.
-            // Placed above the service catalogue to give Elite handymen
-            // maximum visibility on the customer home screen.
-            if (widget.featuredProfessionals.isNotEmpty) ...[
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                  child: _buildFeaturedRow()
-                      .animate()
-                      .fadeIn(delay: 185.ms)
-                      .slideY(begin: 0.06, end: 0),
+    return ShowCaseWidget(
+      onFinish: _markTourSeen,
+      onComplete: (_, __) {},
+      enableAutoScroll: true,
+      builder: (showcaseContext) {
+        _showcaseContext = showcaseContext;
+        if (!_tourScheduled) {
+          _tourScheduled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!mounted) return;
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              final seen = prefs.getBool(kCustomerTourSeenKey) ?? false;
+              if (!seen && mounted) _startTour(showcaseContext);
+            } catch (e) {
+              debugPrint('[CustomerTour] Could not read prefs: $e');
+            }
+          });
+        }
+        return Scaffold(
+          backgroundColor: AppColors.backgroundLight,
+          // ── Pull-to-refresh wraps the entire CustomScrollView ────────
+          body: RefreshIndicator(
+            onRefresh: _handleRefresh,
+            color: AppColors.primary,
+            backgroundColor: Colors.white,
+            displacement: 60,
+            child: CustomScrollView(
+              // physics must allow overscroll for RefreshIndicator to trigger
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(child: _buildHeader()),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                    child: _buildRequestCTA(),
+                  ).animate().fadeIn(delay: 150.ms).slideY(begin: 0.1, end: 0),
                 ),
-              ),
-            ],
-            SliverToBoxAdapter(
-              child: _buildServiceOffers().animate().fadeIn(delay: 220.ms),
-            ),
-            if (widget.recentBookings.isNotEmpty) ...[
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                  child: SectionHeader(
-                    title: 'Recent Bookings',
-                    actionLabel: 'See All',
-                    onAction: widget.onViewBookings,
-                  ),
-                ).animate().fadeIn(delay: 280.ms),
-              ),
-              SliverToBoxAdapter(
-                child: _buildRecentBookings().animate().fadeIn(delay: 320.ms),
-              ),
-            ],
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                child: SectionHeader(
-                  title: 'Top Professionals',
-                  actionLabel: verifiedCount > 0 ? 'See All' : null,
-                  onAction: verifiedCount > 0 ? _openAllProfessionals : null,
-                ),
-              ).animate().fadeIn(delay: 360.ms),
-            ),
-            topThree.isEmpty
-                ? SliverToBoxAdapter(child: _buildEmptyPros())
-                : SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, i) {
-                          final pro = topThree[i];
-                          return ProfessionalCard(
-                            professional: pro,
-                            onTap: () => widget.onProfessionalTap?.call(pro),
-                          )
-                              .animate()
-                              .fadeIn(delay: (400 + i * 70).ms)
-                              .slideX(begin: 0.04, end: 0);
-                        },
-                        childCount: topThree.length,
-                      ),
+                // ── Featured handymen row (AYO Elite — Tier 2 only) ──────────────
+                // Only rendered when there is at least one Elite handyman available.
+                // Placed above the service catalogue to give Elite handymen
+                // maximum visibility on the customer home screen.
+                if (widget.featuredProfessionals.isNotEmpty) ...[
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                      child: _buildFeaturedRow()
+                          .animate()
+                          .fadeIn(delay: 185.ms)
+                          .slideY(begin: 0.06, end: 0),
                     ),
                   ),
-          ],
-        ),
-      ),
-      bottomNavigationBar: _buildBottomNav(),
+                ],
+                SliverToBoxAdapter(
+                  child: _buildServiceOffers().animate().fadeIn(delay: 220.ms),
+                ),
+                if (widget.recentBookings.isNotEmpty) ...[
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                      child: SectionHeader(
+                        title: 'Recent Bookings',
+                        actionLabel: 'See All',
+                        onAction: widget.onViewBookings,
+                      ),
+                    ).animate().fadeIn(delay: 280.ms),
+                  ),
+                  SliverToBoxAdapter(
+                    child:
+                        _buildRecentBookings().animate().fadeIn(delay: 320.ms),
+                  ),
+                ],
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                    child: SectionHeader(
+                      title: 'Top Professionals',
+                      actionLabel: verifiedCount > 0 ? 'See All' : null,
+                      onAction:
+                          verifiedCount > 0 ? _openAllProfessionals : null,
+                    ),
+                  ).animate().fadeIn(delay: 360.ms),
+                ),
+                topThree.isEmpty
+                    ? SliverToBoxAdapter(child: _buildEmptyPros())
+                    : SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, i) {
+                              final pro = topThree[i];
+                              final card = ProfessionalCard(
+                                professional: pro,
+                                onTap: () =>
+                                    widget.onProfessionalTap?.call(pro),
+                              )
+                                  .animate()
+                                  .fadeIn(delay: (400 + i * 70).ms)
+                                  .slideX(begin: 0.04, end: 0);
+                              // TOUR STEP 4 — wrap only first card
+                              if (i == 0) {
+                                return CustomerTourShowcase.wrap(
+                                  key: _keys.topProsKey,
+                                  stepName: 'topPros',
+                                  showcaseContext: _showcaseContext,
+                                  child: card,
+                                );
+                              }
+                              return card;
+                            },
+                            childCount: topThree.length,
+                          ),
+                        ),
+                      ),
+              ],
+            ),
+          ),
+          bottomNavigationBar: _buildBottomNav(),
+        );
+      },
     );
   }
 
@@ -783,54 +842,60 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                       ),
                       Row(
                         children: [
-                          IconButton(
-                            onPressed: () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => NotificationsScreen(
-                                    userId: widget.user?.id ?? '',
-                                  ),
-                                ),
-                              );
-                              if (mounted) {
-                                await _fetchUnreadCount();
-                                widget.onNotificationsViewed?.call();
-                              }
-                            },
-                            icon: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.12),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(
-                                    Icons.notifications_outlined,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
-                                if (_unreadNotifCount > 0)
-                                  Positioned(
-                                    top: 7,
-                                    right: 7,
-                                    child: Container(
-                                      width: 7,
-                                      height: 7,
-                                      decoration: const BoxDecoration(
-                                        color: Color(0xFFFF3B30),
-                                        shape: BoxShape.circle,
-                                      ),
+                          // TOUR STEP 5 — notifications bell
+                          CustomerTourShowcase.wrap(
+                            key: _keys.notificationsKey,
+                            stepName: 'notifications',
+                            showcaseContext: _showcaseContext,
+                            child: IconButton(
+                              onPressed: () async {
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => NotificationsScreen(
+                                      userId: widget.user?.id ?? '',
                                     ),
                                   ),
-                              ],
+                                );
+                                if (mounted) {
+                                  await _fetchUnreadCount();
+                                  widget.onNotificationsViewed?.call();
+                                }
+                              },
+                              icon: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Icon(
+                                      Icons.notifications_outlined,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                  if (_unreadNotifCount > 0)
+                                    Positioned(
+                                      top: 7,
+                                      right: 7,
+                                      child: Container(
+                                        width: 7,
+                                        height: 7,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFFFF3B30),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
                             ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
                           ),
                           const SizedBox(width: 8),
                           IconButton(
@@ -934,93 +999,99 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   // ── CTA ──────────────────────────────────────────────────────────────────
 
-  Widget _buildRequestCTA() => GestureDetector(
-        onTap: widget.onRequestService,
-        child: Stack(
-          children: [
-            // ── Main button ───────────────────────────────────────────────
-            Container(
-              margin: const EdgeInsets.only(top: 20),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+  Widget _buildRequestCTA() => CustomerTourShowcase.wrap(
+        key: _keys.requestServiceKey,
+        stepName: 'requestService',
+        showcaseContext: _showcaseContext,
+        child: GestureDetector(
+          onTap: widget.onRequestService,
+          child: Stack(
+            children: [
+              // ── Main button ───────────────────────────────────────────────
+              Container(
+                margin: const EdgeInsets.only(top: 20),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withOpacity(0.35),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    )
+                  ],
                 ),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withOpacity(0.35),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  )
-                ],
-              ),
-              child: Row(children: [
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(8),
+                child: Row(children: [
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text('⚡ Instant Booking',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600)),
                         ),
-                        child: const Text('⚡ Instant Booking',
+                        const SizedBox(height: 10),
+                        const Text('Request Service',
                             style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600)),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text('Request Service',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.3)),
-                      const SizedBox(height: 4),
-                      Text('Book a verified handyman now',
-                          style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 13)),
-                    ])),
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.18),
-                      shape: BoxShape.circle),
-                  child: const Icon(Icons.arrow_forward_rounded,
-                      color: Colors.white, size: 24),
-                ),
-              ]),
-            ),
+                                fontSize: 22,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.3)),
+                        const SizedBox(height: 4),
+                        Text('Book a verified handyman now',
+                            style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 13)),
+                      ])),
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.18),
+                        shape: BoxShape.circle),
+                    child: const Icon(Icons.arrow_forward_rounded,
+                        color: Colors.white, size: 24),
+                  ),
+                ]),
+              ),
 
-            // ── Moving light / shimmer overlay ────────────────────────────
-            Positioned.fill(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: IgnorePointer(
-                  child: Shimmer.fromColors(
-                    baseColor: Colors.white.withOpacity(0.01),
-                    highlightColor: const Color.fromARGB(255, 182, 230, 27)
-                        .withOpacity(0.6),
-                    period: const Duration(seconds: 4),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.10),
+              // ── Moving light / shimmer overlay ────────────────────────────
+              Positioned.fill(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: IgnorePointer(
+                    child: Shimmer.fromColors(
+                      baseColor: Colors.white.withOpacity(0.01),
+                      highlightColor: const Color.fromARGB(255, 182, 230, 27)
+                          .withOpacity(0.6),
+                      period: const Duration(seconds: 4),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.10),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
+        ), // end CustomerTourShowcase.wrap (requestService)
       );
 
   // ── SERVICE OFFERS ────────────────────────────────────────────────────────
@@ -1167,56 +1238,62 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ),
         const SizedBox(height: 12),
 
-        // ── Category filter chips ───────────────────────────────────────
-        SizedBox(
-          height: 40,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: _categories.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (context, i) {
-              final cat = _categories[i];
-              final selected = _selectedSkill == cat.label;
-              final hasAvail = _hasProForCategory(cat.label);
-              return FilterChip(
-                label: Text(cat.label),
-                selected: selected,
-                showCheckmark: false,
-                onSelected: (_) {
-                  setState(() => _selectedSkill = cat.label);
-                  widget.onFilterBySkill?.call(cat.label);
-                },
-                backgroundColor: Colors.white,
-                selectedColor: cat.color,
-                labelStyle: TextStyle(
-                  color: selected ? Colors.white : AppColors.textDark,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                ),
-                avatar: Stack(clipBehavior: Clip.none, children: [
-                  Icon(cat.icon,
-                      size: 16, color: selected ? Colors.white : cat.color),
-                  if (!hasAvail && cat.label != 'All')
-                    Positioned(
-                      top: -3,
-                      right: -4,
-                      child: Container(
-                          width: 6,
-                          height: 6,
-                          decoration: const BoxDecoration(
-                              color: Color(0xFFFF3B30),
-                              shape: BoxShape.circle)),
-                    ),
-                ]),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  side: BorderSide(
-                      color:
-                          selected ? Colors.transparent : Colors.grey.shade300),
-                ),
-              );
-            },
-          ),
-        ),
+        // ── Category filter chips (TOUR STEP 3) ──────────────────────
+        CustomerTourShowcase.wrap(
+          key: _keys.categoryFilterKey,
+          stepName: 'categoryFilter',
+          showcaseContext: _showcaseContext,
+          child: SizedBox(
+            height: 40,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _categories.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, i) {
+                final cat = _categories[i];
+                final selected = _selectedSkill == cat.label;
+                final hasAvail = _hasProForCategory(cat.label);
+                return FilterChip(
+                  label: Text(cat.label),
+                  selected: selected,
+                  showCheckmark: false,
+                  onSelected: (_) {
+                    setState(() => _selectedSkill = cat.label);
+                    widget.onFilterBySkill?.call(cat.label);
+                  },
+                  backgroundColor: Colors.white,
+                  selectedColor: cat.color,
+                  labelStyle: TextStyle(
+                    color: selected ? Colors.white : AppColors.textDark,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                  avatar: Stack(clipBehavior: Clip.none, children: [
+                    Icon(cat.icon,
+                        size: 16, color: selected ? Colors.white : cat.color),
+                    if (!hasAvail && cat.label != 'All')
+                      Positioned(
+                        top: -3,
+                        right: -4,
+                        child: Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                                color: Color(0xFFFF3B30),
+                                shape: BoxShape.circle)),
+                      ),
+                  ]),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                        color: selected
+                            ? Colors.transparent
+                            : Colors.grey.shade300),
+                  ),
+                );
+              },
+            ),
+          ), // end SizedBox chips
+        ), // end CustomerTourShowcase.wrap (categoryFilter)
         const SizedBox(height: 10),
 
         // ── Service list / grid ─────────────────────────────────────────
@@ -1225,22 +1302,28 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         else if (allFiltered.isEmpty)
           _buildEmptySearch(hasSearch)
         else
-          SizedBox(
-            height: 232,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: allFiltered.length,
-              padding: const EdgeInsets.only(right: 20),
-              itemBuilder: (context, i) {
-                final s = allFiltered[i];
-                final available = _hasProForCategory(s.category);
-                return _ServiceCard(
-                  service: s,
-                  available: available,
-                  accentColor: _colorForCategory(s.category),
-                  onTap: available ? () => _openServiceDetail(s) : null,
-                ).animate().fadeIn(delay: (i * 60).ms);
-              },
+          // TOUR STEP 2 — service offers list
+          CustomerTourShowcase.wrap(
+            key: _keys.serviceOffersKey,
+            stepName: 'serviceOffers',
+            showcaseContext: _showcaseContext,
+            child: SizedBox(
+              height: 232,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: allFiltered.length,
+                padding: const EdgeInsets.only(right: 20),
+                itemBuilder: (context, i) {
+                  final s = allFiltered[i];
+                  final available = _hasProForCategory(s.category);
+                  return _ServiceCard(
+                    service: s,
+                    available: available,
+                    accentColor: _colorForCategory(s.category),
+                    onTap: available ? () => _openServiceDetail(s) : null,
+                  ).animate().fadeIn(delay: (i * 60).ms);
+                },
+              ),
             ),
           ),
       ]),
@@ -1369,20 +1452,27 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   // ── RECENT BOOKINGS ───────────────────────────────────────────────────────
 
-  Widget _buildRecentBookings() => SizedBox(
-        height: 110,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          itemCount: widget.recentBookings.length.clamp(0, 5),
-          separatorBuilder: (_, __) => const SizedBox(width: 12),
-          itemBuilder: (context, i) {
-            final b = widget.recentBookings[i];
-            return GestureDetector(
-              onTap: () => widget.onBookingTap?.call(b),
-              child: _BookingMiniCard(booking: b),
-            );
-          },
+  Widget _buildRecentBookings() =>
+      // TOUR STEP 8 — recent bookings row (only shown when bookings exist)
+      CustomerTourShowcase.wrap(
+        key: _keys.recentBookingsKey,
+        stepName: 'recentBookings',
+        showcaseContext: _showcaseContext,
+        child: SizedBox(
+          height: 110,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            itemCount: widget.recentBookings.length.clamp(0, 5),
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, i) {
+              final b = widget.recentBookings[i];
+              return GestureDetector(
+                onTap: () => widget.onBookingTap?.call(b),
+                child: _BookingMiniCard(booking: b),
+              );
+            },
+          ),
         ),
       );
 
@@ -1438,7 +1528,8 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: List.generate(items.length, (i) {
                 final active = i == widget.currentNavIndex;
-                return GestureDetector(
+                final isLastStep = !widget.recentBookings.isNotEmpty;
+                final navItem = GestureDetector(
                   onTap: () => widget.onNavTap?.call(i),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
@@ -1467,6 +1558,26 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                     ]),
                   ),
                 );
+                // TOUR STEP 6 — Bookings tab
+                if (i == 1) {
+                  return CustomerTourShowcase.wrapAnchor(
+                    key: _keys.bookingsTabKey,
+                    stepName: 'bookingsTab',
+                    showcaseContext: _showcaseContext,
+                    child: navItem,
+                  );
+                }
+                // TOUR STEP 7 — Profile tab
+                if (i == 2) {
+                  return CustomerTourShowcase.wrapAnchor(
+                    key: _keys.profileTabKey,
+                    stepName: 'profileTab',
+                    showcaseContext: _showcaseContext,
+                    isLast: isLastStep,
+                    child: navItem,
+                  );
+                }
+                return navItem;
               }),
             ),
           )),

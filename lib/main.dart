@@ -2820,6 +2820,10 @@ class _MainAppState extends State<MainApp> {
           ),
         ),
         onLogout: () async => Supabase.instance.client.auth.signOut(),
+        onReplayTour: () => setState(() {
+          _navIndex = 0;
+          _screen = 'home';
+        }),
       );
     }
 
@@ -3559,6 +3563,10 @@ class _MainAppState extends State<MainApp> {
             ),
           ),
           onLogout: () async => Supabase.instance.client.auth.signOut(),
+          onReplayTour: () => setState(() {
+            _navIndex = 0;
+            _screen = 'home';
+          }),
         );
 
       case 'all_professionals':

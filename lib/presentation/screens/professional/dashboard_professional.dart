@@ -299,17 +299,10 @@ class _ProfessionalDashboardScreenState
                     child: _buildRatingsCard(),
                   ).animate().fadeIn(delay: 320.ms),
                 ),
-                // ── Nav anchor slivers (TOUR STEPS 9-11) ─────────────────────
-                // Invisible anchors near the bottom. TooltipPosition.top in
-                // wrapAnchor() forces the tooltip above them, pointing down
-                // toward the actual nav bar tabs.
-                SliverToBoxAdapter(
-                  child: _buildNavAnchors(showcaseContext),
-                ),
               ],
             ),
           ),
-          bottomNavigationBar: _buildBottomNav(),
+          bottomNavigationBar: _buildBottomNav(showcaseContext),
         );
       },
     );
@@ -1577,61 +1570,9 @@ class _ProfessionalDashboardScreenState
     );
   }
 
-  // ── NAV ANCHORS (TOUR STEPS 9-11) ───────────────────────
-  //
-  // Invisible anchors aligned to the Requests, Earnings, and Profile tab
-  // positions. wrapAnchor() uses TooltipPosition.top so the tooltip always
-  // renders above the anchor, pointing down toward the actual nav tabs.
-
-  Widget _buildNavAnchors(BuildContext showcaseContext) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          // Dashboard tab (index 0) — no tour step.
-          const Expanded(child: SizedBox.shrink()),
-          // Requests tab anchor (index 1) — TOUR STEP 9
-          Expanded(
-            child: Center(
-              child: ProfessionalTourShowcase.wrapAnchor(
-                key: _keys.requestsNavKey,
-                stepName: 'requestsNav',
-                showcaseContext: showcaseContext,
-                child: const SizedBox.shrink(),
-              ),
-            ),
-          ),
-          // Earnings tab anchor (index 2) — TOUR STEP 10
-          Expanded(
-            child: Center(
-              child: ProfessionalTourShowcase.wrapAnchor(
-                key: _keys.earningsNavKey,
-                stepName: 'earningsNav',
-                showcaseContext: showcaseContext,
-                child: const SizedBox.shrink(),
-              ),
-            ),
-          ),
-          // Profile tab anchor (index 3) — TOUR STEP 11
-          Expanded(
-            child: Center(
-              child: ProfessionalTourShowcase.wrapAnchor(
-                key: _keys.profileNavKey,
-                stepName: 'profileNav',
-                showcaseContext: showcaseContext,
-                isLast: true,
-                child: const SizedBox.shrink(),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ── BOTTOM NAV ────────────────────────────────────────────
 
-  Widget _buildBottomNav() {
+  Widget _buildBottomNav(BuildContext showcaseContext) {
     const items = [
       {'icon': Icons.dashboard_rounded, 'label': 'Dashboard'},
       {'icon': Icons.calendar_month_rounded, 'label': 'Requests'},
@@ -1656,7 +1597,7 @@ class _ProfessionalDashboardScreenState
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: List.generate(items.length, (i) {
               final active = i == widget.currentNavIndex;
-              return GestureDetector(
+              final navItem = GestureDetector(
                 onTap: () => widget.onNavTap?.call(i),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
@@ -1688,6 +1629,35 @@ class _ProfessionalDashboardScreenState
                   ),
                 ),
               );
+              // Wrap tour-relevant nav items directly on the actual widget
+              // so the package measures real screen position and renders
+              // the tooltip above the nav bar correctly.
+              if (i == 1) {
+                return ProfessionalTourShowcase.wrapAnchor(
+                  key: _keys.requestsNavKey,
+                  stepName: 'requestsNav',
+                  showcaseContext: showcaseContext,
+                  child: navItem,
+                );
+              }
+              if (i == 2) {
+                return ProfessionalTourShowcase.wrapAnchor(
+                  key: _keys.earningsNavKey,
+                  stepName: 'earningsNav',
+                  showcaseContext: showcaseContext,
+                  child: navItem,
+                );
+              }
+              if (i == 3) {
+                return ProfessionalTourShowcase.wrapAnchor(
+                  key: _keys.profileNavKey,
+                  stepName: 'profileNav',
+                  showcaseContext: showcaseContext,
+                  isLast: true,
+                  child: navItem,
+                );
+              }
+              return navItem;
             }),
           ),
         ),
