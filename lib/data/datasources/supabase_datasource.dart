@@ -177,6 +177,85 @@ class SupabaseDataSource {
     return list;
   }
 
+  // ── PAGINATED PROFESSIONALS (Explore tab) ─────────────────────────────────
+  //
+  // Fetches one page of verified, available professionals from the DB.
+  // Sorting mirrors getProfessionals(): tier desc, rating desc.
+  // Skill filtering is applied DB-side via the `cs` (contains) operator.
+  // Text search is applied DB-side via `ilike` across name and city.
+  //
+  // [page]     — 0-based page index.
+  // [pageSize] — rows per page (default 10).
+  // [skill]    — if non-null and not 'All', filters to pros whose skills
+  //              array contains that value (case-sensitive, stored lowercase).
+  // [search]   — if non-empty, matches name or city with a case-insensitive
+  //              LIKE pattern ('%query%').
+  //
+  // Returns an empty list when no more rows exist (caller sets _hasMore=false).
+
+  static const String _proSelect =
+      'id, user_id, skills, verified, rating, review_count, '
+      'price_range, price_min, price_max, city, bio, '
+      'years_experience, available, latitude, longitude, '
+      'subscription_tier, tier_expires_at, '
+      'users(id, name, avatar_url, phone)';
+
+  Future<List<ProfessionalModel>> getProfessionalsPaged({
+    int page = 0,
+    int pageSize = 10,
+    String? skill,
+    String? search,
+  }) async {
+    final from = page * pageSize;
+    final to = from + pageSize - 1;
+
+    var query = _client
+        .from(AppConfig.professionalsTable)
+        .select(_proSelect)
+        .eq('verified', true)
+        .eq('available', true);
+
+    // Skill filter — professionals.skills is a text[] column; `cs` checks
+    // that the array contains the supplied element.
+    if (skill != null && skill.isNotEmpty && skill != 'All') {
+      query = query.contains('skills', [skill.toLowerCase()]);
+    }
+
+    // Text search — Supabase PostgREST ilike works per-column; we use `or`
+    // to match name (via joined users row) OR city.
+    if (search != null && search.trim().isNotEmpty) {
+      final q = search.trim();
+      // name lives on the joined users row; city is on professionals directly.
+      query = query.or('city.ilike.%$q%,users.name.ilike.%$q%');
+    }
+
+    final response = await query
+        .order('subscription_tier', ascending: false)
+        .order('rating', ascending: false)
+        .range(from, to);
+
+    return (response as List)
+        .map((j) => ProfessionalModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Lightweight count of verified+available professionals for the stats strip.
+  /// Selects only the `id` column (minimal payload) and returns the row count.
+  Future<int> getProfessionalsCount({String? skill}) async {
+    var query = _client
+        .from(AppConfig.professionalsTable)
+        .select('id')
+        .eq('verified', true)
+        .eq('available', true);
+
+    if (skill != null && skill.isNotEmpty && skill != 'All') {
+      query = query.contains('skills', [skill.toLowerCase()]);
+    }
+
+    final res = await query;
+    return (res as List).length;
+  }
+
   Future<ProfessionalModel?> getProfessionalById(String id) async {
     final data = await _client
         .from(AppConfig.professionalsTable)

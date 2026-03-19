@@ -214,15 +214,15 @@ class _SplashScreenState extends State<SplashScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _buildServiceIcon('assets/icons/plumber-.svg', 'Plumbing',
+                      _buildServiceIcon('assets/icons/plumber-.svg', 'Plumber',
                           iconSize: 70, containerSize: 100),
                       const SizedBox(width: 20),
                       _buildServiceIcon(
-                          'assets/icons/electrician-.svg', 'Electric',
+                          'assets/icons/electrician-.svg', 'Electrician',
                           iconSize: 70, containerSize: 100),
                       const SizedBox(width: 20),
                       _buildServiceIcon(
-                          'assets/icons/technician-.svg', 'Appliances',
+                          'assets/icons/technician-.svg', 'Technician',
                           iconSize: 70, containerSize: 100),
                     ],
                   ).animate().fadeIn(delay: 1200.ms, duration: 600.ms),

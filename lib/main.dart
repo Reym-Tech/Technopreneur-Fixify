@@ -190,10 +190,20 @@ class _AppNavigatorState extends State<AppNavigator> {
         onSignUpFromGuest: () {
           setState(() => _showRegisterFirst = true);
         },
+        onLoginFromGuest: () {
+          setState(() => _showRegisterFirst = false);
+        },
       );
+    // Pass the flag to AuthFlow then immediately clear it so a subsequent
+    // guest → "Log In" (or a new guest session) doesn't re-open RegisterScreen.
+    final showRegister = _showRegisterFirst;
+    if (_showRegisterFirst) {
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => setState(() => _showRegisterFirst = false));
+    }
     return AuthFlow(
       key: _authFlowKey,
-      showRegisterFirst: _showRegisterFirst,
+      showRegisterFirst: showRegister,
     );
   }
 }
@@ -365,7 +375,11 @@ class MainApp extends StatefulWidget {
   /// Called when the guest taps "Sign Up" from the booking prompt.
   /// Tells AppNavigator to open RegisterScreen when the anonymous session ends.
   final VoidCallback? onSignUpFromGuest;
-  const MainApp({super.key, this.onSignUpFromGuest});
+
+  /// Called when the guest taps "Log In" from the booking prompt.
+  /// Ensures AppNavigator opens LoginScreen (not RegisterScreen).
+  final VoidCallback? onLoginFromGuest;
+  const MainApp({super.key, this.onSignUpFromGuest, this.onLoginFromGuest});
   @override
   State<MainApp> createState() => _MainAppState();
 }
@@ -440,7 +454,7 @@ class _MainAppState extends State<MainApp> {
   int _navIndex = 0;
   String _screen = 'home';
   // Tracks which screen navigated to 'professional_profile' so the back
-  // button returns to the correct destination ('home' or 'all_professionals').
+  // button returns to the correct destination ('home' or 'explore').
   String _profileReturnScreen = 'home';
   ProfessionalModel? _selectedPro;
   List<ReviewModel> _proReviews = [];
@@ -1047,7 +1061,9 @@ class _MainAppState extends State<MainApp> {
       // treat this as a guest session — load professionals for browsing only.
       final authUser = Supabase.instance.client.auth.currentUser;
       if (authUser != null && authUser.isAnonymous) {
-        _professionals = await _ds.getProfessionals();
+        // Fetch only the first 20 for the dashboard teaser.
+        // AllProfessionalsScreen fetches its own pages independently.
+        _professionals = await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
         _serviceOffers = await _ds.getServiceOffers();
         if (mounted)
           setState(() {
@@ -1059,7 +1075,9 @@ class _MainAppState extends State<MainApp> {
 
       _user = await _ds.getCurrentUser();
       if (_user != null) {
-        _professionals = await _ds.getProfessionals();
+        // Fetch only the first 20 for the dashboard teaser.
+        // AllProfessionalsScreen fetches its own pages independently.
+        _professionals = await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
 
         if (_user!.isProfessional) {
           _pro = await _ds.getProfessionalByUserId(_user!.id);
@@ -1298,7 +1316,8 @@ class _MainAppState extends State<MainApp> {
           _professionalsChannel = _ds.subscribeToReviewsInserts(
             onInsert: (_) async {
               try {
-                final updated = await _ds.getProfessionals();
+                final updated =
+                    await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
                 if (mounted) setState(() => _professionals = updated);
               } catch (e) {
                 debugPrint(
@@ -1386,6 +1405,59 @@ class _MainAppState extends State<MainApp> {
     }
   }
 
+  /// Navigates to ProfessionalProfileScreen given only a [ProfessionalEntity].
+  /// Used by AllProfessionalsScreen callbacks, where the tapped professional
+  /// may not be present in the in-memory [_professionals] list (which is now
+  /// limited to 20 rows for the dashboard teaser).
+  ///
+  /// Strategy:
+  ///   1. Try an O(1) lookup in [_professionals] — covers the case where the
+  ///      tapped card is one of the top-20 dashboard pros.
+  ///   2. If not found, fetch the full model from the DB via [getProfessionalById]
+  ///      before routing, so [_selectedPro] is never null when we set _screen.
+  Future<void> _navigateToProProfile(
+    ProfessionalEntity entity, {
+    String returnScreen = 'explore',
+  }) async {
+    // Fast path — already in memory.
+    final cached = _professionals.where((p) => p.id == entity.id).firstOrNull;
+    if (cached != null) {
+      setState(() {
+        _selectedPro = cached;
+        _selectedProFresh = null;
+        _proReviews = [];
+        _profileReturnScreen = returnScreen;
+        _screen = 'professional_profile';
+      });
+      // Still kick off a fresh fetch to get the latest data.
+      _ds.getProfessionalById(entity.id).then((fresh) {
+        if (!mounted || fresh == null) return;
+        setState(() => _selectedProFresh = fresh);
+      }).catchError((e) => debugPrint('Could not refresh pro: $e'));
+    } else {
+      // Slow path — not in the dashboard cache; fetch before routing.
+      try {
+        final model = await _ds.getProfessionalById(entity.id);
+        if (!mounted || model == null) return;
+        setState(() {
+          _selectedPro = model;
+          _selectedProFresh = null;
+          _proReviews = [];
+          _profileReturnScreen = returnScreen;
+          _screen = 'professional_profile';
+        });
+      } catch (e) {
+        debugPrint('[_navigateToProProfile] error: $e');
+        return;
+      }
+    }
+    // Fetch reviews in parallel (works for both paths).
+    _ds.getProfessionalReviewsById(entity.id).then((reviews) {
+      if (!mounted) return;
+      setState(() => _proReviews = reviews);
+    }).catchError((e) => debugPrint('Could not load reviews: $e'));
+  }
+
   /// Navigates to RequestServiceScreen for a DIRECT booking against a
   /// specific professional. Fetches only the services that professional
   /// has selected so the customer can only choose from what they actually offer.
@@ -1467,7 +1539,7 @@ class _MainAppState extends State<MainApp> {
   Future<void> _refreshCustomerDashboard() async {
     if (_user == null) return;
     try {
-      final pros = await _ds.getProfessionals();
+      final pros = await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
       final bookings = await _ds.getCustomerBookings(_user!.id);
       final offers = await _ds.getServiceOffers();
       if (mounted)
@@ -1878,7 +1950,8 @@ class _MainAppState extends State<MainApp> {
           try {
             await _appDs.approveApplication(app);
             _applications = await _appDs.getAllApplications();
-            _professionals = await _ds.getProfessionals();
+            _professionals =
+                await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
             setState(() {});
             _notify('${app.applicantName} approved for ${app.serviceType}.');
           } catch (e) {
@@ -1993,7 +2066,8 @@ class _MainAppState extends State<MainApp> {
               tier: req.requestedTier,
             );
             // Refresh professionals so the new tier is reflected everywhere.
-            _professionals = await _ds.getProfessionals();
+            _professionals =
+                await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
             _upgradeRequests = await _ds.getUpgradeRequests();
             setState(() {});
             // Notify the handyman.
@@ -2091,7 +2165,8 @@ class _MainAppState extends State<MainApp> {
             final app = _applications.firstWhere((a) => a.id == applicationId);
             await _appDs.approveApplication(app);
             _applications = await _appDs.getAllApplications();
-            _professionals = await _ds.getProfessionals();
+            _professionals =
+                await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
             setState(() {});
             _notify('${app.applicantName} approved for ${app.serviceType}.');
           } catch (e) {
@@ -2992,6 +3067,8 @@ class _MainAppState extends State<MainApp> {
             child: OutlinedButton(
               onPressed: () async {
                 Navigator.of(context).pop();
+                // Explicitly tell AppNavigator to open LoginScreen.
+                widget.onLoginFromGuest?.call();
                 await Supabase.instance.client.auth.signOut();
                 if (mounted) setState(() => _isGuest = false);
               },
@@ -3013,33 +3090,12 @@ class _MainAppState extends State<MainApp> {
 
   Widget _guestFlow() {
     // Guest _screen state — only 'home', 'professional_profile',
-    // and 'all_professionals' are reachable.
-    if (_screen == 'all_professionals') {
+    // and 'explore' are reachable.
+    if (_screen == 'explore') {
       return AllProfessionalsScreen(
-        professionals: _professionals.map((p) => p.toEntity()).toList(),
+        ds: _ds,
         onBack: () => setState(() => _screen = 'home'),
-        onProfessionalTap: (entity) {
-          final model = _professionals.firstWhere((p) => p.id == entity.id);
-          setState(() {
-            _selectedPro = model;
-            _selectedProFresh = null;
-            _proReviews = [];
-            _profileReturnScreen = 'all_professionals';
-            _screen = 'professional_profile';
-          });
-          _ds.getProfessionalById(entity.id).then((freshPro) {
-            if (!mounted) return;
-            if (freshPro != null) setState(() => _selectedProFresh = freshPro);
-          }).catchError((e) {
-            debugPrint('Could not load fresh professional: $e');
-          });
-          _ds.getProfessionalReviewsById(entity.id).then((reviews) {
-            if (!mounted) return;
-            setState(() => _proReviews = reviews);
-          }).catchError((e) {
-            debugPrint('Could not load pro reviews: $e');
-          });
-        },
+        onProfessionalTap: (entity) => _navigateToProProfile(entity),
       );
     }
 
@@ -3075,17 +3131,11 @@ class _MainAppState extends State<MainApp> {
       onRequestServiceWithType: (_, __, ___) => _showGuestPrompt(context),
       onViewBookings: () => _showGuestPrompt(context),
       onBookingTap: (_) => _showGuestPrompt(context),
-      onFilterBySkill: (skill) async {
-        // Filtering is allowed for guests
-        try {
-          final list = skill == 'All'
-              ? await _ds.getProfessionals()
-              : await _ds.getProfessionals(skill: skill);
-          setState(() => _professionals = list);
-        } catch (e) {
-          debugPrint('Guest filter error: $e');
-        }
-      },
+      // onFilterBySkill: filtering is handled entirely by local state inside
+      // CustomerDashboardScreen (_selectedSkill). No network call needed —
+      // calling getProfessionals(skill:) here would overwrite _professionals
+      // and trigger a parent rebuild that resets the child's filter state.
+      onFilterBySkill: (_) {},
       onProfessionalTap: (entity) {
         final model = _professionals.firstWhere((p) => p.id == entity.id);
         setState(() {
@@ -3108,12 +3158,11 @@ class _MainAppState extends State<MainApp> {
           debugPrint('Could not load pro reviews: $e');
         });
       },
-      onViewAllProfessionals: () =>
-          setState(() => _screen = 'all_professionals'),
+      onViewAllProfessionals: () => setState(() => _screen = 'explore'),
       onProfileTap: () => _showGuestPrompt(context),
       onRefresh: () async {
         try {
-          final pros = await _ds.getProfessionals();
+          final pros = await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
           final offers = await _ds.getServiceOffers();
           if (mounted)
             setState(() {
@@ -3133,8 +3182,21 @@ class _MainAppState extends State<MainApp> {
 
   Widget _customerFlow() {
     final bookingEntities = _bookings.map((b) => b.toEntity()).toList();
+    // _navIndex==1 → Explore tab (AllProfessionalsScreen)
+    if (_navIndex == 1) {
+      return AllProfessionalsScreen(
+        ds: _ds,
+        currentNavIndex: _navIndex,
+        onNavTap: (i) => setState(() {
+          _navIndex = i;
+          _screen = i == 3 ? 'profile' : 'home';
+        }),
+        // onBack is null — this is a tab, not a pushed screen
+        onProfessionalTap: (entity) => _navigateToProProfile(entity),
+      );
+    }
 
-    if (_navIndex == 1 && _screen == 'home') {
+    if (_navIndex == 2 && _screen == 'home') {
       return CustomerBookingsScreen(
         bookings: bookingEntities,
         currentNavIndex: _navIndex,
@@ -3569,33 +3631,16 @@ class _MainAppState extends State<MainApp> {
           }),
         );
 
-      case 'all_professionals':
+      // 'explore' → navigate to Explore tab (navIndex 1)
+      case 'explore':
         return AllProfessionalsScreen(
-          professionals: _professionals.map((p) => p.toEntity()).toList(),
-          onBack: () => setState(() => _screen = 'home'),
-          onProfessionalTap: (entity) {
-            final model = _professionals.firstWhere((p) => p.id == entity.id);
-            setState(() {
-              _selectedPro = model;
-              _selectedProFresh = null;
-              _proReviews = [];
-              _profileReturnScreen = 'all_professionals';
-              _screen = 'professional_profile';
-            });
-            _ds.getProfessionalById(entity.id).then((freshPro) {
-              if (!mounted) return;
-              if (freshPro != null)
-                setState(() => _selectedProFresh = freshPro);
-            }).catchError((e) {
-              debugPrint('Could not load fresh professional: $e');
-            });
-            _ds.getProfessionalReviewsById(entity.id).then((reviews) {
-              if (!mounted) return;
-              setState(() => _proReviews = reviews);
-            }).catchError((e) {
-              debugPrint('Could not load pro reviews: $e');
-            });
-          },
+          ds: _ds,
+          currentNavIndex: 1,
+          onNavTap: (i) => setState(() {
+            _navIndex = i;
+            _screen = i == 3 ? 'profile' : 'home';
+          }),
+          onProfessionalTap: (entity) => _navigateToProProfile(entity),
         );
 
       default:
@@ -3614,7 +3659,7 @@ class _MainAppState extends State<MainApp> {
         currentNavIndex: _navIndex,
         onNavTap: (i) => setState(() {
           _navIndex = i;
-          _screen = i == 2 ? 'profile' : 'home';
+          _screen = i == 3 ? 'profile' : 'home';
         }),
         onRequestService: () => setState(() {
           _preselectedServiceType = null;
@@ -3632,7 +3677,7 @@ class _MainAppState extends State<MainApp> {
           description: description.isNotEmpty ? description : null,
         ),
         onViewBookings: () => setState(() {
-          _navIndex = 1;
+          _navIndex = 2;
           _screen = 'home';
         }),
         onBookingTap: (booking) {
@@ -3644,16 +3689,11 @@ class _MainAppState extends State<MainApp> {
           });
           _subscribeToBooking(model);
         },
-        onFilterBySkill: (skill) async {
-          try {
-            final list = skill == 'All'
-                ? await _ds.getProfessionals()
-                : await _ds.getProfessionals(skill: skill);
-            setState(() => _professionals = list);
-          } catch (e) {
-            debugPrint('Filter error: $e');
-          }
-        },
+        // onFilterBySkill: filtering is handled entirely by local state inside
+        // CustomerDashboardScreen (_selectedSkill). No network call needed —
+        // calling getProfessionals(skill:) here would overwrite _professionals
+        // and trigger a parent rebuild that resets the child's filter state.
+        onFilterBySkill: (_) {},
         onProfessionalTap: (entity) {
           final model = _professionals.firstWhere((p) => p.id == entity.id);
           setState(() {
@@ -3677,8 +3717,7 @@ class _MainAppState extends State<MainApp> {
             debugPrint('Could not load pro reviews: $e');
           });
         },
-        onViewAllProfessionals: () =>
-            setState(() => _screen = 'all_professionals'),
+        onViewAllProfessionals: () => setState(() => _navIndex = 1),
         onProfileTap: () {
           setState(() {
             _navIndex = 3;
@@ -3756,7 +3795,7 @@ class _MainAppState extends State<MainApp> {
       });
       _notify('Review submitted. Thank you.');
       try {
-        final updated = await _ds.getProfessionals();
+        final updated = await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
         if (mounted) setState(() => _professionals = updated);
       } catch (e) {
         debugPrint('Could not refresh professionals after review: $e');

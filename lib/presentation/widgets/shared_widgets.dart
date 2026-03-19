@@ -71,43 +71,6 @@ class GlassCard extends StatelessWidget {
   }
 }
 
-// ===================== PRIMARY GLASS CARD (Dark) =====================
-
-class PrimaryGlassCard extends StatelessWidget {
-  final Widget child;
-  final EdgeInsetsGeometry? padding;
-  final double borderRadius;
-
-  const PrimaryGlassCard({
-    super.key,
-    required this.child,
-    this.padding = const EdgeInsets.all(20),
-    this.borderRadius = 20,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.9),
-            borderRadius: BorderRadius.circular(borderRadius),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.2),
-              width: 1,
-            ),
-          ),
-          child: child,
-        ),
-      ),
-    );
-  }
-}
-
 // ===================== VERIFIED BADGE =====================
 
 class VerifiedBadge extends StatelessWidget {
@@ -123,37 +86,27 @@ class VerifiedBadge extends StatelessWidget {
 
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: small ? 6 : 10,
-        vertical: small ? 3 : 5,
+        horizontal: small ? 6 : 8,
+        vertical: small ? 3 : 4,
       ),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF00C853), Color(0xFF0F3D2E)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: const Color(0xFFE8F5E9),
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.success.withValues(alpha: 0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFA5D6A7), width: 1),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.verified_rounded,
-              color: Colors.white, size: small ? 10 : 12),
+              color: const Color(0xFF2E7D32), size: small ? 10 : 11),
           SizedBox(width: small ? 3 : 4),
           Text(
             'Verified',
             style: TextStyle(
-              color: Colors.white,
-              fontSize: small ? 9 : 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
+              color: const Color(0xFF2E7D32),
+              fontSize: small ? 9 : 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
             ),
           ),
         ],
@@ -217,7 +170,7 @@ class StatusBadge extends StatelessWidget {
         return {'color': AppColors.statusAccepted, 'label': 'Accepted'};
       case BookingStatus.assessment:
         return {
-          'color': const Color(0xFFFF9500),
+          'color': AppColors.statusAssessment,
           'label': 'Awaiting Confirm',
         };
       case BookingStatus.inProgress:
@@ -234,22 +187,22 @@ class StatusBadge extends StatelessWidget {
         return {'color': AppColors.error, 'label': 'Cancelled'};
       case BookingStatus.scheduleProposed:
         return {
-          'color': const Color(0xFF9C27B0), // purple — schedule pending review
+          'color': AppColors.statusScheduleProposed,
           'label': 'Schedule Proposed',
         };
       case BookingStatus.scheduled:
         return {
-          'color': const Color(0xFF007AFF), // blue — confirmed schedule
+          'color': AppColors.statusScheduled,
           'label': 'Scheduled',
         };
       case BookingStatus.pendingCustomerConfirmation:
         return {
-          'color': const Color(0xFFFFA500),
+          'color': AppColors.statusPendingCustomerConfirmation,
           'label': 'Pending Confirmation',
         };
       case BookingStatus.pendingArrivalConfirmation:
         return {
-          'color': const Color(0xFF009688),
+          'color': AppColors.statusPendingArrivalConfirmation,
           'label': 'Awaiting Confirmation',
         };
     }
@@ -336,193 +289,216 @@ class ProfessionalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasPhone =
         professional.phone != null && professional.phone!.trim().isNotEmpty;
+    final tier = professional.effectiveTier;
 
-    return GlassCard(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+    return GestureDetector(
       onTap: onTap,
-      child: Row(
-        children: [
-          // ── Avatar ──────────────────────────────────────────────────────
-          Stack(
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  gradient: LinearGradient(
-                    colors: [
-                      AppColors.primary.withValues(alpha: 0.8),
-                      AppColors.primaryLight,
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: professional.avatarUrl != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: Image.network(
-                          professional.avatarUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _buildDefaultAvatar(),
-                        ),
-                      )
-                    : _buildDefaultAvatar(),
-              ),
-              if (professional.available)
-                Positioned(
-                  bottom: 2,
-                  right: 2,
-                  child: Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: AppColors.success,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(width: 14),
-
-          // ── Info ─────────────────────────────────────────────────────────
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            // ── Avatar ──────────────────────────────────────────────────────
+            Stack(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        professional.name,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textDark,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    VerifiedBadge(
-                        isVerified: professional.verified, small: true),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                // Skills chips
-                Wrap(
-                  spacing: 4,
-                  children: professional.skills.take(2).map((skill) {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        _capitalizeSkill(skill),
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    RatingStars(
-                        rating: professional.rating, size: 13, showLabel: true),
-                    const SizedBox(width: 4),
-                    Text(
-                      '(${professional.reviewCount})',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textLight,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (professional.priceMin != null &&
-                        professional.priceMax != null)
-                      Text(
-                        '₱${professional.priceMin!.toInt()}-₱${professional.priceMax!.toInt()}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                  ],
-                ),
-                if (professional.city != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.location_on_outlined,
-                            size: 12, color: AppColors.textLight),
-                        const SizedBox(width: 2),
-                        Text(
-                          professional.city!,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textLight,
-                          ),
-                        ),
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    gradient: LinearGradient(
+                      colors: [
+                        AppColors.primary.withValues(alpha: 0.8),
+                        AppColors.primaryLight,
                       ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
                   ),
-
-                // ── Phone row ────────────────────────────────────────────
-                if (hasPhone)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: GestureDetector(
-                      onTap: () => _callPhone(context, professional.phone!),
-                      behavior: HitTestBehavior.opaque,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF34C759)
-                                  .withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.phone_rounded,
-                              size: 13,
-                              color: Color(0xFF34C759),
-                            ),
+                  child: professional.avatarUrl != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(18),
+                          child: Image.network(
+                            professional.avatarUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => _buildDefaultAvatar(),
                           ),
-                          const SizedBox(width: 6),
-                          Text(
-                            professional.phone!,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF34C759),
-                            ),
-                          ),
-                        ],
+                        )
+                      : _buildDefaultAvatar(),
+                ),
+                if (professional.available)
+                  Positioned(
+                    bottom: 2,
+                    right: 2,
+                    child: Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: AppColors.success,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
                       ),
                     ),
                   ),
               ],
             ),
-          ),
-          const SizedBox(width: 8),
-          const Icon(Icons.chevron_right_rounded, color: AppColors.textLight),
-        ],
-      ),
-    );
+            const SizedBox(width: 14),
+
+            // ── Info ─────────────────────────────────────────────────────────
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          professional.name,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      // Tier badge — only Pro (1) and Elite (2) shown
+                      if (tier >= 1) ...[
+                        const SizedBox(width: 4),
+                        _TierBadge(tier: tier),
+                      ] else ...[
+                        const SizedBox(width: 4),
+                        VerifiedBadge(
+                            isVerified: professional.verified, small: true),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // Skills chips
+                  Wrap(
+                    spacing: 4,
+                    children: professional.skills.take(2).map((skill) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _capitalizeSkill(skill),
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      RatingStars(
+                          rating: professional.rating,
+                          size: 13,
+                          showLabel: true),
+                      const SizedBox(width: 4),
+                      Text(
+                        '(${professional.reviewCount})',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textLight,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (professional.priceMin != null &&
+                          professional.priceMax != null)
+                        Text(
+                          '₱${professional.priceMin!.toInt()}-₱${professional.priceMax!.toInt()}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                    ],
+                  ),
+                  if (professional.city != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.location_on_outlined,
+                              size: 12, color: AppColors.textLight),
+                          const SizedBox(width: 2),
+                          Text(
+                            professional.city!,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textLight,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  // ── Phone row ────────────────────────────────────────────
+                  if (hasPhone)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: GestureDetector(
+                        onTap: () => _callPhone(context, professional.phone!),
+                        behavior: HitTestBehavior.opaque,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color:
+                                    AppColors.success.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.phone_rounded,
+                                size: 13,
+                                color: Color(0xFF34C759),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              professional.phone!,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.success,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.textLight),
+          ],
+        ), // end Row
+      ), // end Container
+    ); // end GestureDetector
   }
 
   Widget _buildDefaultAvatar() {
@@ -544,68 +520,56 @@ class ProfessionalCard extends StatelessWidget {
   }
 }
 
-// ===================== SERVICE CATEGORY CHIP =====================
+// ===================== TIER BADGE =====================
+// Shown on ProfessionalCard for Pro (tier 1) and Elite (tier 2) handymen.
+// Free-tier professionals show the standard VerifiedBadge instead.
 
-class ServiceCategoryChip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-  final Color? color;
-
-  const ServiceCategoryChip({
-    super.key,
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-    this.color,
-  });
+class _TierBadge extends StatelessWidget {
+  final int tier;
+  const _TierBadge({required this.tier});
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.primary : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: selected
-                  ? AppColors.primary.withValues(alpha: 0.3)
-                  : Colors.black.withValues(alpha: 0.05),
-              blurRadius: selected ? 12 : 6,
-              offset: const Offset(0, 3),
-            ),
-          ],
-          border: Border.all(
-            color: selected ? Colors.transparent : const Color(0xFFE8EDE9),
-            width: 1,
+    final isElite = tier >= 2;
+
+    // Elite: gold gradient — the most prominent badge on any card.
+    // Pro:   blue gradient — clearly premium but below Elite.
+    final List<Color> gradientColors = isElite
+        ? const [Color(0xFFFFB300), Color(0xFFFF6F00)]
+        : const [Color(0xFF1E88E5), Color(0xFF0D47A1)];
+    final Color glowColor =
+        isElite ? const Color(0xFFFFB300) : const Color(0xFF1E88E5);
+    final IconData icon =
+        isElite ? Icons.star_rounded : Icons.workspace_premium_rounded;
+    final String label = isElite ? 'Elite' : 'Pro';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: gradientColors,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: glowColor.withValues(alpha: 0.35),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              color: selected ? Colors.white : (color ?? AppColors.primary),
-              size: 26,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: selected ? Colors.white : AppColors.textMedium,
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 10, color: Colors.white),
+        const SizedBox(width: 3),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+                letterSpacing: 0.3)),
+      ]),
     );
   }
 }
@@ -657,105 +621,6 @@ class SectionHeader extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-// ===================== CUSTOM BOTTOM NAV =====================
-
-class FixifyBottomNav extends StatelessWidget {
-  final int currentIndex;
-  final Function(int) onTap;
-  final bool isProfessional;
-
-  const FixifyBottomNav({
-    super.key,
-    required this.currentIndex,
-    required this.onTap,
-    this.isProfessional = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final customerItems = [
-      {'icon': Icons.home_rounded, 'label': 'Home'},
-      {'icon': Icons.search_rounded, 'label': 'Explore'},
-      {'icon': Icons.calendar_month_rounded, 'label': 'Bookings'},
-      {'icon': Icons.person_rounded, 'label': 'Profile'},
-    ];
-
-    final professionalItems = [
-      {'icon': Icons.dashboard_rounded, 'label': 'Dashboard'},
-      {'icon': Icons.work_outline_rounded, 'label': 'Jobs'},
-      {'icon': Icons.star_outline_rounded, 'label': 'Reviews'},
-      {'icon': Icons.person_rounded, 'label': 'Profile'},
-    ];
-
-    final items = isProfessional ? professionalItems : customerItems;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: List.generate(items.length, (index) {
-              final item = items[index];
-              final isSelected = currentIndex == index;
-              return GestureDetector(
-                onTap: () => onTap(index),
-                behavior: HitTestBehavior.opaque,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? AppColors.primary.withValues(alpha: 0.1)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        item['icon'] as IconData,
-                        color: isSelected
-                            ? AppColors.primary
-                            : AppColors.textLight,
-                        size: 24,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        item['label'] as String,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight:
-                              isSelected ? FontWeight.w700 : FontWeight.w500,
-                          color: isSelected
-                              ? AppColors.primary
-                              : AppColors.textLight,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -822,6 +687,23 @@ class FixifyTextField extends StatelessWidget {
                 ? Icon(prefixIcon, color: AppColors.textLight, size: 20)
                 : null,
             suffixIcon: suffix,
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Color(0xFFE8EDE9), width: 1),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide:
+                  const BorderSide(color: AppColors.primary, width: 1.5),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: AppColors.error, width: 1),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: AppColors.error, width: 1.5),
+            ),
           ),
         ),
       ],
@@ -848,20 +730,32 @@ class LoadingOverlay extends StatelessWidget {
         child,
         if (isLoading)
           Container(
-            color: Colors.black.withValues(alpha: 0.3),
+            color: Colors.black.withValues(alpha: 0.35),
             child: Center(
-              child: GlassCard(
-                padding: const EdgeInsets.all(30),
-                child: Column(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: const Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(
+                    CircularProgressIndicator(
                       valueColor: AlwaysStoppedAnimation(AppColors.primary),
-                      strokeWidth: 3,
+                      strokeWidth: 2.5,
                     ),
-                    const SizedBox(height: 16),
+                    SizedBox(height: 16),
                     Text(
-                      'Please wait...',
+                      'Please wait…',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,

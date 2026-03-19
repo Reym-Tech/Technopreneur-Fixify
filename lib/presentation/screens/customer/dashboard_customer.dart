@@ -371,9 +371,7 @@ final Map<String, Map<String, dynamic>> _serviceDetails = {
 // ── Screen state ──────────────────────────────────────────────────────────────
 
 class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
-  String _selectedSkill = 'All';
-  String _serviceSearch = '';
-  final _serviceSearchCtrl = TextEditingController();
+  // Service offers section state is now owned by _ServiceOffersSection.
 
   // ── Unread count — owned entirely by this state, fetched from Supabase ──
   int _unreadNotifCount = 0;
@@ -391,7 +389,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
 
   @override
   void dispose() {
-    _serviceSearchCtrl.dispose();
     super.dispose();
   }
 
@@ -462,66 +459,15 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
     return _availableCategories.contains(category);
   }
 
-  // ── MODEL: resolve which service list to display ──────────────────────────
-  // When the Controller passes DB-backed serviceOffers, use them.
-  // Fall back to the hardcoded _allServices list if the DB list is empty
-  // (e.g. during migration or if no proposals have been approved yet).
-
-  bool get _usingDbOffers => widget.serviceOffers.isNotEmpty;
-
-  /// Unique category labels present in the current DB offers list.
-  Set<String> get _dbOfferCategories =>
-      widget.serviceOffers.map((o) => o.serviceType).toSet();
-
-  /// Returns the display list after applying the selected category filter
-  /// and the active search query.
-  /// In DB mode: filters [widget.serviceOffers].
-  /// In legacy mode: filters the hardcoded [_allServices].
-  List<_ServiceDef> get _filteredServices {
-    final q = _serviceSearch.trim().toLowerCase();
-
-    if (_usingDbOffers) {
-      final filtered = _selectedSkill == 'All'
-          ? widget.serviceOffers
-          : widget.serviceOffers
-              .where((o) => o.serviceType == _selectedSkill)
-              .toList();
-      final defs = filtered
-          .map((o) => _ServiceDef(
-                id: o.id,
-                name: o.serviceName,
-                description: o.description ?? '',
-                image: o.imageUrl ?? '',
-                category: o.serviceType,
-              ))
-          .toList();
-      if (q.isEmpty) return defs;
-      return defs
-          .where((s) =>
-              s.name.toLowerCase().contains(q) ||
-              s.description.toLowerCase().contains(q) ||
-              s.category.toLowerCase().contains(q))
-          .toList();
-    }
-    // Legacy hardcoded path
-    final base = _selectedSkill == 'All'
-        ? _allServices.toList()
-        : _allServices.where((s) => s.category == _selectedSkill).toList();
-    if (q.isEmpty) return base;
-    return base
-        .where((s) =>
-            s.name.toLowerCase().contains(q) ||
-            s.description.toLowerCase().contains(q) ||
-            s.category.toLowerCase().contains(q))
-        .toList();
-  }
+  // _usingDbOffers, _dbOfferCategories, _filteredServices — moved to
+  // _ServiceOffersSection which owns all service filter state.
 
   // ── CONTROLLER: navigate to ServiceDetailScreen ───────────────────────────
   // Looks up detail data from DB offers first; falls back to the legacy
   // _serviceDetails map for hardcoded entries.
 
   void _openServiceDetail(_ServiceDef service) async {
-    if (_usingDbOffers) {
+    if (widget.serviceOffers.isNotEmpty) {
       // Find the matching DB offer by id (set in _filteredServices above)
       ServiceOfferModel? offer;
       for (final o in widget.serviceOffers) {
@@ -699,7 +645,18 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                   ),
                 ],
                 SliverToBoxAdapter(
-                  child: _buildServiceOffers().animate().fadeIn(delay: 220.ms),
+                  child: _ServiceOffersSection(
+                    serviceOffers: widget.serviceOffers,
+                    availableCategories: _availableCategories,
+                    usingDbOffers: widget.serviceOffers.isNotEmpty,
+                    dbOfferCategories:
+                        widget.serviceOffers.map((o) => o.serviceType).toSet(),
+                    onOpenDetail: _openServiceDetail,
+                    showcaseContext: _showcaseContext,
+                    categoryFilterKey: _keys.categoryFilterKey,
+                    serviceOffersKey: _keys.serviceOffersKey,
+                    onFilterBySkill: widget.onFilterBySkill,
+                  ),
                 ),
                 if (widget.recentBookings.isNotEmpty) ...[
                   SliverToBoxAdapter(
@@ -719,46 +676,10 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                 ],
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                    child: SectionHeader(
-                      title: 'Top Professionals',
-                      actionLabel: verifiedCount > 0 ? 'See All' : null,
-                      onAction:
-                          verifiedCount > 0 ? _openAllProfessionals : null,
-                    ),
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
+                    child: _buildTopProsTeaser(topThree, verifiedCount),
                   ).animate().fadeIn(delay: 360.ms),
                 ),
-                topThree.isEmpty
-                    ? SliverToBoxAdapter(child: _buildEmptyPros())
-                    : SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-                        sliver: SliverList(
-                          delegate: SliverChildBuilderDelegate(
-                            (context, i) {
-                              final pro = topThree[i];
-                              final card = ProfessionalCard(
-                                professional: pro,
-                                onTap: () =>
-                                    widget.onProfessionalTap?.call(pro),
-                              )
-                                  .animate()
-                                  .fadeIn(delay: (400 + i * 70).ms)
-                                  .slideX(begin: 0.04, end: 0);
-                              // TOUR STEP 4 — wrap only first card
-                              if (i == 0) {
-                                return CustomerTourShowcase.wrap(
-                                  key: _keys.topProsKey,
-                                  stepName: 'topPros',
-                                  showcaseContext: _showcaseContext,
-                                  child: card,
-                                );
-                              }
-                              return card;
-                            },
-                            childCount: topThree.length,
-                          ),
-                        ),
-                      ),
               ],
             ),
           ),
@@ -1032,20 +953,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                       child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text('⚡ Instant Booking',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600)),
-                        ),
-                        const SizedBox(height: 10),
                         const Text('Request Service',
                             style: TextStyle(
                                 color: Colors.white,
@@ -1118,10 +1025,10 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                 Icon(Icons.star_rounded, size: 12, color: Color(0xFFFF9500)),
                 SizedBox(width: 4),
                 Text('AYO Elite',
-                    style: TextStyle(
+                    style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFFFF9500))),
+                        color: AppColors.warning)),
               ]),
             ),
             const SizedBox(width: 8),
@@ -1153,268 +1060,6 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
       ],
     );
   }
-
-  Widget _buildServiceOffers() {
-    final allFiltered = _filteredServices;
-    final catHasPro = _hasProForCategory(_selectedSkill);
-    final hasSearch = _serviceSearch.trim().isNotEmpty;
-    // Total count before search — used for the badge
-    final totalInCategory = _usingDbOffers
-        ? (_selectedSkill == 'All'
-            ? widget.serviceOffers.length
-            : widget.serviceOffers
-                .where((o) => o.serviceType == _selectedSkill)
-                .length)
-        : (_selectedSkill == 'All'
-            ? _allServices.length
-            : _allServices.where((s) => s.category == _selectedSkill).length);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // ── Section header with count badge ────────────────────────────
-        Row(
-          children: [
-            const Expanded(child: SectionHeader(title: 'Service Offers')),
-            if (totalInCategory > 0)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '$totalInCategory ${totalInCategory == 1 ? 'service' : 'services'}',
-                  style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary),
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 14),
-
-        // ── Search bar ──────────────────────────────────────────────────
-        Container(
-          height: 42,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE8E8E8)),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2))
-            ],
-          ),
-          child: TextField(
-            controller: _serviceSearchCtrl,
-            onChanged: (v) => setState(() => _serviceSearch = v),
-            style: const TextStyle(fontSize: 13, color: AppColors.textDark),
-            decoration: InputDecoration(
-              hintText: 'Search services…',
-              hintStyle:
-                  const TextStyle(fontSize: 13, color: AppColors.textLight),
-              prefixIcon: const Icon(Icons.search_rounded,
-                  size: 18, color: AppColors.textLight),
-              suffixIcon: hasSearch
-                  ? GestureDetector(
-                      onTap: () => setState(() {
-                        _serviceSearch = '';
-                        _serviceSearchCtrl.clear();
-                      }),
-                      child: const Icon(Icons.close_rounded,
-                          size: 16, color: AppColors.textLight),
-                    )
-                  : null,
-              border: InputBorder.none,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // ── Category filter chips (TOUR STEP 3) ──────────────────────
-        CustomerTourShowcase.wrap(
-          key: _keys.categoryFilterKey,
-          stepName: 'categoryFilter',
-          showcaseContext: _showcaseContext,
-          child: SizedBox(
-            height: 40,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: _categories.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (context, i) {
-                final cat = _categories[i];
-                final selected = _selectedSkill == cat.label;
-                final hasAvail = _hasProForCategory(cat.label);
-                return FilterChip(
-                  label: Text(cat.label),
-                  selected: selected,
-                  showCheckmark: false,
-                  onSelected: (_) {
-                    setState(() => _selectedSkill = cat.label);
-                    widget.onFilterBySkill?.call(cat.label);
-                  },
-                  backgroundColor: Colors.white,
-                  selectedColor: cat.color,
-                  labelStyle: TextStyle(
-                    color: selected ? Colors.white : AppColors.textDark,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  ),
-                  avatar: Stack(clipBehavior: Clip.none, children: [
-                    Icon(cat.icon,
-                        size: 16, color: selected ? Colors.white : cat.color),
-                    if (!hasAvail && cat.label != 'All')
-                      Positioned(
-                        top: -3,
-                        right: -4,
-                        child: Container(
-                            width: 6,
-                            height: 6,
-                            decoration: const BoxDecoration(
-                                color: Color(0xFFFF3B30),
-                                shape: BoxShape.circle)),
-                      ),
-                  ]),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    side: BorderSide(
-                        color: selected
-                            ? Colors.transparent
-                            : Colors.grey.shade300),
-                  ),
-                );
-              },
-            ),
-          ), // end SizedBox chips
-        ), // end CustomerTourShowcase.wrap (categoryFilter)
-        const SizedBox(height: 10),
-
-        // ── Service list / grid ─────────────────────────────────────────
-        if (!catHasPro && _selectedSkill != 'All' && !hasSearch)
-          _buildNoProsForCategory(_selectedSkill)
-        else if (allFiltered.isEmpty)
-          _buildEmptySearch(hasSearch)
-        else
-          // TOUR STEP 2 — service offers list
-          CustomerTourShowcase.wrap(
-            key: _keys.serviceOffersKey,
-            stepName: 'serviceOffers',
-            showcaseContext: _showcaseContext,
-            child: SizedBox(
-              height: 232,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: allFiltered.length,
-                padding: const EdgeInsets.only(right: 20),
-                itemBuilder: (context, i) {
-                  final s = allFiltered[i];
-                  final available = _hasProForCategory(s.category);
-                  return _ServiceCard(
-                    service: s,
-                    available: available,
-                    accentColor: _colorForCategory(s.category),
-                    onTap: available ? () => _openServiceDetail(s) : null,
-                  ).animate().fadeIn(delay: (i * 60).ms);
-                },
-              ),
-            ),
-          ),
-      ]),
-    );
-  }
-
-  Widget _buildEmptySearch(bool hasSearch) => Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.08),
-                  shape: BoxShape.circle),
-              child: const Icon(Icons.search_off_rounded,
-                  size: 32, color: AppColors.primary),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              hasSearch
-                  ? 'No results for "$_serviceSearch"'
-                  : 'No services available',
-              style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              hasSearch
-                  ? 'Try a different keyword or category.'
-                  : 'Check back soon — we\'re always adding services.',
-              style: const TextStyle(
-                  fontSize: 12, color: AppColors.textLight, height: 1.5),
-              textAlign: TextAlign.center,
-            ),
-          ]),
-        ),
-      );
-
-  Widget _buildNoProsForCategory(String category) => Padding(
-        padding: const EdgeInsets.fromLTRB(0, 8, 20, 24),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: _colorForCategory(category).withOpacity(0.08),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(_iconForCategory(category),
-                  size: 36,
-                  color: _colorForCategory(category).withOpacity(0.5)),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              category == 'All'
-                  ? 'No professionals available right now'
-                  : 'No $category professionals available',
-              style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Check back soon — we\'re always adding verified handymen to the platform.',
-              style: TextStyle(
-                  fontSize: 13, color: AppColors.textLight, height: 1.5),
-              textAlign: TextAlign.center,
-            ),
-          ]),
-        ),
-      );
 
   Color _colorForCategory(String cat) {
     switch (cat) {
@@ -1476,37 +1121,203 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
         ),
       );
 
-  // ── EMPTY PROS ────────────────────────────────────────────────────────────
+  // ── TOP PROS TEASER ───────────────────────────────────────────────────────
+  // Compact card showing up to 3 avatars + names as a discovery nudge.
+  // Replaced the full ranked list — see Explore tab for the full experience.
 
-  Widget _buildEmptyPros() => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
-        child: Column(children: [
+  Widget _buildTopProsTeaser(List<ProfessionalEntity> pros, int totalVerified) {
+    if (pros.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 12,
+                offset: const Offset(0, 3))
+          ],
+        ),
+        child: Row(children: [
           Container(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
                 color: AppColors.primary.withOpacity(0.08),
                 shape: BoxShape.circle),
             child: const Icon(Icons.engineering_rounded,
-                size: 48, color: AppColors.primary),
+                size: 28, color: AppColors.primary),
           ),
-          const SizedBox(height: 16),
-          const Text('No verified professionals yet',
-              style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textDark)),
-          const SizedBox(height: 6),
-          const Text('Check back soon — we\'re always growing our network.',
-              style: TextStyle(color: AppColors.textLight),
-              textAlign: TextAlign.center),
+          const SizedBox(width: 14),
+          const Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('No verified professionals yet',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textDark)),
+              SizedBox(height: 2),
+              Text('Check back soon — we\'re always growing.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textLight)),
+            ]),
+          ),
         ]),
       );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 3))
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Header row
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Top Professionals',
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark)),
+            GestureDetector(
+              onTap: _openAllProfessionals,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                  Text('Explore',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary)),
+                  SizedBox(width: 3),
+                  Icon(Icons.arrow_forward_rounded,
+                      size: 12, color: AppColors.primary),
+                ]),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        // Avatar row
+        Row(
+          children: pros.map((pro) {
+            final initials = pro.name
+                .trim()
+                .split(' ')
+                .take(2)
+                .map((w) => w.isNotEmpty ? w[0].toUpperCase() : '')
+                .join();
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => widget.onProfessionalTap?.call(pro),
+                child: Column(children: [
+                  Stack(children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF0F3D2E), Color(0xFF1A5C43)],
+                        ),
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: pro.avatarUrl != null
+                          ? ClipOval(
+                              child: Image.network(pro.avatarUrl!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Center(
+                                        child: Text(initials,
+                                            style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w700)),
+                                      )))
+                          : Center(
+                              child: Text(initials,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700))),
+                    ),
+                    if (pro.available)
+                      Positioned(
+                        bottom: 1,
+                        right: 1,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: AppColors.success,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                        ),
+                      ),
+                  ]),
+                  const SizedBox(height: 6),
+                  Text(
+                    pro.name.split(' ').first,
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textDark),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 2),
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const Icon(Icons.star_rounded,
+                        size: 10, color: Color(0xFFFF9500)),
+                    const SizedBox(width: 2),
+                    Text(pro.rating.toStringAsFixed(1),
+                        style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textLight,
+                            fontWeight: FontWeight.w500)),
+                  ]),
+                ]),
+              ),
+            );
+          }).toList(),
+        ),
+        if (totalVerified > 3) ...[
+          const SizedBox(height: 12),
+          Center(
+            child: Text(
+              '+${totalVerified - 3} more in Explore',
+              style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textLight,
+                  fontWeight: FontWeight.w500),
+            ),
+          ),
+        ],
+      ]),
+    );
+  }
 
   // ── BOTTOM NAV ────────────────────────────────────────────────────────────
 
   Widget _buildBottomNav() {
     const items = [
       {'icon': Icons.home_rounded, 'label': 'Home'},
+      {'icon': Icons.explore_rounded, 'label': 'Explore'},
       {'icon': Icons.calendar_today_rounded, 'label': 'Bookings'},
       {'icon': Icons.person_rounded, 'label': 'Profile'},
     ];
@@ -1558,8 +1369,17 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                     ]),
                   ),
                 );
-                // TOUR STEP 6 — Bookings tab
+                // TOUR STEP 4 — Explore tab
                 if (i == 1) {
+                  return CustomerTourShowcase.wrapAnchor(
+                    key: _keys.exploreTabKey,
+                    stepName: 'exploreTab',
+                    showcaseContext: _showcaseContext,
+                    child: navItem,
+                  );
+                }
+                // TOUR STEP 6 — Bookings tab (now index 2)
+                if (i == 2) {
                   return CustomerTourShowcase.wrapAnchor(
                     key: _keys.bookingsTabKey,
                     stepName: 'bookingsTab',
@@ -1567,8 +1387,8 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
                     child: navItem,
                   );
                 }
-                // TOUR STEP 7 — Profile tab
-                if (i == 2) {
+                // TOUR STEP 7 — Profile tab (now index 3)
+                if (i == 3) {
                   return CustomerTourShowcase.wrapAnchor(
                     key: _keys.profileTabKey,
                     stepName: 'profileTab',
@@ -1582,6 +1402,409 @@ class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
             ),
           )),
     );
+  }
+}
+
+// ── SERVICE OFFERS SECTION ───────────────────────────────────────────────────
+//
+// Owns all service-filter state (_selectedSkill, _serviceSearch, controllers).
+// Extracted from _CustomerDashboardScreenState so that parent setState calls
+// (notifications, pull-to-refresh, tour, etc.) never rebuild this subtree and
+// the chip row scroll position + category selection are always preserved.
+
+class _ServiceOffersSection extends StatefulWidget {
+  final List<ServiceOfferModel> serviceOffers;
+  final Set<String> availableCategories;
+  final bool usingDbOffers;
+  final Set<String> dbOfferCategories;
+  final void Function(_ServiceDef) onOpenDetail;
+  final BuildContext showcaseContext;
+  final GlobalKey categoryFilterKey;
+  final GlobalKey serviceOffersKey;
+  final void Function(String)? onFilterBySkill;
+
+  const _ServiceOffersSection({
+    required this.serviceOffers,
+    required this.availableCategories,
+    required this.usingDbOffers,
+    required this.dbOfferCategories,
+    required this.onOpenDetail,
+    required this.showcaseContext,
+    required this.categoryFilterKey,
+    required this.serviceOffersKey,
+    this.onFilterBySkill,
+  });
+
+  @override
+  State<_ServiceOffersSection> createState() => _ServiceOffersSectionState();
+}
+
+class _ServiceOffersSectionState extends State<_ServiceOffersSection>
+    with SingleTickerProviderStateMixin {
+  String _selectedSkill = 'All';
+  String _serviceSearch = '';
+  final _searchCtrl = TextEditingController();
+  final _chipScrollCtrl = ScrollController();
+  // Stable innerKeys — must live in State, not be created in build().
+  // Creating GlobalKey() inside build() generates a new key every rebuild,
+  // which remounts the child widget and resets the ListView scroll position.
+  final _categoryChipInnerKey = GlobalKey();
+  final _serviceListInnerKey = GlobalKey();
+
+  late final AnimationController _fadeCtrl;
+  late final Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _fadeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
+    // Small delay to match surrounding slivers, then fade in once.
+    Future.delayed(const Duration(milliseconds: 220), () {
+      if (mounted) _fadeCtrl.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    _chipScrollCtrl.dispose();
+    _fadeCtrl.dispose();
+    super.dispose();
+  }
+
+  bool _hasProForCategory(String category) {
+    if (category == 'All') return widget.availableCategories.isNotEmpty;
+    return widget.availableCategories.contains(category);
+  }
+
+  List<_ServiceDef> get _filteredServices {
+    final q = _serviceSearch.trim().toLowerCase();
+    if (widget.usingDbOffers) {
+      final filtered = _selectedSkill == 'All'
+          ? widget.serviceOffers
+          : widget.serviceOffers
+              .where((o) => o.serviceType == _selectedSkill)
+              .toList();
+      final defs = filtered
+          .map((o) => _ServiceDef(
+                id: o.id,
+                name: o.serviceName,
+                description: o.description ?? '',
+                image: o.imageUrl ?? '',
+                category: o.serviceType,
+              ))
+          .toList();
+      if (q.isEmpty) return defs;
+      return defs
+          .where((s) =>
+              s.name.toLowerCase().contains(q) ||
+              s.description.toLowerCase().contains(q) ||
+              s.category.toLowerCase().contains(q))
+          .toList();
+    }
+    final base = _selectedSkill == 'All'
+        ? _allServices.toList()
+        : _allServices.where((s) => s.category == _selectedSkill).toList();
+    if (q.isEmpty) return base;
+    return base
+        .where((s) =>
+            s.name.toLowerCase().contains(q) ||
+            s.description.toLowerCase().contains(q) ||
+            s.category.toLowerCase().contains(q))
+        .toList();
+  }
+
+  int get _totalInCategory => widget.usingDbOffers
+      ? (_selectedSkill == 'All'
+          ? widget.serviceOffers.length
+          : widget.serviceOffers
+              .where((o) => o.serviceType == _selectedSkill)
+              .length)
+      : (_selectedSkill == 'All'
+          ? _allServices.length
+          : _allServices.where((s) => s.category == _selectedSkill).length);
+
+  Color _colorForCategory(String cat) {
+    switch (cat) {
+      case 'Plumber':
+        return const Color(0xFF007AFF);
+      case 'Electrician':
+        return const Color(0xFFFF9500);
+      case 'Technician':
+        return const Color(0xFF5856D6);
+      case 'Carpenter':
+        return const Color(0xFFFF3B30);
+      case 'Masonry':
+        return const Color(0xFF34C759);
+      default:
+        return AppColors.primary;
+    }
+  }
+
+  IconData _iconForCategory(String cat) {
+    switch (cat) {
+      case 'Plumber':
+        return Icons.water_drop_rounded;
+      case 'Electrician':
+        return Icons.electrical_services_rounded;
+      case 'Technician':
+        return Icons.kitchen_rounded;
+      case 'Carpenter':
+        return Icons.handyman_rounded;
+      case 'Masonry':
+        return Icons.format_paint_rounded;
+      default:
+        return Icons.engineering_rounded;
+    }
+  }
+
+  Widget _buildNoPros(String category) => Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _colorForCategory(category).withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(_iconForCategory(category),
+                  size: 36,
+                  color: _colorForCategory(category).withOpacity(0.5)),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              category == 'All'
+                  ? 'No professionals available right now'
+                  : 'No $category professionals available',
+              style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Check back soon — we\'re always adding verified handymen to the platform.',
+              style: TextStyle(
+                  fontSize: 13, color: AppColors.textLight, height: 1.5),
+              textAlign: TextAlign.center,
+            ),
+          ]),
+        ),
+      );
+
+  Widget _buildEmptySearch(bool hasSearch) => Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.08),
+                  shape: BoxShape.circle),
+              child: const Icon(Icons.search_off_rounded,
+                  size: 32, color: AppColors.primary),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              hasSearch
+                  ? 'No results for "$_serviceSearch"'
+                  : 'No services available',
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textDark),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              hasSearch
+                  ? 'Try a different keyword or category.'
+                  : 'Check back soon — we\'re always adding services.',
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textLight, height: 1.5),
+              textAlign: TextAlign.center,
+            ),
+          ]),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final allFiltered = _filteredServices;
+    final catHasPro = _hasProForCategory(_selectedSkill);
+    final hasSearch = _serviceSearch.trim().isNotEmpty;
+    final total = _totalInCategory;
+
+    return FadeTransition(
+      opacity: _fadeAnim,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── Section header ───────────────────────────────────────────
+          SectionHeader(
+            title: 'Service Offers',
+            actionLabel: total > 0
+                ? '$total ${total == 1 ? 'service' : 'services'}'
+                : null,
+          ),
+          const SizedBox(height: 14),
+
+          // ── Search bar ───────────────────────────────────────────────
+          Container(
+            height: 42,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE8E8E8)),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2))
+              ],
+            ),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: (v) => setState(() => _serviceSearch = v),
+              style: const TextStyle(fontSize: 13, color: AppColors.textDark),
+              decoration: InputDecoration(
+                hintText: 'Search services…',
+                hintStyle:
+                    const TextStyle(fontSize: 13, color: AppColors.textLight),
+                prefixIcon: const Icon(Icons.search_rounded,
+                    size: 18, color: AppColors.textLight),
+                suffixIcon: hasSearch
+                    ? GestureDetector(
+                        onTap: () => setState(() {
+                          _serviceSearch = '';
+                          _searchCtrl.clear();
+                        }),
+                        child: const Icon(Icons.close_rounded,
+                            size: 16, color: AppColors.textLight),
+                      )
+                    : null,
+                border: InputBorder.none,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Category filter chips (TOUR STEP 3) ──────────────────────
+          CustomerTourShowcase.wrap(
+            key: widget.categoryFilterKey,
+            stepName: 'categoryFilter',
+            showcaseContext: widget.showcaseContext,
+            innerKey: _categoryChipInnerKey,
+            child: SizedBox(
+              height: 40,
+              child: ListView.separated(
+                controller: _chipScrollCtrl,
+                scrollDirection: Axis.horizontal,
+                itemCount: _categories.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, i) {
+                  final cat = _categories[i];
+                  final selected = _selectedSkill == cat.label;
+                  final hasAvail = _hasProForCategory(cat.label);
+                  return FilterChip(
+                    label: Text(cat.label),
+                    selected: selected,
+                    showCheckmark: false,
+                    onSelected: (_) {
+                      setState(() => _selectedSkill = cat.label);
+                      widget.onFilterBySkill?.call(cat.label);
+                    },
+                    backgroundColor: Colors.white,
+                    selectedColor: cat.color,
+                    labelStyle: TextStyle(
+                      color: selected ? Colors.white : AppColors.textDark,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                    avatar: Stack(clipBehavior: Clip.none, children: [
+                      Icon(cat.icon,
+                          size: 16, color: selected ? Colors.white : cat.color),
+                      if (!hasAvail && cat.label != 'All')
+                        Positioned(
+                          top: -3,
+                          right: -4,
+                          child: Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                                color: Color(0xFFFF3B30),
+                                shape: BoxShape.circle),
+                          ),
+                        ),
+                    ]),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      side: BorderSide(
+                          color: selected
+                              ? Colors.transparent
+                              : Colors.grey.shade300),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // ── Service list ──────────────────────────────────────────────
+          if (!catHasPro && _selectedSkill != 'All' && !hasSearch)
+            _buildNoPros(_selectedSkill)
+          else if (allFiltered.isEmpty)
+            _buildEmptySearch(hasSearch)
+          else
+            CustomerTourShowcase.wrap(
+              key: widget.serviceOffersKey,
+              stepName: 'serviceOffers',
+              showcaseContext: widget.showcaseContext,
+              innerKey: _serviceListInnerKey,
+              child: SizedBox(
+                height: 232,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: allFiltered.length,
+                  padding: const EdgeInsets.only(right: 20),
+                  itemBuilder: (context, i) {
+                    final s = allFiltered[i];
+                    final available = _hasProForCategory(s.category);
+                    return _ServiceCard(
+                      service: s,
+                      available: available,
+                      accentColor: _colorForCategory(s.category),
+                      onTap: available ? () => widget.onOpenDetail(s) : null,
+                    ).animate().fadeIn(delay: (i * 60).ms);
+                  },
+                ),
+              ),
+            ),
+        ]),
+      ), // end Padding
+    ); // end FadeTransition
   }
 }
 
@@ -1806,6 +2029,8 @@ class _BookingMiniCard extends StatelessWidget {
 
   Color _statusColor(BookingStatus s) {
     switch (s) {
+      case BookingStatus.pending:
+        return AppColors.statusPending;
       case BookingStatus.accepted:
         return AppColors.statusAccepted;
       case BookingStatus.inProgress:
@@ -1814,13 +2039,23 @@ class _BookingMiniCard extends StatelessWidget {
         return AppColors.statusCompleted;
       case BookingStatus.cancelled:
         return AppColors.error;
-      default:
-        return AppColors.statusPending;
+      case BookingStatus.scheduleProposed:
+        return AppColors.statusScheduleProposed;
+      case BookingStatus.scheduled:
+        return AppColors.statusScheduled;
+      case BookingStatus.pendingCustomerConfirmation:
+        return AppColors.statusPendingCustomerConfirmation;
+      case BookingStatus.pendingArrivalConfirmation:
+        return AppColors.statusPendingArrivalConfirmation;
+      case BookingStatus.assessment:
+        return AppColors.statusAssessment;
     }
   }
 
   String _statusLabel(BookingStatus s) {
     switch (s) {
+      case BookingStatus.pending:
+        return 'Pending';
       case BookingStatus.accepted:
         return 'Accepted';
       case BookingStatus.inProgress:
@@ -1829,8 +2064,16 @@ class _BookingMiniCard extends StatelessWidget {
         return 'Completed';
       case BookingStatus.cancelled:
         return 'Cancelled';
-      default:
-        return 'Pending';
+      case BookingStatus.scheduleProposed:
+        return 'Proposed';
+      case BookingStatus.scheduled:
+        return 'Scheduled';
+      case BookingStatus.pendingCustomerConfirmation:
+        return 'Confirming';
+      case BookingStatus.pendingArrivalConfirmation:
+        return 'Arriving';
+      case BookingStatus.assessment:
+        return 'Assessment';
     }
   }
 }

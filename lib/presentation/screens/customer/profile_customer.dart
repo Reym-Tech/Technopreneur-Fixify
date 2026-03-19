@@ -657,6 +657,7 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(kCustomerTourSeenKey);
+      await prefs.remove(kExploreTourSeenKey);
     } catch (e) {
       debugPrint('[Tour] Could not reset tour prefs: $e');
     }

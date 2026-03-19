@@ -36,11 +36,16 @@ class AppColors {
   static const Color backgroundLight = Color(0xFFF0F4F2);
   static const Color backgroundCard = Color(0xFFFFFFFF);
 
-  // Status
+  // Status — booking lifecycle
   static const Color statusPending = Color(0xFFFF9500);
   static const Color statusAccepted = Color(0xFF007AFF);
   static const Color statusInProgress = Color(0xFF5856D6);
   static const Color statusCompleted = Color(0xFF34C759);
+  static const Color statusScheduleProposed = Color(0xFF9C27B0);
+  static const Color statusScheduled = Color(0xFF007AFF);
+  static const Color statusPendingCustomerConfirmation = Color(0xFFFFA500);
+  static const Color statusPendingArrivalConfirmation = Color(0xFF009688);
+  static const Color statusAssessment = Color(0xFFFF9500);
 }
 
 class AppTheme {
@@ -53,7 +58,6 @@ class AppTheme {
         primary: AppColors.primary,
         secondary: AppColors.primaryAccent,
         surface: AppColors.backgroundLight,
-        background: AppColors.backgroundLight,
       ),
       scaffoldBackgroundColor: AppColors.backgroundLight,
       textTheme: GoogleFonts.interTextTheme().copyWith(
@@ -202,15 +206,19 @@ class AppTheme {
       cardTheme: CardThemeData(
         color: AppColors.white,
         elevation: 0,
+        shadowColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
-        shadowColor: Colors.black.withOpacity(0.06),
+        // Screens apply their own BoxShadow inline; elevation stays at 0.
       ),
+      // Note: both dashboards build their own bottom nav inline.
+      // This theme applies only if a screen uses the native BottomNavigationBar.
       bottomNavigationBarTheme: const BottomNavigationBarThemeData(
         backgroundColor: AppColors.white,
         selectedItemColor: AppColors.primary,
         unselectedItemColor: AppColors.textLight,
+        showUnselectedLabels: true,
         elevation: 0,
         type: BottomNavigationBarType.fixed,
       ),

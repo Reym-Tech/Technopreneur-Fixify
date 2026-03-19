@@ -229,7 +229,12 @@ class _ProfessionalDashboardScreenState
             try {
               final prefs = await SharedPreferences.getInstance();
               final seen = prefs.getBool(kProfessionalTourSeenKey) ?? false;
-              if (!seen && mounted) _startTour(showcaseContext);
+              if (!seen && mounted) {
+                // Mark seen immediately so navigating away mid-tour never
+                // causes the tour to replay when the user returns.
+                await prefs.setBool(kProfessionalTourSeenKey, true);
+                _startTour(showcaseContext);
+              }
             } catch (e) {
               debugPrint('[ProTour] Could not read prefs: $e');
             }
@@ -593,9 +598,9 @@ class _ProfessionalDashboardScreenState
                                 setState(() => _available = v);
                                 widget.onToggleAvailability?.call(v);
                               },
-                              activeColor: const Color(0xFF34C759),
+                              activeColor: AppColors.success,
                               activeTrackColor:
-                                  const Color(0xFF34C759).withOpacity(0.3),
+                                  AppColors.success.withOpacity(0.3),
                               inactiveThumbColor: Colors.white,
                               inactiveTrackColor: Colors.white.withOpacity(0.2),
                             ),
@@ -603,10 +608,10 @@ class _ProfessionalDashboardScreenState
                               _available ? 'Online' : 'Offline',
                               style: TextStyle(
                                 color: _available
-                                    ? const Color(0xFF34C759)
+                                    ? AppColors.success
                                     : Colors.white.withOpacity(0.5),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
                           ],
@@ -872,21 +877,21 @@ class _ProfessionalDashboardScreenState
           label: 'Earnings',
           value: '₱${_totalEarnings.toStringAsFixed(0)}',
           icon: Icons.payments_rounded,
-          color: const Color(0xFF34C759),
+          color: AppColors.success,
         ),
         const SizedBox(width: 12),
         _statCard(
           label: 'Total Jobs',
           value: '$_totalJobs',
           icon: Icons.work_rounded,
-          color: const Color(0xFF007AFF),
+          color: AppColors.statusAccepted,
         ),
         const SizedBox(width: 12),
         _statCard(
           label: 'Completion',
           value: '${_completionRate.toStringAsFixed(0)}%',
           icon: Icons.check_circle_rounded,
-          color: const Color(0xFF5856D6),
+          color: AppColors.statusInProgress,
         ),
       ],
     );
@@ -1048,66 +1053,59 @@ class _ProfessionalDashboardScreenState
 
   Widget _buildPendingBanner() {
     final count = widget.openRequestCount;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFF9500).withOpacity(0.12),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFFF9500).withOpacity(0.3)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
+    return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF9500).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.notifications_active_rounded,
+                  color: Color(0xFFFF9500), size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('$count New Request${count > 1 ? 's' : ''}',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFFF9500))),
+                  const Text('Respond before they book someone else',
+                      style:
+                          TextStyle(fontSize: 11, color: AppColors.textLight)),
+                ],
+              ),
+            ),
+            GestureDetector(
+              onTap: widget.onViewRequests,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFF9500).withOpacity(0.15),
+                  color: const Color(0xFFFF9500),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.notifications_active_rounded,
-                    color: Color(0xFFFF9500), size: 18),
+                child: const Text('View',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700)),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('$count New Request${count > 1 ? 's' : ''}',
-                        style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFFFF9500))),
-                    const Text('Respond before they book someone else',
-                        style: TextStyle(
-                            fontSize: 11, color: AppColors.textLight)),
-                  ],
-                ),
-              ),
-              GestureDetector(
-                onTap: widget.onViewRequests,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF9500),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Text('View',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+            ),
+          ],
+        ));
   }
 
   // ── MENU CARDS ────────────────────────────────────────────
@@ -1124,10 +1122,11 @@ class _ProfessionalDashboardScreenState
           showcaseContext: showcaseContext,
           child: _menuCard(
             icon: Icons.calendar_month_rounded,
+            iconColor: AppColors.statusAccepted,
             title: 'Booking Requests',
             subtitle: 'View and accept new service requests',
             badge: openCount > 0 ? '$openCount' : null,
-            badgeColor: const Color(0xFFFF3B30),
+            badgeColor: AppColors.error,
             onTap: widget.onViewRequests,
           ),
         ),
@@ -1139,6 +1138,7 @@ class _ProfessionalDashboardScreenState
           showcaseContext: showcaseContext,
           child: _menuCard(
             icon: Icons.history_rounded,
+            iconColor: AppColors.success,
             title: 'Booking History',
             subtitle: 'View your past and ongoing services',
             badge: widget.bookings
@@ -1146,7 +1146,7 @@ class _ProfessionalDashboardScreenState
                     .isNotEmpty
                 ? 'Ongoing'
                 : null,
-            badgeColor: const Color(0xFF007AFF),
+            badgeColor: AppColors.statusAccepted,
             onTap: widget.onViewHistory,
           ),
         ),
@@ -1158,6 +1158,7 @@ class _ProfessionalDashboardScreenState
           showcaseContext: showcaseContext,
           child: _menuCard(
             icon: Icons.payments_rounded,
+            iconColor: const Color(0xFF00B8A9), // teal
             title: 'Earnings Summary',
             subtitle: 'Track what you have earned through AYO',
             onTap: widget.onViewEarnings,
@@ -1171,10 +1172,11 @@ class _ProfessionalDashboardScreenState
           showcaseContext: showcaseContext,
           child: _menuCard(
             icon: Icons.workspace_premium_rounded,
+            iconColor: AppColors.warning,
             title: 'My Credentials',
             subtitle: 'Submit credentials & track verification',
             badge: widget.pendingApplications > 0 ? 'Pending' : null,
-            badgeColor: const Color(0xFFFF9500),
+            badgeColor: AppColors.warning,
             onTap: widget.onViewVerification,
           ),
         ),
@@ -1186,6 +1188,7 @@ class _ProfessionalDashboardScreenState
           showcaseContext: showcaseContext,
           child: _menuCard(
             icon: Icons.home_repair_service_rounded,
+            iconColor: AppColors.primary,
             title: 'My Services',
             subtitle: 'Select the services you offer to customers',
             onTap: widget.onManageServices,
@@ -1199,10 +1202,12 @@ class _ProfessionalDashboardScreenState
     required IconData icon,
     required String title,
     required String subtitle,
+    Color? iconColor,
     String? badge,
     Color? badgeColor,
     VoidCallback? onTap,
   }) {
+    final iColor = iconColor ?? AppColors.primary;
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -1224,10 +1229,10 @@ class _ProfessionalDashboardScreenState
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.08),
+                color: iColor.withOpacity(0.10),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: AppColors.primary, size: 24),
+              child: Icon(icon, color: iColor, size: 24),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -1446,10 +1451,11 @@ class _ProfessionalDashboardScreenState
                             const SizedBox(width: 8),
                             Expanded(
                               child: ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
+                                borderRadius: BorderRadius.circular(8),
                                 child: LinearProgressIndicator(
                                   value: pct,
                                   minHeight: 8,
+                                  borderRadius: BorderRadius.circular(8),
                                   backgroundColor: const Color(0xFFEEEEEE),
                                   valueColor:
                                       const AlwaysStoppedAnimation<Color>(

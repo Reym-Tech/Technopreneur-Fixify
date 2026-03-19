@@ -178,26 +178,20 @@ class _RequestServiceScreenState extends State<RequestServiceScreen> {
     {
       'type': 'Carpenter',
       'icon': Icons.handyman_rounded,
-      'color': Color(0xFF8B5E3C),
+      'color': Color(0xFFFF3B30),
       'subtitle': 'Furniture repair, installations'
     },
     {
       'type': 'Masonry',
       'icon': Icons.format_paint_rounded,
       'color': Color(0xFF34C759),
-      'subtitle': 'Interior & exterior painting'
+      'subtitle': 'Plastering, tiling, bricklaying, painting'
     },
     {
       'type': 'Technician',
       'icon': Icons.kitchen_rounded,
       'color': Color(0xFF5856D6),
       'subtitle': 'AC maintenance, repairs & service'
-    },
-    {
-      'type': 'Cleaning',
-      'icon': Icons.cleaning_services_rounded,
-      'color': Color(0xFF00C7BE),
-      'subtitle': 'Deep clean, regular housekeeping'
     },
   ];
 

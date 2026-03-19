@@ -151,49 +151,15 @@ class ProfessionalTourShowcase {
     required Widget child,
     required BuildContext showcaseContext,
     bool isLast = false,
+    GlobalKey? innerKey,
   }) {
     final step = _steps[stepName];
     assert(step != null, 'No tour step defined for "$stepName"');
 
-    // innerKey is attached to the child widget directly so TourCard can
-    // measure its actual screen position for accurate arrow alignment.
-    final innerKey = GlobalKey();
-    return Showcase.withWidget(
-      key: key,
-      overlayOpacity: 0.0,
-      overlayColor: Colors.transparent,
-      targetShapeBorder: const RoundedRectangleBorder(
-        side: BorderSide(color: Colors.transparent, width: 0),
-      ),
-      targetPadding: const EdgeInsets.all(6),
-      height: 0,
-      width: kTourCardWidth,
-      disableMovingAnimation: true,
-      container: TourCard(
-        title: step!.title,
-        description: step.description,
-        isLast: isLast,
-        arrowDir: step.arrowDir,
-        showcaseContext: showcaseContext,
-        innerKey: innerKey,
-      ),
-      child: KeyedSubtree(key: innerKey, child: child),
-    );
-  }
-
-  /// Wraps a nav bar item directly so the package measures its real position
-  /// and renders the tooltip above it.
-  static Widget wrapAnchor({
-    required GlobalKey key,
-    required String stepName,
-    required BuildContext showcaseContext,
-    required Widget child,
-    bool isLast = false,
-  }) {
-    final step = _steps[stepName];
-    assert(step != null, 'No tour step defined for "$stepName"');
-
-    final innerKey = GlobalKey();
+    // innerKey must be stable across builds — callers that rebuild frequently
+    // (e.g. inside a StatefulWidget.build) should pass a pre-created key stored
+    // in their State. If omitted a new key is created (fine for one-shot builds).
+    final effectiveInnerKey = innerKey ?? GlobalKey();
     return Showcase.withWidget(
       key: key,
       overlayOpacity: 0.0,
@@ -211,9 +177,46 @@ class ProfessionalTourShowcase {
         isLast: isLast,
         arrowDir: step.arrowDir,
         showcaseContext: showcaseContext,
-        innerKey: innerKey,
+        innerKey: effectiveInnerKey,
       ),
-      child: KeyedSubtree(key: innerKey, child: child),
+      child: KeyedSubtree(key: effectiveInnerKey, child: child),
+    );
+  }
+
+  /// Wraps a nav bar item directly so the package measures its real position
+  /// and renders the tooltip above it.
+  static Widget wrapAnchor({
+    required GlobalKey key,
+    required String stepName,
+    required BuildContext showcaseContext,
+    required Widget child,
+    bool isLast = false,
+    GlobalKey? innerKey,
+  }) {
+    final step = _steps[stepName];
+    assert(step != null, 'No tour step defined for "$stepName"');
+
+    final effectiveInnerKey = innerKey ?? GlobalKey();
+    return Showcase.withWidget(
+      key: key,
+      overlayOpacity: 0.0,
+      overlayColor: Colors.transparent,
+      targetShapeBorder: const RoundedRectangleBorder(
+        side: BorderSide(color: Colors.transparent, width: 0),
+      ),
+      targetPadding: EdgeInsets.zero,
+      height: 0,
+      width: kTourCardWidth,
+      disableMovingAnimation: true,
+      container: TourCard(
+        title: step!.title,
+        description: step.description,
+        isLast: isLast,
+        arrowDir: step.arrowDir,
+        showcaseContext: showcaseContext,
+        innerKey: effectiveInnerKey,
+      ),
+      child: KeyedSubtree(key: effectiveInnerKey, child: child),
     );
   }
 }

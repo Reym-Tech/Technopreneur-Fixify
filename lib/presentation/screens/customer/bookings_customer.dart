@@ -47,7 +47,7 @@ class CustomerBookingsScreen extends StatefulWidget {
     this.bookings = const [],
     this.onBookingTap,
     this.onNavTap,
-    this.currentNavIndex = 1,
+    this.currentNavIndex = 2,
     this.onRefresh,
     this.onBackjob,
   });
@@ -266,6 +266,7 @@ class _CustomerBookingsScreenState extends State<CustomerBookingsScreen>
   Widget _buildBottomNav() {
     const items = [
       {'icon': Icons.home_rounded, 'label': 'Home'},
+      {'icon': Icons.explore_rounded, 'label': 'Explore'},
       {'icon': Icons.calendar_today_rounded, 'label': 'Bookings'},
       {'icon': Icons.person_rounded, 'label': 'Profile'},
     ];
