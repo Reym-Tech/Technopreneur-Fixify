@@ -73,6 +73,17 @@ class ProfessionalEntity extends Equatable {
   final double? latitude;
   final double? longitude;
 
+  // ── SUBSCRIPTION TIER ─────────────────────────────────────────────────────
+  // 0 = Free (Freemium)
+  // 1 = AYO Pro
+  // 2 = AYO Elite
+  // Stored in professionals.subscription_tier (integer, default 0).
+  // tierExpiresAt is null for Tier 0 (free never expires) and set for
+  // paid tiers — when now() > tierExpiresAt the handyman reverts to Tier 0.
+
+  final int subscriptionTier;
+  final DateTime? tierExpiresAt;
+
   const ProfessionalEntity({
     required this.id,
     required this.userId,
@@ -92,11 +103,60 @@ class ProfessionalEntity extends Equatable {
     this.phone,
     this.latitude,
     this.longitude,
+    this.subscriptionTier = 0,
+    this.tierExpiresAt,
   });
 
+  /// Whether the subscription is currently active (not expired).
+  /// Tier 0 is always considered active (it never expires).
+  bool get isTierActive {
+    if (subscriptionTier == 0) return true;
+    if (tierExpiresAt == null) return true;
+    return DateTime.now().isBefore(tierExpiresAt!);
+  }
+
+  /// Effective tier — falls back to 0 if the subscription has expired.
+  int get effectiveTier => isTierActive ? subscriptionTier : 0;
+
+  bool get isPro => effectiveTier >= 1;
+  bool get isElite => effectiveTier >= 2;
+
+  /// Maximum concurrent active bookings allowed for this tier.
+  /// Tier 0: 2 active at once, Tier 1: 10, Tier 2: unlimited (999).
+  int get activeBookingSlots {
+    switch (effectiveTier) {
+      case 2:
+        return 999;
+      case 1:
+        return 10;
+      default:
+        return 2;
+    }
+  }
+
+  /// Human-readable tier label.
+  String get tierLabel {
+    switch (effectiveTier) {
+      case 2:
+        return 'AYO Elite';
+      case 1:
+        return 'AYO Pro';
+      default:
+        return 'Free';
+    }
+  }
+
   @override
-  List<Object?> get props =>
-      [id, userId, name, skills, verified, rating, reviewCount];
+  List<Object?> get props => [
+        id,
+        userId,
+        name,
+        skills,
+        verified,
+        rating,
+        reviewCount,
+        subscriptionTier
+      ];
 }
 
 // ─────────────────────────────────────────

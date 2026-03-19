@@ -150,6 +150,10 @@ class ProfessionalModel extends Equatable {
   final double? latitude;
   final double? longitude;
 
+  // ── SUBSCRIPTION TIER ─────────────────────────────────────────────────────
+  final int subscriptionTier;
+  final DateTime? tierExpiresAt;
+
   const ProfessionalModel({
     required this.id,
     required this.userId,
@@ -169,6 +173,8 @@ class ProfessionalModel extends Equatable {
     this.phone,
     this.latitude,
     this.longitude,
+    this.subscriptionTier = 0,
+    this.tierExpiresAt,
   });
 
   factory ProfessionalModel.fromJson(Map<String, dynamic> json) {
@@ -192,6 +198,10 @@ class ProfessionalModel extends Equatable {
       available: json['available'] as bool? ?? true,
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
+      subscriptionTier: json['subscription_tier'] as int? ?? 0,
+      tierExpiresAt: json['tier_expires_at'] != null
+          ? DateTime.tryParse(json['tier_expires_at'] as String)
+          : null,
     );
   }
 
@@ -215,6 +225,8 @@ class ProfessionalModel extends Equatable {
         phone: phone,
         latitude: lat,
         longitude: lng,
+        subscriptionTier: subscriptionTier,
+        tierExpiresAt: tierExpiresAt,
       );
 
   ProfessionalEntity toEntity() => ProfessionalEntity(
@@ -236,6 +248,8 @@ class ProfessionalModel extends Equatable {
         phone: phone,
         latitude: latitude,
         longitude: longitude,
+        subscriptionTier: subscriptionTier,
+        tierExpiresAt: tierExpiresAt,
       );
 
   Map<String, dynamic> toJson() => {

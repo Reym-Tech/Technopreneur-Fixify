@@ -1603,6 +1603,133 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
+  // ── UPGRADE REQUEST (Stage 1 — manual flow) ───────────────────────────────
+  // Shows a bottom sheet explaining the upgrade process. In Stage 1 the
+  // handyman contacts AYO support to upgrade; in Stage 2 this triggers
+  // the PayMongo payment link flow. The sheet is intentionally simple —
+  // it sets expectations and gives the handyman a clear next action.
+
+  void _handleRequestUpgrade() {
+    if (_pro == null || !mounted) return;
+    final currentTier = _pro!.subscriptionTier;
+    final targetTier = currentTier < 1 ? 1 : 2;
+    const tierNames = ['Free', 'AYO Pro', 'AYO Elite'];
+    final targetName = tierNames[targetTier];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDDDDDD),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text('Upgrade to $targetName',
+                style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF1C1C1E))),
+            const SizedBox(height: 8),
+            Text(
+              'To upgrade your plan, send us a message on our support channel. '
+              'We will activate your $targetName plan within 24 hours.',
+              style: const TextStyle(
+                  fontSize: 13, color: Color(0xFF8E8E93), height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            // Tier summary
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF2F2F7),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('What you get with $targetName',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1C1C1E))),
+                  const SizedBox(height: 8),
+                  ...(targetTier == 1
+                          ? [
+                              'Higher search ranking',
+                              'Up to 10 active jobs',
+                              'Priority job notifications',
+                              'AYO Pro badge',
+                            ]
+                          : [
+                              'Top search placement',
+                              'Unlimited active jobs',
+                              'Featured on customer home',
+                              'Profile highlighted',
+                              'AYO Elite badge',
+                            ])
+                      .map((f) => Padding(
+                            padding: const EdgeInsets.only(bottom: 5),
+                            child: Row(children: [
+                              const Icon(Icons.check_circle_rounded,
+                                  size: 13, color: Color(0xFF34C759)),
+                              const SizedBox(width: 8),
+                              Text(f,
+                                  style: const TextStyle(
+                                      fontSize: 12, color: Color(0xFF3C3C43))),
+                            ]),
+                          )),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  // Copy upgrade request text to clipboard so the handyman
+                  // can paste it directly into WhatsApp or any support channel.
+                  final proName = _user?.name ?? 'A handyman';
+                  final msg = 'Hi AYO, I would like to upgrade to $targetName. '
+                      'My name is $proName and my account ID is ${_pro!.id}.';
+                  await Clipboard.setData(ClipboardData(text: msg));
+                  _notify(
+                      'Upgrade request copied. Paste it into our support channel.');
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Text('Copy Upgrade Request',
+                    style:
+                        TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _refreshProfessionalDashboard() async {
     if (_user == null || _pro == null) return;
     try {
@@ -2509,8 +2636,12 @@ class _MainAppState extends State<MainApp> {
             setState(
                 () => _openRequests.removeWhere((r) => r.id == booking.id));
             _notify(e.message);
+          } on BookingSlotLimitException catch (e) {
+            // Handyman is at their tier's slot limit — show the message
+            // and keep the request visible so they can try later.
+            _notify(e.message);
           } catch (e) {
-            _notify('Error: $e');
+            _notify(e.toString().replaceFirst('Exception: ', ''));
           }
         },
         onDecline: (booking) async {
@@ -2656,6 +2787,7 @@ class _MainAppState extends State<MainApp> {
       onViewVerification: () => setState(() => _screen = 'verification_status'),
       onManageServices: () => setState(() => _screen = 'my_services'),
       onShareProfile: () => _shareProProfile(),
+      onRequestUpgrade: () => _handleRequestUpgrade(),
       onToggleAvailability: (isAvailable) async {
         if (_pro == null) return;
         try {
@@ -2900,6 +3032,10 @@ class _MainAppState extends State<MainApp> {
           debugPrint('Guest refresh error: $e');
         }
       },
+      featuredProfessionals: _professionals
+          .where((p) => p.subscriptionTier >= 2)
+          .map((p) => p.toEntity())
+          .toList(),
     );
   }
 
@@ -3077,12 +3213,25 @@ class _MainAppState extends State<MainApp> {
               }
 
               _notify(isDirectBooking
-                  ? 'Request sent directly to your chosen professional!'
-                  : 'Request sent! Looking for an available handyman...');
+                  ? 'Request sent directly to your chosen handyman.'
+                  : 'Request sent. Looking for an available handyman.');
+            } on BookingSlotLimitException catch (e) {
+              if (mounted)
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(e.message),
+                  backgroundColor: AppColors.error,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ));
             } catch (e) {
               if (mounted)
-                ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Request failed: $e')));
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(e.toString().replaceFirst('Exception: ', '')),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ));
             }
           },
         );
@@ -3441,6 +3590,11 @@ class _MainAppState extends State<MainApp> {
           });
         },
         onNotificationsViewed: () => setState(() => _unreadNotifCount = 0),
+        // Elite handymen (Tier 2) shown in the Featured row above the catalogue.
+        featuredProfessionals: _professionals
+            .where((p) => p.subscriptionTier >= 2)
+            .map((p) => p.toEntity())
+            .toList(),
         // CONTROLLER: pull-to-refresh reloads professionals, bookings,
         // AND service offers so the customer always sees live data.
         onRefresh: _refreshCustomerDashboard,
@@ -3474,10 +3628,19 @@ class _MainAppState extends State<MainApp> {
         _screen = 'booking_status';
       });
       _subscribeToBooking(booking);
+    } on BookingSlotLimitException catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.message),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ));
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Booking failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', ''))));
     }
   }
 

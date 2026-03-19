@@ -153,6 +153,7 @@ class SupabaseDataSource {
           'id, user_id, skills, verified, rating, review_count, '
           'price_range, price_min, price_max, city, bio, '
           'years_experience, available, latitude, longitude, '
+          'subscription_tier, tier_expires_at, '
           'users(id, name, avatar_url, phone)',
         )
         .eq('available', true);
@@ -160,7 +161,11 @@ class SupabaseDataSource {
     if (verified != null) query = query.eq('verified', verified);
     if (city != null && city.isNotEmpty) query = query.eq('city', city);
 
-    final response = await query.order('rating', ascending: false);
+    // Order: Tier 2 first, then Tier 1, then Tier 0. Within each tier,
+    // higher-rated professionals appear first.
+    final response = await query
+        .order('subscription_tier', ascending: false)
+        .order('rating', ascending: false);
 
     var list = (response as List)
         .map((j) => ProfessionalModel.fromJson(j as Map<String, dynamic>))
@@ -602,6 +607,63 @@ class SupabaseDataSource {
           'Preferred date cannot be in the past. Please choose today or a future date.');
     }
 
+    // ── Validation: active booking slot limit per subscription tier ────────
+    // Tier 0 = 2 slots, Tier 1 = 10 slots, Tier 2 = unlimited.
+    // Only enforced when a specific professional is being assigned.
+    if (professionalId != null && !isBackjob) {
+      try {
+        final proData = await _client
+            .from(AppConfig.professionalsTable)
+            .select('subscription_tier, tier_expires_at')
+            .eq('id', professionalId)
+            .single();
+
+        final tier = proData['subscription_tier'] as int? ?? 0;
+        final expiresRaw = proData['tier_expires_at'] as String?;
+        final expiresAt =
+            expiresRaw != null ? DateTime.tryParse(expiresRaw) : null;
+        final effectiveTier =
+            (expiresAt == null || DateTime.now().isBefore(expiresAt))
+                ? tier
+                : 0;
+
+        final maxSlots = effectiveTier >= 2
+            ? 999
+            : effectiveTier == 1
+                ? 10
+                : 2;
+
+        if (maxSlots < 999) {
+          final activeCount = await _client
+              .from(AppConfig.bookingsTable)
+              .select('id')
+              .eq('professional_id', professionalId)
+              .inFilter('status', [
+            'pending',
+            'accepted',
+            'schedule_proposed',
+            'scheduled',
+            'pending_arrival_confirmation',
+            'assessment',
+            'in_progress',
+            'pending_customer_confirmation',
+          ]);
+          if ((activeCount as List).length >= maxSlots) {
+            throw const BookingSlotLimitException(
+                'This handyman is unavailable. Please choose another.');
+          }
+        }
+      } on BookingSlotLimitException {
+        // Always re-throw slot limit — it is a meaningful business error,
+        // not a transient DB failure.
+        rethrow;
+      } catch (e) {
+        // Swallow only genuine lookup failures (network, permissions, etc.)
+        // so a DB hiccup does not prevent booking creation.
+        debugPrint('[createBooking] Could not check slot limit: $e');
+      }
+    }
+
     // ── Upload photo to Storage (if provided) ─────────────────────────────
     // RLS policy on booking_photos bucket:
     //   (storage.foldername(name))[1] = auth.uid()::text
@@ -692,7 +754,7 @@ class SupabaseDataSource {
 
     final current = await _client
         .from(AppConfig.bookingsTable)
-        .select('professional_id, status')
+        .select('professional_id, status, is_backjob')
         .eq('id', bookingId)
         .single();
 
@@ -709,6 +771,61 @@ class SupabaseDataSource {
     if (current['status'] != 'pending') {
       throw const BookingAlreadyClaimedException(
           'This request is no longer available.');
+    }
+
+    // ── Slot limit check ───────────────────────────────────────────────────
+    // Runs for both direct bookings and open-request claims.
+    // Backjob bookings are exempt — they are warranty claims and must always
+    // go through regardless of slot count.
+    final bookingIsBackjob = current['is_backjob'] as bool? ?? false;
+    if (!bookingIsBackjob) {
+      try {
+        final proData = await _client
+            .from(AppConfig.professionalsTable)
+            .select('subscription_tier, tier_expires_at')
+            .eq('id', professionalId)
+            .single();
+
+        final tier = proData['subscription_tier'] as int? ?? 0;
+        final expiresRaw = proData['tier_expires_at'] as String?;
+        final expiresAt =
+            expiresRaw != null ? DateTime.tryParse(expiresRaw) : null;
+        final effectiveTier =
+            (expiresAt == null || DateTime.now().isBefore(expiresAt))
+                ? tier
+                : 0;
+
+        final maxSlots = effectiveTier >= 2
+            ? 999
+            : effectiveTier == 1
+                ? 10
+                : 2;
+
+        if (maxSlots < 999) {
+          final activeCount = await _client
+              .from(AppConfig.bookingsTable)
+              .select('id')
+              .eq('professional_id', professionalId)
+              .inFilter('status', [
+            'pending',
+            'accepted',
+            'schedule_proposed',
+            'scheduled',
+            'pending_arrival_confirmation',
+            'assessment',
+            'in_progress',
+            'pending_customer_confirmation',
+          ]);
+          if ((activeCount as List).length >= maxSlots) {
+            throw const BookingSlotLimitException(
+                'Booking limit reached. Complete a job or upgrade your plan.');
+          }
+        }
+      } on BookingSlotLimitException {
+        rethrow;
+      } catch (e) {
+        debugPrint('[claimBooking] Could not check slot limit: $e');
+      }
     }
 
     // For direct bookings (professional_id already set to this pro),
@@ -1492,6 +1609,47 @@ class SupabaseDataSource {
         .update({'available': available}).eq('id', professionalId);
   }
 
+  // ── SUBSCRIPTION TIER ─────────────────────────────────────────────────────
+
+  /// Updates the subscription tier for a professional.
+  /// Called by admin (manual upgrade flow) or eventually by the PayMongo
+  /// webhook Edge Function when payment is confirmed.
+  ///
+  /// [tier] — 0 (Free), 1 (AYO Pro), 2 (AYO Elite)
+  /// [expiresAt] — null for Tier 0; set to subscription end date for paid tiers.
+  Future<void> updateSubscriptionTier({
+    required String professionalId,
+    required int tier,
+    DateTime? expiresAt,
+  }) async {
+    await _client.from(AppConfig.professionalsTable).update({
+      'subscription_tier': tier,
+      'tier_expires_at': expiresAt?.toUtc().toIso8601String(),
+      'tier_updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', professionalId);
+  }
+
+  /// Returns the current effective tier for a professional, accounting for
+  /// expiry. Returns 0 if the subscription has expired or the professional
+  /// is not found.
+  Future<int> getEffectiveTier(String professionalId) async {
+    try {
+      final data = await _client
+          .from(AppConfig.professionalsTable)
+          .select('subscription_tier, tier_expires_at')
+          .eq('id', professionalId)
+          .single();
+      final tier = data['subscription_tier'] as int? ?? 0;
+      final expiresRaw = data['tier_expires_at'] as String?;
+      if (expiresRaw == null) return tier;
+      final expiresAt = DateTime.tryParse(expiresRaw);
+      if (expiresAt == null) return tier;
+      return DateTime.now().isBefore(expiresAt) ? tier : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
   // ── USER PROFILE ──────────────────────────────────────────
 
   Future<UserModel> updateUserProfile({
@@ -1667,6 +1825,17 @@ class SupabaseDataSource {
 class BookingAlreadyClaimedException implements Exception {
   final String message;
   const BookingAlreadyClaimedException(this.message);
+  @override
+  String toString() => message;
+}
+
+/// Thrown when a professional has reached the active booking limit for
+/// their subscription tier. Caught separately from generic exceptions so
+/// the UI can show a clean, appropriate message to the relevant party
+/// (handyman on accept, customer on direct booking).
+class BookingSlotLimitException implements Exception {
+  final String message;
+  const BookingSlotLimitException(this.message);
   @override
   String toString() => message;
 }
