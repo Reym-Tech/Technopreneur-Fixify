@@ -1324,10 +1324,6 @@ class SupabaseDataSource {
   }) async {
     if (skills.isEmpty) return [];
 
-    // Fetch the service offer IDs this professional has selected.
-    // These represent the exact (serviceType + serviceName) pairs they offer.
-    final offeredServiceIds = await getMyProfessionalServices(professionalId);
-
     // Fetch open + directly-assigned pending bookings.
     final response = await _client
         .from(AppConfig.bookingsTable)
@@ -1340,32 +1336,42 @@ class SupabaseDataSource {
         .map((j) => BookingModel.fromJson(j as Map<String, dynamic>))
         .toList();
 
-    // If the professional has no services selected, they receive nothing.
-    // There is no fallback to skills-array matching — a professional must
-    // explicitly select services before receiving booking requests.
-    if (offeredServiceIds.isEmpty) return [];
+    // ── Step 1: Direct bookings always pass through ───────────────────────────
+    // A direct booking has professional_id set to this pro at creation time.
+    // We never filter these — if the booking was assigned to this professional,
+    // they must always see it regardless of service-title matching.
+    final directBookings =
+        all.where((b) => b.professionalId == professionalId).toList();
+
+    // ── Step 2: Filter open (unassigned) requests by offered services ─────────
+    // Fetch the service offer IDs this professional has selected.
+    final offeredServiceIds = await getMyProfessionalServices(professionalId);
+
+    // If the professional has no services selected, return only direct bookings.
+    if (offeredServiceIds.isEmpty) return directBookings;
 
     // Fetch the service_proposals rows for the offered IDs so we can
     // match on both serviceType AND serviceName.
     final offeredOffers = await _fetchServiceOffersByIds(offeredServiceIds);
 
-    return all.where((booking) {
-      // Direct bookings assigned to this professional always pass through.
-      if (booking.professionalId == professionalId) return true;
+    final openRequests = all.where((booking) {
+      // Skip direct bookings — already handled above.
+      if (booking.professionalId == professionalId) return false;
 
-      // Open requests: must match on BOTH serviceType AND serviceTitle.
-      // If serviceTitle is null (old booking before the column was added),
-      // we skip it rather than falling back to serviceType — a loose match
-      // would send the booking to every professional of that skill type,
-      // which is exactly the bug we're fixing.
-      final bookingTitle = booking.serviceTitle ?? booking.notes;
+      // Open requests: must match on serviceType AND serviceTitle.
+      // serviceTitle is the specific service name stored at booking creation
+      // (e.g. 'Faucet/Bidet Install'). Do NOT fall back to notes — notes is
+      // the customer's optional P.S. field and is not a service identifier.
+      final bookingTitle = booking.serviceTitle;
       if (bookingTitle == null || bookingTitle.trim().isEmpty) return false;
 
       return offeredOffers.any((offer) =>
           offer.serviceType.toLowerCase() ==
               booking.serviceType.toLowerCase() &&
-          offer.serviceName.toLowerCase() == bookingTitle.toLowerCase());
+          offer.serviceName.toLowerCase() == bookingTitle.trim().toLowerCase());
     }).toList();
+
+    return [...directBookings, ...openRequests];
   }
 
   /// Helper — fetches service_proposals rows for a set of IDs.
@@ -1500,40 +1506,60 @@ class SupabaseDataSource {
           callback: (payload) async {
             final record = payload.newRecord;
             final recordProId = record['professional_id'] as String?;
+
+            // Ignore bookings assigned to a DIFFERENT professional entirely.
             if (recordProId != null && recordProId != professionalId) return;
 
+            // ── Direct booking fast-path ──────────────────────────────────────
+            // When professional_id is already set to THIS professional at insert
+            // time, this is a direct booking — always surface it immediately
+            // without any service-title matching.
+            if (recordProId == professionalId) {
+              try {
+                final data = await _client
+                    .from(AppConfig.bookingsTable)
+                    .select('*, users!customer_id(id, name, avatar_url, phone)')
+                    .eq('id', record['id'])
+                    .single();
+                onNewRequest(BookingModel.fromJson(data));
+              } catch (e) {
+                debugPrint('[Realtime] Could not re-fetch direct booking: $e');
+                onNewRequest(BookingModel.fromJson(record));
+              }
+              return;
+            }
+
+            // ── Open request matching ─────────────────────────────────────────
+            // professional_id is null — this is a broadcast open request.
+            // Apply serviceType + serviceTitle matching so only professionals
+            // who have selected the exact service receive it.
             final serviceType =
                 (record['service_type'] as String?)?.toLowerCase() ?? '';
-            // service_title is the specific service name (e.g. 'Faucet/Bidet Install').
-            // Falls back to notes only — never to serviceType, as that would
-            // match every professional of that skill regardless of their services.
-            final serviceTitle =
-                (record['service_title'] as String?)?.toLowerCase() ??
-                    (record['notes'] as String?)?.toLowerCase();
 
-            // Step 1 — quick serviceType gate
+            // Quick serviceType gate — avoids a DB round-trip for skills
+            // this professional doesn't have.
             if (!normalizedSkills.contains(serviceType)) return;
 
-            // If no serviceTitle, we can't do exact matching — skip to avoid
-            // sending the booking to the wrong professional.
-            if (serviceTitle == null || serviceTitle.trim().isEmpty) return;
+            // serviceTitle is the specific service name stored at booking
+            // creation (e.g. 'Faucet/Bidet Install'). Do NOT fall back to
+            // notes — notes is the customer's optional P.S. field and is not
+            // a service identifier. If serviceTitle is absent we cannot do
+            // exact matching, so we skip rather than broadcast loosely.
+            final serviceTitle =
+                (record['service_title'] as String?)?.toLowerCase()?.trim();
+            if (serviceTitle == null || serviceTitle.isEmpty) return;
 
             // Step 2 — check professional_services for exact match
             try {
               final offeredIds =
                   await getMyProfessionalServices(professionalId);
 
-              bool shouldAccept = false;
-              if (offeredIds.isEmpty) {
-                // No services selected yet — skip, don't fall back loosely
-                shouldAccept = false;
-              } else {
-                final offeredOffers =
-                    await _fetchServiceOffersByIds(offeredIds);
-                shouldAccept = offeredOffers.any((offer) =>
-                    offer.serviceType.toLowerCase() == serviceType &&
-                    offer.serviceName.toLowerCase() == serviceTitle);
-              }
+              if (offeredIds.isEmpty) return;
+
+              final offeredOffers = await _fetchServiceOffersByIds(offeredIds);
+              final shouldAccept = offeredOffers.any((offer) =>
+                  offer.serviceType.toLowerCase() == serviceType &&
+                  offer.serviceName.toLowerCase() == serviceTitle);
 
               if (!shouldAccept) return;
 

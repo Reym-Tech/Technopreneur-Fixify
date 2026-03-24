@@ -3354,7 +3354,16 @@ class _MainAppState extends State<MainApp> {
           }),
           onBookNow: (serviceType) {
             final pro = _selectedProFresh ?? _selectedPro;
-            if (pro != null) _navigateToDirectBooking(pro);
+            if (pro != null) {
+              // Reset _navIndex to 0 (Home) before navigating to
+              // request_service. Without this, if the customer arrived here
+              // from the Explore tab (_navIndex == 1), the routing guard
+              //   `if (_navIndex == 1 && _screen != 'professional_profile')`
+              // would intercept _screen == 'request_service' and render
+              // AllProfessionalsScreen instead of RequestServiceScreen.
+              setState(() => _navIndex = 0);
+              _navigateToDirectBooking(pro);
+            }
           },
         );
 
