@@ -892,7 +892,7 @@ class _MainAppState extends State<MainApp> {
         address: data.address,
         priceEstimate: data.priceEstimate,
         latitude: data.latitude,
-        longitude: data.longitude, 
+        longitude: data.longitude,
         isCustomRequest: false,
       );
 
@@ -3729,7 +3729,7 @@ class _MainAppState extends State<MainApp> {
         address: address,
         priceEstimate: _selectedPro!.priceMin,
         latitude: latitude,
-        longitude: longitude, 
+        longitude: longitude,
         isCustomRequest: false,
       );
       await _refreshBookings();
