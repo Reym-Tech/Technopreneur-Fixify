@@ -693,6 +693,7 @@ class SupabaseDataSource {
     String? photoPath,
     bool isBackjob = false,
     String? originalBookingId,
+    required bool isCustomRequest,
   }) async {
     // ── Validation: reject dates in the past ──────────────────────────────
     final today = DateTime.now();
@@ -815,6 +816,8 @@ class SupabaseDataSource {
       if (longitude != null) 'longitude': longitude,
       // Only include photo_url when a URL was successfully obtained.
       if (photoUrl != null) 'photo_url': photoUrl,
+      // Custom request flag — set when customer uses free-text "Can't find what you need?" flow.
+      'is_custom_request': isCustomRequest,
       // Backjob / warranty fields
       'is_backjob': isBackjob,
       if (originalBookingId != null) 'original_booking_id': originalBookingId,
@@ -1358,10 +1361,22 @@ class SupabaseDataSource {
       // Skip direct bookings — already handled above.
       if (booking.professionalId == professionalId) return false;
 
-      // Open requests: must match on serviceType AND serviceTitle.
-      // serviceTitle is the specific service name stored at booking creation
-      // (e.g. 'Faucet/Bidet Install'). Do NOT fall back to notes — notes is
-      // the customer's optional P.S. field and is not a service identifier.
+      // ── Custom requests: match on serviceType only ──────────────────────────
+      // Custom requests don't have a standard serviceTitle from the catalogue,
+      // so we only require the service type (e.g. "Plumber") to match.
+      // This allows professionals in that category to see the free-text request
+      // and set pricing on-site.
+      if (booking.isCustomRequest) {
+        return offeredOffers.any(
+          (offer) =>
+              offer.serviceType.toLowerCase() ==
+              booking.serviceType.toLowerCase(),
+        );
+      }
+
+      // ── Catalogue requests: match on serviceType AND serviceTitle ──────────
+      // Regular (non-custom) requests must match both the service type and
+      // the specific service name (e.g. 'Faucet/Bidet Install').
       final bookingTitle = booking.serviceTitle;
       if (bookingTitle == null || bookingTitle.trim().isEmpty) return false;
 

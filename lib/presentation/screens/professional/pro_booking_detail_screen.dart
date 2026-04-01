@@ -122,6 +122,13 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
   DateTime get _customerPreferredTime =>
       widget.booking.scheduledTime ?? widget.booking.scheduledDate;
 
+  // ── MODEL (View-local) — custom/unlisted service detection ────────────────
+  // Reads the authoritative flag persisted at booking-creation time.
+  // No heuristic: isCustomRequest is set in main.dart when the customer
+  // used the free-text "Can't find what you need?" flow and is stored in
+  // the DB as is_custom_request, so it survives every reload.
+  bool get _isCustomRequest => widget.booking.isCustomRequest;
+
   @override
   void dispose() {
     _priceController.dispose();
@@ -310,6 +317,13 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (_isCustomRequest) ...[
+                      _buildCustomRequestBanner()
+                          .animate()
+                          .fadeIn(delay: 60.ms)
+                          .slideY(begin: -0.05, end: 0),
+                      const SizedBox(height: 12),
+                    ],
                     _buildBookingInfoCard()
                         .animate()
                         .fadeIn(delay: 80.ms)
@@ -466,6 +480,12 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
 
         _infoRow(Icons.build_rounded, 'Service', b.serviceType),
 
+        // ── Custom / unlisted service title ───────────────────────────────
+        if (b.serviceTitle != null && b.serviceTitle!.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _customServiceTitleRow(b.serviceTitle!),
+        ],
+
         if (b.description != null && b.description!.isNotEmpty) ...[
           const SizedBox(height: 10),
           _infoRow(Icons.article_rounded, 'Issue Details', b.description!),
@@ -525,6 +545,97 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
   }
 
   // ── VIEW — row helpers ─────────────────────────────────────────────────────
+
+  // ── VIEW — custom request banner ──────────────────────────────────────────
+  // Shown at the top of the scroll area whenever the booking is an unlisted
+  // (free-text) service.  Alerts the handyman that pricing must be set on-site
+  // during the assessment step.
+
+  Widget _buildCustomRequestBanner() => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8E7),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE8C060), width: 1.5),
+        ),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFB800).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.build_circle_rounded,
+                color: Color(0xFFB07D00), size: 20),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Text('Custom / Unlisted Request',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF7A5500))),
+                SizedBox(width: 8),
+                _CustomBadge(),
+              ]),
+              SizedBox(height: 4),
+              Text(
+                'This service is not in the standard catalogue. '
+                'Review the job description, then set the price '
+                'on-site during the assessment step.',
+                style: TextStyle(fontSize: 12, color: Color(0xFFAA8800)),
+              ),
+            ]),
+          ),
+        ]),
+      );
+
+  // ── VIEW — custom service title row ───────────────────────────────────────
+  // Renders the customer's free-text service name with an inline "Custom" pill
+  // so the handyman immediately sees it is not a standard catalogue entry.
+
+  Widget _customServiceTitleRow(String title) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFB800).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.label_important_rounded,
+                size: 16, color: Color(0xFFB07D00)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Requested Service',
+                  style: TextStyle(fontSize: 11, color: AppColors.textLight)),
+              const SizedBox(height: 4),
+              Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                Flexible(
+                  child: Text(title,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textDark)),
+                ),
+                const SizedBox(width: 8),
+                const _CustomBadge(),
+              ]),
+              const SizedBox(height: 3),
+              const Text('Price to be assessed on-site',
+                  style: TextStyle(fontSize: 11, color: Color(0xFFAA8800))),
+            ]),
+          ),
+        ],
+      );
 
   Widget _estimatedRateRow(double priceEstimate) => Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2067,4 +2178,33 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
           ),
         ]),
       );
+}
+
+// ── _CustomBadge ──────────────────────────────────────────────────────────────
+// Small amber pill used both in the banner and in the service-title row to
+// signal that this is a free-text / unlisted booking.
+
+class _CustomBadge extends StatelessWidget {
+  const _CustomBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFB800).withOpacity(0.18),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFFE8C060), width: 1),
+      ),
+      child: const Text(
+        'Custom',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFFB07D00),
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
 }

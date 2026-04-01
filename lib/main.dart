@@ -892,7 +892,8 @@ class _MainAppState extends State<MainApp> {
         address: data.address,
         priceEstimate: data.priceEstimate,
         latitude: data.latitude,
-        longitude: data.longitude,
+        longitude: data.longitude, 
+        isCustomRequest: false,
       );
 
       _subscribeToBooking(booking);
@@ -3231,6 +3232,19 @@ class _MainAppState extends State<MainApp> {
                 } catch (_) {}
               }
 
+              // Detect custom/unlisted requests: the customer used the free-text
+              // "Can't find what you need?" flow when priceRange is the sentinel
+              // 'Price to be assessed' (produced by the synthetic _OfferDef) or
+              // when no catalogue price was found at all (null/empty). This is
+              // the authoritative signal — persisted as is_custom_request so the
+              // professional sees the amber "Custom Request" banner without
+              // relying on fragile heuristics (e.g. priceEstimate == null, which
+              // can also be true for legitimate catalogue services with no price set).
+              final isCustomRequest = result.priceRange == null ||
+                  result.priceRange!.isEmpty ||
+                  result.priceRange!.trim().toLowerCase() ==
+                      'price to be assessed';
+
               // When coming from a professional's profile, _selectedPro is set
               // and result.matchedPros contains only that one professional.
               // Pass their ID directly so the booking is assigned to them alone
@@ -3252,6 +3266,7 @@ class _MainAppState extends State<MainApp> {
                 latitude: result.latitude,
                 longitude: result.longitude,
                 photoPath: result.photoPath,
+                isCustomRequest: isCustomRequest,
               );
 
               _subscribeToBooking(booking);
@@ -3714,7 +3729,8 @@ class _MainAppState extends State<MainApp> {
         address: address,
         priceEstimate: _selectedPro!.priceMin,
         latitude: latitude,
-        longitude: longitude,
+        longitude: longitude, 
+        isCustomRequest: false,
       );
       await _refreshBookings();
       final refreshed =

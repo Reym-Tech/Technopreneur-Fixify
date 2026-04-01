@@ -317,6 +317,13 @@ class BookingModel extends Equatable {
   /// Reason given when the handyman proposes a reschedule.
   final String? rescheduleReason;
 
+  /// True when the customer submitted a free-text service request via the
+  /// "Can't find what you need?" flow (no catalogue entry, no price range).
+  /// Set at booking-creation time and persisted to the DB as is_custom_request.
+  /// Drives the amber "Custom Request" banner so the professional knows
+  /// pricing must be set on-site.
+  final bool isCustomRequest;
+
   // ── BACKJOB / WARRANTY ────────────────────────────────────────────────────
 
   /// True when this booking was created as a warranty / backjob claim.
@@ -352,6 +359,7 @@ class BookingModel extends Equatable {
     this.photoUrl,
     this.scheduledTime,
     this.rescheduleReason,
+    this.isCustomRequest = false,
     this.isBackjob = false,
     this.originalBookingId,
     this.warrantyExpiresAt,
@@ -404,6 +412,9 @@ class BookingModel extends Equatable {
       // Parse photo_url — set when customer uploads a photo during booking creation.
       final photoUrl = json['photo_url'] as String?;
 
+      // Parse isCustomRequest — indicates free-text / unlisted service.
+      final isCustomRequest = json['is_custom_request'] as bool? ?? false;
+
       // ── Backjob / warranty fields ─────────────────────────────────────────
       final isBackjob = json['is_backjob'] as bool? ?? false;
       final originalBookingId = json['original_booking_id'] as String?;
@@ -437,6 +448,7 @@ class BookingModel extends Equatable {
         photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
+        isCustomRequest: isCustomRequest,
         isBackjob: isBackjob,
         originalBookingId: originalBookingId,
         warrantyExpiresAt: warrantyExpiresAt,
@@ -522,6 +534,7 @@ class BookingModel extends Equatable {
         assessmentPrice: assessmentPrice,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
+        isCustomRequest: isCustomRequest,
         isBackjob: isBackjob,
         originalBookingId: originalBookingId,
         warrantyExpiresAt: warrantyExpiresAt,
@@ -548,6 +561,7 @@ class BookingModel extends Equatable {
         photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
+        isCustomRequest: isCustomRequest,
         isBackjob: isBackjob,
         originalBookingId: originalBookingId,
         warrantyExpiresAt: warrantyExpiresAt,
@@ -574,6 +588,7 @@ class BookingModel extends Equatable {
         photoUrl: photoUrl,
         scheduledTime: scheduledTime,
         rescheduleReason: rescheduleReason,
+        isCustomRequest: isCustomRequest,
         isBackjob: isBackjob,
         originalBookingId: originalBookingId,
         warrantyExpiresAt: warrantyExpiresAt,
@@ -596,6 +611,7 @@ class BookingModel extends Equatable {
         'assessment_price': assessmentPrice,
         'scheduled_time': scheduledTime?.toUtc().toIso8601String(),
         'reschedule_reason': rescheduleReason,
+        'is_custom_request': isCustomRequest,
         'is_backjob': isBackjob,
         if (originalBookingId != null) 'original_booking_id': originalBookingId,
         if (warrantyExpiresAt != null)

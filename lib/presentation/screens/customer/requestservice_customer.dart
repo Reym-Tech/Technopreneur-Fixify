@@ -2382,11 +2382,14 @@ class _ProblemTitleSheet extends StatefulWidget {
 
 class _ProblemTitleSheetState extends State<_ProblemTitleSheet> {
   final _searchCtrl = TextEditingController();
+  final _customCtrl = TextEditingController();
   String _query = '';
+  bool _showCustomField = false;
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _customCtrl.dispose();
     super.dispose();
   }
 
@@ -2522,9 +2525,62 @@ class _ProblemTitleSheetState extends State<_ProblemTitleSheet> {
                 : ListView.separated(
                     shrinkWrap: true,
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                    itemCount: filtered.length,
+                    // +1 for the "Not listed?" tile at the end
+                    itemCount: filtered.length + 1,
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, i) {
+                      // ── "Not listed?" tile (always last) ─────────────
+                      if (i == filtered.length) {
+                        return _showCustomField
+                            ? _buildCustomEntryField(context)
+                            : GestureDetector(
+                                onTap: () =>
+                                    setState(() => _showCustomField = true),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 14),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFFBF0),
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: const Color(0xFFE8C97A),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: const Row(children: [
+                                    Icon(Icons.help_outline_rounded,
+                                        color: Color(0xFFB07D00), size: 22),
+                                    SizedBox(width: 14),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Can\'t find what you need?',
+                                            style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w700,
+                                                color: Color(0xFF7A5500)),
+                                          ),
+                                          SizedBox(height: 2),
+                                          Text(
+                                            'Describe your own service request',
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: Color(0xFFAA8800),
+                                                fontWeight: FontWeight.w500),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Icon(Icons.edit_rounded,
+                                        color: Color(0xFFB07D00), size: 18),
+                                  ]),
+                                ),
+                              );
+                      }
+
                       final offer = filtered[i];
                       final isSelected = widget.selected == offer.title;
 
@@ -2620,6 +2676,118 @@ class _ProblemTitleSheetState extends State<_ProblemTitleSheet> {
                     },
                   ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // ── Custom "not listed" entry widget ─────────────────────────────────────
+  // Shown in-place of the "Can't find what you need?" tile once tapped.
+  // The customer types a short service name and confirms — the sheet then
+  // pops with a synthetic _OfferDef so the rest of the flow is identical.
+
+  Widget _buildCustomEntryField(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBF0),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE8C97A), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(children: [
+            Icon(Icons.edit_rounded, color: Color(0xFFB07D00), size: 18),
+            SizedBox(width: 8),
+            Text(
+              'Describe your service',
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF7A5500)),
+            ),
+          ]),
+          const SizedBox(height: 4),
+          const Text(
+            'The handyman will assess the price on-site.',
+            style: TextStyle(fontSize: 12, color: Color(0xFFAA8800)),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _customCtrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            style: const TextStyle(fontSize: 14, color: AppColors.textDark),
+            decoration: InputDecoration(
+              hintText: 'e.g. Gate hinge replacement',
+              hintStyle:
+                  const TextStyle(fontSize: 14, color: AppColors.textLight),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFE8C97A))),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFE8C97A))),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide:
+                      const BorderSide(color: Color(0xFFB07D00), width: 2)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            // Cancel — collapse back to the "Can't find?" tile
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => setState(() {
+                  _showCustomField = false;
+                  _customCtrl.clear();
+                }),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFB07D00),
+                  side: const BorderSide(color: Color(0xFFE8C97A)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Cancel',
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ),
+            ),
+            const SizedBox(width: 10),
+            // Confirm — pop with a synthetic _OfferDef
+            Expanded(
+              child: ElevatedButton(
+                onPressed: () {
+                  final text = _customCtrl.text.trim();
+                  if (text.isEmpty) return;
+                  Navigator.of(context).pop(
+                    _OfferDef(
+                      title: text,
+                      priceRange: 'Price to be assessed',
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFB07D00),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Confirm',
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ]),
         ],
       ),
     );

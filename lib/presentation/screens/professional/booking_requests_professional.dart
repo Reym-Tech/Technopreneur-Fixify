@@ -98,6 +98,11 @@ String? _descriptionBody(String? description) {
   return body.isEmpty ? null : body;
 }
 
+/// Returns true when the booking is a custom/unlisted service request.
+/// Reads the authoritative [BookingEntity.isCustomRequest] flag persisted
+/// at booking-creation time — no heuristic guessing required.
+bool _isCustomRequest(BookingEntity booking) => booking.isCustomRequest;
+
 class BookingRequestsScreen extends StatefulWidget {
   final List<BookingEntity> bookings;
   final bool isAvailable;
@@ -455,6 +460,7 @@ class _RequestCard extends StatelessWidget {
     final displayRange = textualRange ?? offerRange;
     final hasNumeric =
         booking.priceEstimate != null && booking.priceEstimate! > 0;
+    final isCustom = _isCustomRequest(booking);
 
     return GestureDetector(
       onTap: onTap,
@@ -467,18 +473,22 @@ class _RequestCard extends StatelessWidget {
           border: Border.all(
             color: booking.isBackjob
                 ? const Color(0xFF30B0C7).withOpacity(0.45)
-                : expanded
-                    ? AppColors.primary.withOpacity(0.3)
-                    : Colors.transparent,
+                : isCustom
+                    ? const Color(0xFFE8C060).withOpacity(0.6)
+                    : expanded
+                        ? AppColors.primary.withOpacity(0.3)
+                        : Colors.transparent,
             width: 2,
           ),
           boxShadow: [
             BoxShadow(
               color: booking.isBackjob
                   ? const Color(0xFF30B0C7).withOpacity(0.12)
-                  : expanded
-                      ? AppColors.primary.withOpacity(0.1)
-                      : Colors.black.withOpacity(0.06),
+                  : isCustom
+                      ? const Color(0xFFFFB800).withOpacity(0.10)
+                      : expanded
+                          ? AppColors.primary.withOpacity(0.1)
+                          : Colors.black.withOpacity(0.06),
               blurRadius: expanded ? 16 : 12,
               offset: const Offset(0, 4),
             )
@@ -508,6 +518,48 @@ class _RequestCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                         color: Color(0xFF1D8A9E)),
                   ),
+                ),
+              ]),
+            ),
+          // ── Custom / unlisted service banner — shown when the customer used
+          // the free-text "Can't find what you need?" flow. Alerts the handyman
+          // that this is not a catalogue service and pricing must be set on-site.
+          if (!booking.isBackjob && isCustom)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+              decoration: const BoxDecoration(
+                color: Color(0xFFFFF8E7),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.build_circle_rounded,
+                    size: 13, color: Color(0xFFB07D00)),
+                const SizedBox(width: 7),
+                const Expanded(
+                  child: Text(
+                    'Custom Request — price to be assessed on-site',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFB07D00)),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFB800).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(6),
+                    border:
+                        Border.all(color: const Color(0xFFE8C060), width: 1),
+                  ),
+                  child: const Text('Custom',
+                      style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFFB07D00),
+                          letterSpacing: 0.2)),
                 ),
               ]),
             ),
@@ -591,6 +643,12 @@ class _RequestCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── Custom service title row ─────────────────────────────
+                  // Shown when the customer used the free-text "unlisted"
+                  // flow. Surfaces the exact text they typed so the handyman
+                  // knows what to expect before arriving on-site.
+                  if (isCustom && booking.serviceTitle != null)
+                    _customServiceTitleDetailRow(booking.serviceTitle!),
                   // ── Problem Title ────────────────────────────────────────
                   // First line of booking.description (e.g. "Pipe Leak Repair").
                   if (_problemTitle(booking.description) != null)
@@ -632,7 +690,14 @@ class _RequestCard extends StatelessWidget {
                     _formatSchedule(booking.scheduledDate),
                   ),
                   // Display estimated pricing: range (textual or offer) or numeric rate.
-                  if (displayRange != null)
+                  // For custom requests, show an on-site assessment note instead.
+                  if (isCustom)
+                    _detailRow(
+                      Icons.payments_outlined,
+                      'Pricing',
+                      'To be assessed on-site — you set the price during assessment',
+                    )
+                  else if (displayRange != null)
                     _detailRow(Icons.payments_outlined, 'Estimated Range',
                         displayRange)
                   else if (hasNumeric)
@@ -743,6 +808,51 @@ class _RequestCard extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                       color: AppColors.textDark)),
             ),
+          ]),
+        ]),
+      );
+
+  /// Styled detail row for the customer's free-text custom service title.
+  /// Includes an inline amber "Custom" pill so the handyman immediately
+  /// sees this is not a catalogue entry, even when reading quickly.
+  Widget _customServiceTitleDetailRow(String title) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.label_important_rounded,
+              size: 15, color: Color(0xFFB07D00)),
+          const SizedBox(width: 8),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Requested Service',
+                style: TextStyle(
+                    fontSize: 10,
+                    color: Color(0xFFAA8800),
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 3),
+            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(title,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textDark)),
+              ),
+              const SizedBox(width: 7),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFB800).withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFFE8C060), width: 1),
+                ),
+                child: const Text('Custom',
+                    style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFFB07D00),
+                        letterSpacing: 0.2)),
+              ),
+            ]),
           ]),
         ]),
       );

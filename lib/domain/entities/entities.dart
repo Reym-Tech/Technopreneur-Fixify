@@ -215,6 +215,18 @@ class BookingEntity extends Equatable {
 
   // ── BACKJOB / WARRANTY ────────────────────────────────────────────────────
 
+  // ── CUSTOM / UNLISTED SERVICE ─────────────────────────────────────────────
+
+  /// True when the customer submitted a free-text service request via the
+  /// "Can't find what you need?" flow (no catalogue entry, no price range).
+  /// Set at booking-creation time in main.dart and persisted to the DB as
+  /// `is_custom_request`. Drives the amber "Custom Request" banner on both
+  /// the BookingRequestsScreen card and the ProBookingDetailScreen so the
+  /// professional immediately knows that pricing must be set on-site.
+  final bool isCustomRequest;
+
+  // ── BACKJOB / WARRANTY ────────────────────────────────────────────────────
+
   /// True when this booking is a warranty / backjob claim.
   /// Backjob bookings are created via BackjobScreen and linked to their
   /// source completed booking via [originalBookingId].
@@ -250,6 +262,7 @@ class BookingEntity extends Equatable {
     this.assessmentPrice,
     this.scheduledTime,
     this.rescheduleReason,
+    this.isCustomRequest = false,
     this.isBackjob = false,
     this.originalBookingId,
     this.warrantyExpiresAt,
@@ -264,8 +277,15 @@ class BookingEntity extends Equatable {
   }
 
   @override
-  List<Object?> get props =>
-      [id, customerId, professionalId, status, scheduledDate, photoUrl];
+  List<Object?> get props => [
+        id,
+        customerId,
+        professionalId,
+        status,
+        scheduledDate,
+        photoUrl,
+        isCustomRequest
+      ];
 }
 
 // ─────────────────────────────────────────
