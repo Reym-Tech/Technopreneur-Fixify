@@ -120,6 +120,7 @@ import 'package:fixify/presentation/screens/admin/approvals_admin.dart';
 import 'package:fixify/presentation/screens/admin/notificationsadmin.dart';
 import 'package:fixify/presentation/screens/admin/admin_booking_overview_screen.dart';
 import 'package:fixify/presentation/screens/admin/admin_catalogue_screen.dart';
+import 'package:fixify/presentation/screens/admin/user_management_screen.dart';
 import 'package:fixify/presentation/screens/professional/my_services_screen.dart';
 import 'package:fixify/data/datasources/service_selection_request_datasource.dart';
 import 'package:fixify/presentation/screens/professional/propose_service_screen.dart';
@@ -435,6 +436,10 @@ class _MainAppState extends State<MainApp> {
 
   /// All platform bookings — loaded for the admin flow only.
   List<BookingModel> _adminBookings = [];
+
+  /// All professionals (verified + unverified) — loaded for the admin flow only.
+  /// Unlike _professionals which is paged (20 rows), this is the full roster.
+  List<ProfessionalModel> _adminAllProfessionals = [];
 
   /// IDs of service_proposals this professional has selected to offer.
   Set<String> _myServiceIds = {};
@@ -1279,6 +1284,11 @@ class _MainAppState extends State<MainApp> {
           } catch (e) {
             debugPrint('[Admin] Could not load all bookings: $e');
           }
+          try {
+            _adminAllProfessionals = await _ds.adminGetAllProfessionals();
+          } catch (e) {
+            debugPrint('[Admin] Could not load all professionals: $e');
+          }
         } else {
           // ── Customer ──────────────────────────────────────────────────
           _bookings = await _ds.getCustomerBookings(_user!.id);
@@ -2010,7 +2020,7 @@ class _MainAppState extends State<MainApp> {
     if (_navIndex == 2) {
       return SuperAdminAnalytics(
         bookings: _adminBookings.map((b) => b.toEntity()).toList(),
-        professionals: _professionals.map((p) => p.toEntity()).toList(),
+        professionals: _adminAllProfessionals.map((p) => p.toEntity()).toList(),
         onBack: () => setState(() => _navIndex = 0),
         onNavTap: (i) => setState(() => _navIndex = i),
         currentNavIndex: _navIndex,
@@ -2066,6 +2076,28 @@ class _MainAppState extends State<MainApp> {
             _notify('Application rejected.');
           } catch (e) {
             _notify('Error: $e');
+          }
+        },
+      );
+    }
+
+    // ── User Management screen ──────────────────────────────────────────────
+    if (_screen == 'user_management') {
+      return AdminUserManagementScreen(
+        professionals: _adminAllProfessionals.map((p) => p.toEntity()).toList(),
+        bookings: _adminBookings.map((b) => b.toEntity()).toList(),
+        onBack: () => setState(() => _screen = 'home'),
+        onRefresh: () async {
+          try {
+            final pros = await _ds.adminGetAllProfessionals();
+            final bookings = await _ds.getAllBookings();
+            if (mounted)
+              setState(() {
+                _adminAllProfessionals = pros;
+                _adminBookings = bookings;
+              });
+          } catch (e) {
+            debugPrint('[Admin] User management refresh error: $e');
           }
         },
       );
@@ -2222,6 +2254,20 @@ class _MainAppState extends State<MainApp> {
       onNavTap: (i) => setState(() => _navIndex = i),
       onHandymanApprovals: () => setState(() => _navIndex = 1),
       onAnalytics: () => setState(() => _navIndex = 2),
+      onUserManagement: () async {
+        try {
+          final pros = await _ds.adminGetAllProfessionals();
+          final bookings = await _ds.getAllBookings();
+          if (mounted)
+            setState(() {
+              _adminAllProfessionals = pros;
+              _adminBookings = bookings;
+              _screen = 'user_management';
+            });
+        } catch (e) {
+          _notify('Could not load user data: $e');
+        }
+      },
       onBookingOverview: () async {
         try {
           final fresh = await _ds.getAllBookings();
@@ -2442,6 +2488,7 @@ class _MainAppState extends State<MainApp> {
               yearsExp: data.yearsExp,
               priceMin: data.priceMin,
               bio: data.bio,
+              credentialType: data.credentialType,
             );
             setState(() {
               _applications = [app, ..._applications];

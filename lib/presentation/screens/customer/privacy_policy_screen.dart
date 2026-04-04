@@ -67,7 +67,7 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
     _PolicySection(
       icon: Icons.my_location_rounded,
       title: '4. Location Data',
-      content: 'Fixify requests access to your device\'s location to:\n\n'
+      content: 'AYO requests access to your device\'s location to:\n\n'
           '• Show nearby available professionals\n'
           '• Enable accurate service address entry\n'
           '• Provide estimated arrival times\n\n'
@@ -92,10 +92,10 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
       icon: Icons.child_care_outlined,
       title: '6. Children\'s Privacy',
       content:
-          'Fixify is not directed to individuals under the age of 18. We do not knowingly collect '
+          'AYO is not directed to individuals under the age of 18. We do not knowingly collect '
           'personal information from minors. If you are a parent or guardian and believe your child '
           'has provided us with personal information, please contact us immediately at '
-          'privacy@fixify.ph and we will delete such information from our records.',
+          'privacy@ayo.ph and we will delete such information from our records.',
     ),
     _PolicySection(
       icon: Icons.tune_rounded,
@@ -106,7 +106,7 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
           '• Deletion — request deletion of your account and associated data\n'
           '• Portability — receive your data in a machine-readable format\n'
           '• Opt-out — unsubscribe from promotional notifications at any time\n\n'
-          'To exercise any of these rights, please contact us at privacy@fixify.ph. '
+          'To exercise any of these rights, please contact us at privacy@ayo.ph. '
           'We will respond within 30 days.',
     ),
     _PolicySection(
@@ -116,7 +116,7 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
           'We may update this Privacy Policy from time to time to reflect changes in our practices '
           'or for legal, operational, or regulatory reasons. When we make significant changes, '
           'we will notify you via in-app notification or email before the changes take effect.\n\n'
-          'Continued use of Fixify after the effective date of any changes constitutes your '
+          'Continued use of AYO after the effective date of any changes constitutes your '
           'acceptance of the revised policy. We encourage you to review this page periodically.',
     ),
     _PolicySection(
@@ -125,9 +125,9 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
       content:
           'If you have any questions, concerns, or requests regarding this Privacy Policy or '
           'our data practices, please reach out to us:\n\n'
-          '📧  privacy@fixify.ph\n'
+          '📧  privacy@ayo.ph\n'
           '📞  +63 917 123 4567\n'
-          '🏢  Fixify Inc., Davao City, Philippines\n\n'
+          '🏢  AYO Inc., Davao City, Philippines\n\n'
           'We are committed to resolving privacy-related concerns promptly and transparently.',
     ),
   ];
@@ -277,7 +277,7 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
             const SizedBox(width: 14),
             const Expanded(
               child: Text(
-                'This policy explains how Fixify collects, uses, and protects your personal information. '
+                'This policy explains how AYO collects, uses, and protects your personal information. '
                 'Tap any section below to read more.',
                 style: TextStyle(
                     fontSize: 13.5, height: 1.55, color: AppColors.textMedium),

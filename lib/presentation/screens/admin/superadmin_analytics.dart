@@ -66,9 +66,7 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
       default: // This Month
         start = DateTime(now.year, now.month, 1);
     }
-    return widget.bookings
-        .where((b) => !b.scheduledDate.isBefore(start))
-        .toList();
+    return widget.bookings.where((b) => !b.createdAt.isBefore(start)).toList();
   }
 
   List<BookingEntity> get _completedBookings => _filteredBookings
@@ -111,11 +109,18 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
     final now = DateTime.now();
     return List.generate(6, (i) {
       final m = DateTime(now.year, now.month - (5 - i), 1);
-      final inMonth = widget.bookings.where((b) =>
-          b.scheduledDate.year == m.year && b.scheduledDate.month == m.month);
+      final inMonth = widget.bookings.where(
+          (b) => b.createdAt.year == m.year && b.createdAt.month == m.month);
       final completed =
           inMonth.where((b) => b.status == BookingStatus.completed);
       final revenue = completed.fold(0.0, (s, b) => s + _effectivePrice(b));
+      // Count professionals whose row was created in this calendar month.
+      // Falls back to 0 for any professional whose createdAt is null (e.g.
+      // loaded via a query that doesn't select created_at).
+      final newHandymen = widget.professionals.where((p) {
+        final ca = p.createdAt;
+        return ca != null && ca.year == m.year && ca.month == m.month;
+      }).length;
       const months = [
         'Jan',
         'Feb',
@@ -134,7 +139,7 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
         label: months[m.month - 1],
         revenue: revenue,
         bookings: inMonth.length,
-        handymen: widget.professionals.length,
+        handymen: newHandymen,
       );
     });
   }
@@ -468,20 +473,16 @@ class _SuperAdminAnalyticsState extends State<SuperAdminAnalytics>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _cardTitle('6-Month Trend'),
-                    // Chart mode chips
-                    Row(children: [
-                      _chartChip('Revenue'),
-                      const SizedBox(width: 6),
-                      _chartChip('Bookings'),
-                      const SizedBox(width: 6),
-                      _chartChip('Handymen'),
-                    ]),
-                  ],
-                ),
+                _cardTitle('6-Month Trend'),
+                const SizedBox(height: 10),
+                // Chart mode chips — own row so they never overflow on narrow screens
+                Row(children: [
+                  _chartChip('Revenue'),
+                  const SizedBox(width: 6),
+                  _chartChip('Bookings'),
+                  const SizedBox(width: 6),
+                  _chartChip('New Handymen'),
+                ]),
                 const SizedBox(height: 16),
                 SizedBox(
                   height: 180,

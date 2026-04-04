@@ -77,6 +77,11 @@ class ProfessionalEntity extends Equatable {
   final int subscriptionTier;
   final DateTime? tierExpiresAt;
 
+  /// UTC timestamp when the professionals row was inserted.
+  /// Used by SuperAdminAnalytics to bucket new registrations per month
+  /// in the 6-Month Trend → Handymen chart.
+  final DateTime? createdAt;
+
   const ProfessionalEntity({
     required this.id,
     required this.userId,
@@ -98,6 +103,7 @@ class ProfessionalEntity extends Equatable {
     this.longitude,
     this.subscriptionTier = 0,
     this.tierExpiresAt,
+    this.createdAt,
   });
 
   bool get isTierActive {

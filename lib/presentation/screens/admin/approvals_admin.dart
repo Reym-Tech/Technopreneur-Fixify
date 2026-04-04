@@ -12,6 +12,16 @@
 //     per pipeline — keeps the layout flat and readable.
 //   • Cards use a clean white shell with a small status dot; no border accents.
 //   • Consistent spacing, typography, and action zone across all four pipelines.
+//
+// CREDENTIAL VERIFICATION (NEW):
+//   • Before approving a handyman application, the admin must fill in
+//     credential verification fields that match what the external system expects.
+//   • TESDA path  → Last Name, First Name, first 4 digits + last 4 digits of
+//                   the Certificate Number.
+//   • License path (by Name)       → Profession, First Name, Last Name.
+//   • License path (by License No.) → Profession, License No., Birthdate.
+//   • The dialog is presented via _verifyAndApproveApp(); all three sub-paths
+//     follow the same _cardShell / AlertDialog pattern used by _rejectDialog().
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -442,7 +452,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
         index: index,
         isPending: app.status == 'pending',
         isLoading: _processingId == app.id,
-        onApprove: () => _approveApp(app),
+        onApprove: () => _verifyAndApproveApp(app),
         onReject: () => _confirmRejectApp(app),
         body: [
           _cardHeader(
@@ -453,7 +463,16 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
             date: null,
           ),
           const SizedBox(height: 12),
-          _badge(app.serviceType, Icons.build_rounded, AppColors.primary),
+          // Credential type badge + service type badge
+          Wrap(spacing: 8, runSpacing: 6, children: [
+            _badge(app.serviceType, Icons.build_rounded, AppColors.primary),
+            if (app.credentialType != null)
+              _badge(
+                app.isTesda ? 'TESDA' : 'Licensed',
+                app.isTesda ? Icons.verified_rounded : Icons.badge_rounded,
+                app.isTesda ? const Color(0xFF5856D6) : const Color(0xFF007AFF),
+              ),
+          ]),
           const SizedBox(height: 10),
           Wrap(spacing: 16, runSpacing: 6, children: [
             _infoChip(
@@ -884,7 +903,7 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
                   borderRadius: BorderRadius.circular(12)),
               padding: const EdgeInsets.symmetric(vertical: 11),
             ),
-            child: const Text('Approve',
+            child: const Text('Verify & Approve',
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           ),
         ),
@@ -956,11 +975,607 @@ class _ApprovalsScreenState extends State<ApprovalsScreen>
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
-  Future<void> _approveApp(ApplicationModel app) async {
-    setState(() => _processingId = app.id);
-    await widget.onApprove?.call(app);
-    if (mounted) setState(() => _processingId = null);
+  // ── Credential verification before approving ──────────────────────────────
+  //
+  // This replaces the old _approveApp() direct call.  The admin must fill in
+  // the verification fields that match the external registry before the
+  // approval goes through.  The dialog shape and style follow _rejectDialog().
+  //
+  // credentialType == 'tesda':
+  //   TESDA registry lookup → Last Name + First Name + cert digits (4+4).
+  // credentialType == 'license' (or null/unknown, shown as fallback):
+  //   PRC license lookup — two sub-modes toggled by the admin:
+  //   • By Name        → Profession + First Name + Last Name
+  //   • By License No. → Profession + License No. + Birthdate
+
+  Future<void> _verifyAndApproveApp(ApplicationModel app) async {
+    // Determine the credential path.
+    //
+    // • 'tesda'   → TESDA certificate verification dialog.
+    // • 'license' → PRC / government license verification dialog.
+    // • null      → Legacy row that predates the credential_type column.
+    //               Ask the admin to pick a path before proceeding so we
+    //               never silently assume the wrong verification method.
+    String? resolvedType = app.credentialType;
+
+    if (resolvedType == null) {
+      resolvedType = await _pickCredentialTypeDialog(app);
+      if (resolvedType == null) return; // admin dismissed the picker — abort.
+    }
+
+    final confirmed = resolvedType == 'tesda'
+        ? await _tesdaVerifyDialog(app)
+        : await _licenseVerifyDialog(app);
+
+    if (confirmed == true) {
+      setState(() => _processingId = app.id);
+      await widget.onApprove?.call(app);
+      if (mounted) setState(() => _processingId = null);
+    }
   }
+
+  // ── Legacy credential-type picker ─────────────────────────────────────────
+  //
+  // Shown only for rows where credential_type IS NULL (submitted before the
+  // column existed).  Returns 'tesda', 'license', or null (cancelled).
+
+  Future<String?> _pickCredentialTypeDialog(ApplicationModel app) =>
+      showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.help_outline_rounded,
+                      color: AppColors.primary, size: 18),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('Select Credential Type',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                ),
+              ]),
+              const SizedBox(height: 6),
+              Text(
+                'This application was submitted before credential types were '
+                'recorded. Choose the verification path that matches the '
+                'document submitted by ${app.applicantName ?? "this applicant"}.',
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMedium,
+                    fontWeight: FontWeight.w400,
+                    height: 1.45),
+              ),
+            ],
+          ),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            // TESDA option
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx, 'tesda'),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF5856D6).withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: const Color(0xFF5856D6).withOpacity(0.3)),
+                ),
+                child: Row(children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF5856D6).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.verified_rounded,
+                        color: Color(0xFF5856D6), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('TESDA',
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF5856D6))),
+                          SizedBox(height: 2),
+                          Text('National Certificate verification',
+                              style: TextStyle(
+                                  fontSize: 11, color: AppColors.textLight)),
+                        ]),
+                  ),
+                  const Icon(Icons.chevron_right_rounded,
+                      color: Color(0xFF5856D6), size: 18),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // License option
+            GestureDetector(
+              onTap: () => Navigator.pop(ctx, 'license'),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF007AFF).withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: const Color(0xFF007AFF).withOpacity(0.3)),
+                ),
+                child: Row(children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF007AFF).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.badge_rounded,
+                        color: Color(0xFF007AFF), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Licensed',
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF007AFF))),
+                          SizedBox(height: 2),
+                          Text('PRC / government license verification',
+                              style: TextStyle(
+                                  fontSize: 11, color: AppColors.textLight)),
+                        ]),
+                  ),
+                  const Icon(Icons.chevron_right_rounded,
+                      color: Color(0xFF007AFF), size: 18),
+                ]),
+              ),
+            ),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, null),
+              child: const Text('Cancel',
+                  style: TextStyle(color: AppColors.textLight)),
+            ),
+          ],
+        ),
+      );
+
+  // ── TESDA verification dialog ─────────────────────────────────────────────
+
+  Future<bool?> _tesdaVerifyDialog(ApplicationModel app) {
+    final lastNameCtrl = TextEditingController();
+    final firstNameCtrl = TextEditingController();
+    final certFirst4Ctrl = TextEditingController();
+    final certLast4Ctrl = TextEditingController();
+
+    // Track validation state inside a StatefulBuilder.
+    final formKey = GlobalKey<FormState>();
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF5856D6).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.verified_rounded,
+                      color: Color(0xFF5856D6), size: 18),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('TESDA Verification',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                ),
+              ]),
+              const SizedBox(height: 6),
+              Text(
+                'Enter the details exactly as they appear on the '
+                'TESDA certificate to verify ${app.applicantName ?? "this applicant"}.',
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMedium,
+                    fontWeight: FontWeight.w400,
+                    height: 1.45),
+              ),
+            ],
+          ),
+          content: Form(
+            key: formKey,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _verifyField(
+                controller: lastNameCtrl,
+                label: 'Last Name',
+                hint: 'as on certificate',
+                icon: Icons.person_outline_rounded,
+              ),
+              const SizedBox(height: 10),
+              _verifyField(
+                controller: firstNameCtrl,
+                label: 'First Name',
+                hint: 'as on certificate',
+                icon: Icons.person_outline_rounded,
+              ),
+              const SizedBox(height: 12),
+              _sectionLabel('Certificate Number'),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                  child: _verifyField(
+                    controller: certFirst4Ctrl,
+                    label: 'First 4 digits',
+                    hint: '0000',
+                    icon: Icons.tag_rounded,
+                    maxLength: 4,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text('—',
+                      style:
+                          TextStyle(fontSize: 18, color: AppColors.textLight)),
+                ),
+                Expanded(
+                  child: _verifyField(
+                    controller: certLast4Ctrl,
+                    label: 'Last 4 digits',
+                    hint: '0000',
+                    icon: Icons.tag_rounded,
+                    maxLength: 4,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ]),
+            ]),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel',
+                  style: TextStyle(color: AppColors.textLight)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (!formKey.currentState!.validate()) return;
+                Navigator.pop(ctx, true);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF34C759),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text('Confirm & Approve',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── License verification dialog ───────────────────────────────────────────
+  //
+  // Two sub-modes toggled by a segmented control inside the dialog:
+  //   • By Name        — Profession, First Name, Last Name
+  //   • By License No. — Profession, License No., Birthdate
+
+  Future<bool?> _licenseVerifyDialog(ApplicationModel app) {
+    // 0 = By Name, 1 = By License No.
+    int mode = 0;
+
+    final professionCtrl = TextEditingController();
+    final firstNameCtrl = TextEditingController();
+    final lastNameCtrl = TextEditingController();
+    final licenseNoCtrl = TextEditingController();
+    final birthdateCtrl = TextEditingController();
+
+    final formKey = GlobalKey<FormState>();
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) {
+          return AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(children: [
+                  Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF007AFF).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.badge_rounded,
+                        color: Color(0xFF007AFF), size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text('License Verification',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 16)),
+                  ),
+                ]),
+                const SizedBox(height: 6),
+                Text(
+                  'Enter the PRC details for ${app.applicantName ?? "this applicant"} '
+                  'to confirm their license is valid.',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMedium,
+                      fontWeight: FontWeight.w400,
+                      height: 1.45),
+                ),
+                const SizedBox(height: 12),
+                // Mode toggle
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF2F2F7),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.all(3),
+                  child: Row(children: [
+                    _modeTab('By Name', mode == 0,
+                        () => setDlgState(() => mode = 0)),
+                    _modeTab('By License No.', mode == 1,
+                        () => setDlgState(() => mode = 1)),
+                  ]),
+                ),
+              ],
+            ),
+            content: Form(
+              key: formKey,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                // Profession — common to both modes
+                _verifyField(
+                  controller: professionCtrl,
+                  label: 'Profession',
+                  hint: 'e.g. Electrician',
+                  icon: Icons.work_outline_rounded,
+                ),
+                const SizedBox(height: 10),
+
+                if (mode == 0) ...[
+                  // By Name
+                  _verifyField(
+                    controller: firstNameCtrl,
+                    label: 'First Name',
+                    hint: 'as on PRC record',
+                    icon: Icons.person_outline_rounded,
+                  ),
+                  const SizedBox(height: 10),
+                  _verifyField(
+                    controller: lastNameCtrl,
+                    label: 'Last Name',
+                    hint: 'as on PRC record',
+                    icon: Icons.person_outline_rounded,
+                  ),
+                ] else ...[
+                  // By License No.
+                  _verifyField(
+                    controller: licenseNoCtrl,
+                    label: 'License No.',
+                    hint: 'e.g. 0123456',
+                    icon: Icons.tag_rounded,
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 10),
+                  // Birthdate picker
+                  _birthdateField(
+                    ctx: ctx,
+                    controller: birthdateCtrl,
+                    onPicked: (date) {
+                      setDlgState(() {
+                        birthdateCtrl.text =
+                            '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+                      });
+                    },
+                  ),
+                ],
+              ]),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel',
+                    style: TextStyle(color: AppColors.textLight)),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  if (!formKey.currentState!.validate()) return;
+                  Navigator.pop(ctx, true);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF34C759),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('Confirm & Approve',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ── Dialog field helpers ───────────────────────────────────────────────────
+
+  /// Standard text field used inside verification dialogs.
+  Widget _verifyField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required IconData icon,
+    int? maxLength,
+    TextInputType? keyboardType,
+  }) =>
+      TextFormField(
+        controller: controller,
+        maxLength: maxLength,
+        keyboardType: keyboardType,
+        style: const TextStyle(fontSize: 13),
+        validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          hintStyle: const TextStyle(fontSize: 12, color: AppColors.textLight),
+          labelStyle:
+              const TextStyle(fontSize: 13, color: AppColors.textMedium),
+          prefixIcon: Icon(icon, size: 16, color: AppColors.textLight),
+          counterText: '',
+          filled: true,
+          fillColor: const Color(0xFFF8F8F8),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+          ),
+          errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFFF3B30), width: 1),
+          ),
+          focusedErrorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFFF3B30), width: 1.5),
+          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        ),
+      );
+
+  /// Tappable birthdate field — opens a date picker.
+  Widget _birthdateField({
+    required BuildContext ctx,
+    required TextEditingController controller,
+    required void Function(DateTime) onPicked,
+  }) =>
+      TextFormField(
+        controller: controller,
+        readOnly: true,
+        style: const TextStyle(fontSize: 13),
+        validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+        onTap: () async {
+          final picked = await showDatePicker(
+            context: ctx,
+            initialDate: DateTime(1990),
+            firstDate: DateTime(1940),
+            lastDate: DateTime.now(),
+            builder: (context, child) => Theme(
+              data: Theme.of(context).copyWith(
+                colorScheme: const ColorScheme.light(
+                  primary: AppColors.primary,
+                  onPrimary: Colors.white,
+                ),
+              ),
+              child: child!,
+            ),
+          );
+          if (picked != null) onPicked(picked);
+        },
+        decoration: InputDecoration(
+          labelText: 'Birthdate',
+          hintText: 'YYYY-MM-DD',
+          hintStyle: const TextStyle(fontSize: 12, color: AppColors.textLight),
+          labelStyle:
+              const TextStyle(fontSize: 13, color: AppColors.textMedium),
+          prefixIcon: const Icon(Icons.calendar_today_rounded,
+              size: 16, color: AppColors.textLight),
+          suffixIcon: const Icon(Icons.arrow_drop_down_rounded,
+              color: AppColors.textLight),
+          filled: true,
+          fillColor: const Color(0xFFF8F8F8),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+          ),
+          errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFFF3B30), width: 1),
+          ),
+          focusedErrorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFFF3B30), width: 1.5),
+          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        ),
+      );
+
+  /// Segmented toggle tab inside the license dialog.
+  Widget _modeTab(String label, bool selected, VoidCallback onTap) => Expanded(
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: 150.ms,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: selected ? Colors.white : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 4,
+                          offset: const Offset(0, 1))
+                    ]
+                  : null,
+            ),
+            child: Text(label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color:
+                        selected ? AppColors.textDark : AppColors.textLight)),
+          ),
+        ),
+      );
+
+  // ── Remaining action methods (unchanged) ──────────────────────────────────
 
   Future<void> _confirmRejectApp(ApplicationModel app) async {
     final noteCtrl = TextEditingController();

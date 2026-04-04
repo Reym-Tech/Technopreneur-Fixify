@@ -11,6 +11,13 @@
 //   userId         → String          — auth user id
 //   onSubmit       → Function(ApplyFormData)? — called on submit
 //   onBack         → VoidCallback?
+//
+// CREDENTIAL TYPE UPDATE:
+//   • ApplyFormData now carries credentialType ('tesda' | 'license').
+//   • The handyman picks their credential type via a two-option toggle
+//     rendered between the service-type chips and the credential upload tile.
+//   • The credential upload tile label/hint adapts to whichever type is chosen.
+//   • _submit() validates that a type is chosen before proceeding.
 
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -20,6 +27,10 @@ import 'package:fixify/core/theme/app_theme.dart';
 
 class ApplyFormData {
   final String serviceType;
+
+  /// 'tesda' | 'license'
+  final String credentialType;
+
   final File credentialFile;
   final File validIdFile;
   final int yearsExp;
@@ -28,6 +39,7 @@ class ApplyFormData {
 
   const ApplyFormData({
     required this.serviceType,
+    required this.credentialType,
     required this.credentialFile,
     required this.validIdFile,
     required this.yearsExp,
@@ -56,9 +68,13 @@ class ApplyScreen extends StatefulWidget {
 
 class _ApplyScreenState extends State<ApplyScreen> {
   String? _serviceType;
+
+  /// null = not yet chosen, 'tesda' or 'license'
+  String? _credentialType;
+
   File? _credentialFile;
   File? _validIdFile;
-  final _yearsCtrl = TextEditingController(text: '0');
+  final _yearsCtrl = TextEditingController();
   final _bioCtrl = TextEditingController();
   bool _submitting = false;
   bool _pickingCred = false;
@@ -117,8 +133,14 @@ class _ApplyScreenState extends State<ApplyScreen> {
       _snack('Select a service type');
       return;
     }
+    if (_credentialType == null) {
+      _snack('Select your credential type (TESDA or Licensed)');
+      return;
+    }
     if (_credentialFile == null) {
-      _snack('Upload your credential (TESDA cert, diploma, etc.)');
+      _snack(_credentialType == 'tesda'
+          ? 'Upload your TESDA certificate'
+          : 'Upload your professional license');
       return;
     }
     if (_validIdFile == null) {
@@ -129,6 +151,7 @@ class _ApplyScreenState extends State<ApplyScreen> {
     setState(() => _submitting = true);
     await widget.onSubmit?.call(ApplyFormData(
       serviceType: _serviceType!,
+      credentialType: _credentialType!,
       credentialFile: _credentialFile!,
       validIdFile: _validIdFile!,
       yearsExp: years,
@@ -180,7 +203,7 @@ class _ApplyScreenState extends State<ApplyScreen> {
             ).animate().fadeIn(delay: 80.ms),
             const SizedBox(height: 24),
 
-            // Service type
+            // ── Service type ─────────────────────────────────────────────────
             _sectionLabel('Service Type *'),
             const SizedBox(height: 10),
             Wrap(
@@ -222,24 +245,47 @@ class _ApplyScreenState extends State<ApplyScreen> {
             ).animate().fadeIn(delay: 120.ms),
             const SizedBox(height: 24),
 
-            // Credential upload
+            // ── Credential type selector ──────────────────────────────────────
+            _sectionLabel('Credential Type *'),
+            const SizedBox(height: 4),
+            const Text(
+              'Choose the type of credential you will be submitting.',
+              style: TextStyle(fontSize: 12, color: AppColors.textLight),
+            ),
+            const SizedBox(height: 10),
+            _buildCredentialTypeToggle().animate().fadeIn(delay: 140.ms),
+            const SizedBox(height: 24),
+
+            // ── Credential upload ─────────────────────────────────────────────
             _sectionLabel('Credential Document *'),
-            const Text('TESDA certificate, diploma, or training certificate',
-                style: TextStyle(fontSize: 12, color: AppColors.textLight)),
+            Text(
+              _credentialType == 'license'
+                  ? 'PRC professional license or government-issued license'
+                  : 'TESDA certificate, diploma, or training certificate',
+              style: const TextStyle(fontSize: 12, color: AppColors.textLight),
+            ),
             const SizedBox(height: 10),
             _uploadTile(
-              label: 'Upload Credential',
-              hint: 'TESDA cert, diploma, training cert...',
+              label: _credentialType == 'license'
+                  ? 'Upload License'
+                  : 'Upload Credential',
+              hint: _credentialType == 'license'
+                  ? 'PRC license, government license...'
+                  : 'TESDA cert, diploma, training cert...',
               file: _credentialFile,
               loading: _pickingCred,
-              icon: Icons.workspace_premium_rounded,
-              color: const Color(0xFFFF9500),
+              icon: _credentialType == 'license'
+                  ? Icons.badge_rounded
+                  : Icons.workspace_premium_rounded,
+              color: _credentialType == 'license'
+                  ? const Color(0xFF007AFF)
+                  : const Color(0xFFFF9500),
               onTap: () => _pickFile(true),
               onRemove: () => setState(() => _credentialFile = null),
             ).animate().fadeIn(delay: 160.ms),
             const SizedBox(height: 20),
 
-            // Valid ID upload
+            // ── Valid ID upload ───────────────────────────────────────────────
             _sectionLabel('Valid Government ID *'),
             const Text(
                 'Passport, driver\'s license, SSS, PhilHealth, UMID, etc.',
@@ -257,7 +303,7 @@ class _ApplyScreenState extends State<ApplyScreen> {
             ).animate().fadeIn(delay: 200.ms),
             const SizedBox(height: 24),
 
-            // Years of experience
+            // ── Years of experience ───────────────────────────────────────────
             _sectionLabel('Years of Experience'),
             const SizedBox(height: 10),
             _textField(
@@ -268,7 +314,7 @@ class _ApplyScreenState extends State<ApplyScreen> {
             ).animate().fadeIn(delay: 240.ms),
             const SizedBox(height: 20),
 
-            // Bio
+            // ── Bio ───────────────────────────────────────────────────────────
             _sectionLabel('Short Bio  — optional'),
             const SizedBox(height: 10),
             _textField(
@@ -279,7 +325,7 @@ class _ApplyScreenState extends State<ApplyScreen> {
             ).animate().fadeIn(delay: 280.ms),
             const SizedBox(height: 32),
 
-            // Submit button
+            // ── Submit button ─────────────────────────────────────────────────
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -314,6 +360,108 @@ class _ApplyScreenState extends State<ApplyScreen> {
       ]),
     );
   }
+
+  // ── Credential type toggle ────────────────────────────────────────────────
+
+  Widget _buildCredentialTypeToggle() {
+    return Row(children: [
+      _credTypeTile(
+        value: 'tesda',
+        label: 'TESDA',
+        sublabel: 'National Certificate',
+        icon: Icons.verified_rounded,
+        color: const Color(0xFF5856D6),
+      ),
+      const SizedBox(width: 10),
+      _credTypeTile(
+        value: 'license',
+        label: 'Licensed',
+        sublabel: 'PRC / Gov\'t License',
+        icon: Icons.badge_rounded,
+        color: const Color(0xFF007AFF),
+      ),
+    ]);
+  }
+
+  Widget _credTypeTile({
+    required String value,
+    required String label,
+    required String sublabel,
+    required IconData icon,
+    required Color color,
+  }) {
+    final selected = _credentialType == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          // Clear the previously uploaded credential if switching types
+          // so the admin doesn't get mismatched file + type.
+          if (_credentialType != value) {
+            setState(() {
+              _credentialType = value;
+              _credentialFile = null;
+            });
+          }
+        },
+        child: AnimatedContainer(
+          duration: 180.ms,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          decoration: BoxDecoration(
+            color: selected ? color.withOpacity(0.07) : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? color : const Color(0xFFDDDDDD),
+              width: selected ? 1.5 : 1,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                        color: color.withOpacity(0.15),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3))
+                  ]
+                : [],
+          ),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: selected
+                    ? color.withOpacity(0.12)
+                    : const Color(0xFFF2F2F7),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon,
+                  color: selected ? color : AppColors.textLight, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: selected ? color : AppColors.textDark)),
+                    const SizedBox(height: 2),
+                    Text(sublabel,
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: selected
+                                ? color.withOpacity(0.75)
+                                : AppColors.textLight)),
+                  ]),
+            ),
+            if (selected)
+              Icon(Icons.check_circle_rounded, color: color, size: 16),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // ── Shared widget helpers — unchanged from original ───────────────────────
 
   Widget _buildHeader() => Container(
         decoration: const BoxDecoration(

@@ -2034,6 +2034,43 @@ class SupabaseDataSource {
     }
   }
 
+  // ── ADMIN: USER MANAGEMENT ────────────────────────────────────────────────
+
+  /// Admin: fetch ALL professionals (verified and unverified, available and
+  /// unavailable). Used by AdminUserManagementScreen to show the full roster.
+  Future<List<ProfessionalModel>> adminGetAllProfessionals() async {
+    debugPrint('[Supabase] adminGetAllProfessionals');
+    final response = await _client
+        .from(AppConfig.professionalsTable)
+        .select(
+          'id, user_id, skills, verified, rating, review_count, '
+          'price_range, price_min, price_max, city, bio, '
+          'years_experience, available, latitude, longitude, '
+          'subscription_tier, tier_expires_at, created_at, '
+          'users(id, name, avatar_url, phone)',
+        )
+        .order('subscription_tier', ascending: false)
+        .order('rating', ascending: false);
+
+    return (response as List)
+        .map((j) => ProfessionalModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Admin: fetch ALL bookings with joined professional + customer data.
+  /// Used by AdminUserManagementScreen to derive per-user stats.
+  Future<List<BookingModel>> adminGetAllBookings() async {
+    debugPrint('[Supabase] adminGetAllBookings');
+    final response = await _client
+        .from(AppConfig.bookingsTable)
+        .select(_fullBookingSelect)
+        .order('created_at', ascending: false);
+
+    return (response as List)
+        .map((j) => BookingModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<String> uploadAvatar(
       String userId, List<int> fileBytes, String fileName) async {
     final path = '$userId/avatar.jpg';

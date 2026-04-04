@@ -152,6 +152,10 @@ class ProfessionalModel extends Equatable {
   final int subscriptionTier;
   final DateTime? tierExpiresAt;
 
+  /// UTC timestamp of the professionals row — fetched via adminGetAllProfessionals
+  /// and used to bucket new registrations per month in the analytics chart.
+  final DateTime? createdAt;
+
   const ProfessionalModel({
     required this.id,
     required this.userId,
@@ -173,6 +177,7 @@ class ProfessionalModel extends Equatable {
     this.longitude,
     this.subscriptionTier = 0,
     this.tierExpiresAt,
+    this.createdAt,
   });
 
   factory ProfessionalModel.fromJson(Map<String, dynamic> json) {
@@ -200,6 +205,9 @@ class ProfessionalModel extends Equatable {
       tierExpiresAt: json['tier_expires_at'] != null
           ? DateTime.tryParse(json['tier_expires_at'] as String)
           : null,
+      createdAt: json['created_at'] != null
+          ? DateTime.tryParse(json['created_at'] as String)
+          : null,
     );
   }
 
@@ -225,6 +233,7 @@ class ProfessionalModel extends Equatable {
         longitude: lng,
         subscriptionTier: subscriptionTier,
         tierExpiresAt: tierExpiresAt,
+        createdAt: createdAt,
       );
 
   ProfessionalEntity toEntity() => ProfessionalEntity(
@@ -248,6 +257,7 @@ class ProfessionalModel extends Equatable {
         longitude: longitude,
         subscriptionTier: subscriptionTier,
         tierExpiresAt: tierExpiresAt,
+        createdAt: createdAt,
       );
 
   Map<String, dynamic> toJson() => {

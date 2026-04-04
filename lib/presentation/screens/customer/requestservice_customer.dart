@@ -2406,7 +2406,20 @@ class _ProblemTitleSheetState extends State<_ProblemTitleSheet> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final mq = MediaQuery.of(context);
+    final bottomInset = mq.viewInsets.bottom;
+    final topPadding = mq.padding.top;
+
+    // Total height consumed by static chrome above the list:
+    //   12 (top gap) + 4 (handle) + 16 (gap) + 32 (header row) + 14 (gap)
+    //   + 44 (search field) + 12 (gap) = 134px
+    const double _staticChrome = 134.0;
+
+    // Reserve enough room for the list so the whole sheet never exceeds the
+    // available viewport (screen height minus status-bar, keyboard, and chrome).
+    final listMaxHeight =
+        (mq.size.height - topPadding - bottomInset - _staticChrome)
+            .clamp(120.0, mq.size.height * 0.55);
 
     return Container(
       decoration: const BoxDecoration(
@@ -2508,7 +2521,7 @@ class _ProblemTitleSheetState extends State<_ProblemTitleSheet> {
           // ── Options list ──────────────────────────────────────────────
           ConstrainedBox(
             constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.45,
+              maxHeight: listMaxHeight,
             ),
             child: filtered.isEmpty
                 ? Padding(

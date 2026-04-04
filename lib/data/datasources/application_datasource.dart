@@ -7,6 +7,7 @@
 //   professional_id UUID FK → professionals.id
 //   user_id         UUID FK → users.id
 //   service_type    TEXT    — the single skill being applied for
+//   credential_type TEXT    — 'tesda' | 'license'  (NEW)
 //   credential_url  TEXT    — TESDA cert / diploma URL (Supabase Storage)
 //   valid_id_url    TEXT    — government ID URL (Supabase Storage)
 //   years_exp       INT
@@ -26,6 +27,13 @@ class ApplicationModel {
   final String professionalId;
   final String userId;
   final String serviceType;
+
+  /// The type of credential submitted by the applicant.
+  /// 'tesda'   — TESDA National Certificate
+  /// 'license' — PRC / government professional license
+  /// Null for legacy rows that predate this field.
+  final String? credentialType;
+
   final String? credentialUrl;
   final String? validIdUrl;
   final int yearsExp;
@@ -45,6 +53,7 @@ class ApplicationModel {
     required this.professionalId,
     required this.userId,
     required this.serviceType,
+    this.credentialType,
     this.credentialUrl,
     this.validIdUrl,
     required this.yearsExp,
@@ -65,6 +74,7 @@ class ApplicationModel {
       professionalId: j['professional_id'] as String,
       userId: j['user_id'] as String,
       serviceType: j['service_type'] as String,
+      credentialType: j['credential_type'] as String?,
       credentialUrl: j['credential_url'] as String?,
       validIdUrl: j['valid_id_url'] as String?,
       yearsExp: (j['years_exp'] as int?) ?? 0,
@@ -80,6 +90,12 @@ class ApplicationModel {
       applicantEmail: user?['email'] as String?,
     );
   }
+
+  /// Whether this application used a TESDA credential.
+  bool get isTesda => credentialType == 'tesda';
+
+  /// Whether this application used a professional license credential.
+  bool get isLicense => credentialType == 'license';
 }
 
 class ApplicationDataSource {
@@ -111,6 +127,7 @@ class ApplicationDataSource {
     required String professionalId,
     required String userId,
     required String serviceType,
+    required String credentialType, // 'tesda' | 'license'
     required File credentialFile,
     required File validIdFile,
     required int yearsExp,
@@ -134,6 +151,7 @@ class ApplicationDataSource {
           'professional_id': professionalId,
           'user_id': userId,
           'service_type': serviceType,
+          'credential_type': credentialType,
           'credential_url': credUrl,
           'valid_id_url': idUrl,
           'years_exp': yearsExp,
