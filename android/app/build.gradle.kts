@@ -4,6 +4,9 @@ plugins {
     id("com.android.application")
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
+    // Add the Google services Gradle plugin
+    id("com.google.gms.google-services")
+
 }
 
 // FIX: Read local.properties manually using java.util.Properties.

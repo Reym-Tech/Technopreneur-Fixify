@@ -33,6 +33,11 @@ class AppConfig {
   static const String reviewsTable = 'reviews';
   static const String servicesTable = 'service_offers';
 
+  // ── Chat tables ─────────────────────────────────────────
+  static const String chatThreadsTable = 'chat_threads';
+  static const String chatMessagesTable = 'chat_messages';
+  static const String userPushTokensTable = 'user_push_tokens';
+
   // ── Storage buckets ─────────────────────────────────────
   static const String avatarsBucket = 'avatars';
   static const String documentsBucket = 'documents';

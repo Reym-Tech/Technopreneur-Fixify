@@ -26,6 +26,7 @@ abstract class NotificationTypeStrings {
   static const bookingCompleted = 'booking_completed';
   static const promotion = 'promotion';
   static const systemCustomer = 'system_customer';
+  static const chatMessage = 'chat_message';
 
   // Professional
   static const bookingRequest = 'booking_request';

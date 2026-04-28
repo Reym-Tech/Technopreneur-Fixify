@@ -634,6 +634,112 @@ class BookingModel extends Equatable {
 }
 
 // ─────────────────────────────────────────
+// CHAT MODELS
+// ─────────────────────────────────────────
+
+class ChatThreadModel extends Equatable {
+  final String id;
+  final String bookingId;
+  final DateTime createdAt;
+  final DateTime? lastMessageAt;
+  final String? lastMessagePreview;
+
+  const ChatThreadModel({
+    required this.id,
+    required this.bookingId,
+    required this.createdAt,
+    this.lastMessageAt,
+    this.lastMessagePreview,
+  });
+
+  factory ChatThreadModel.fromJson(Map<String, dynamic> json) {
+    DateTime createdAt;
+    try {
+      final ca = json['created_at']?.toString();
+      createdAt =
+          ca != null && ca.isNotEmpty ? DateTime.parse(ca) : DateTime.now();
+    } catch (_) {
+      createdAt = DateTime.now();
+    }
+
+    DateTime? lastMessageAt;
+    try {
+      final lma = json['last_message_at']?.toString();
+      if (lma != null && lma.isNotEmpty) lastMessageAt = DateTime.parse(lma);
+    } catch (_) {}
+
+    return ChatThreadModel(
+      id: json['id']?.toString() ?? '',
+      bookingId: json['booking_id']?.toString() ?? '',
+      createdAt: createdAt,
+      lastMessageAt: lastMessageAt,
+      lastMessagePreview: json['last_message_preview'] as String?,
+    );
+  }
+
+  ChatThreadEntity toEntity() => ChatThreadEntity(
+        id: id,
+        bookingId: bookingId,
+        createdAt: createdAt,
+        lastMessageAt: lastMessageAt,
+        lastMessagePreview: lastMessagePreview,
+      );
+
+  @override
+  List<Object?> get props => [id, bookingId, createdAt, lastMessageAt];
+}
+
+class ChatMessageModel extends Equatable {
+  final String id;
+  final String threadId;
+  final String bookingId;
+  final String senderId;
+  final String body;
+  final DateTime createdAt;
+
+  const ChatMessageModel({
+    required this.id,
+    required this.threadId,
+    required this.bookingId,
+    required this.senderId,
+    required this.body,
+    required this.createdAt,
+  });
+
+  factory ChatMessageModel.fromJson(Map<String, dynamic> json) {
+    DateTime createdAt;
+    try {
+      final ca = json['created_at']?.toString();
+      createdAt =
+          ca != null && ca.isNotEmpty ? DateTime.parse(ca) : DateTime.now();
+    } catch (_) {
+      createdAt = DateTime.now();
+    }
+
+    return ChatMessageModel(
+      id: json['id']?.toString() ?? '',
+      threadId: json['thread_id']?.toString() ?? '',
+      bookingId: json['booking_id']?.toString() ?? '',
+      senderId: json['sender_id']?.toString() ?? '',
+      body: json['body']?.toString() ?? '',
+      createdAt: createdAt,
+    );
+  }
+
+  ChatMessageEntity toEntity() => ChatMessageEntity(
+        id: id,
+        threadId: threadId,
+        bookingId: bookingId,
+        senderId: senderId,
+        body: body,
+        createdAt: createdAt,
+      );
+
+  @override
+  List<Object?> get props => [id, threadId, bookingId, senderId, body, createdAt];
+}
+
+// ─────────────────────────────────────────
 // REVIEW MODEL
 // ─────────────────────────────────────────
 

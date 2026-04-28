@@ -43,6 +43,7 @@ import 'dart:math' as math;
 class ProBookingDetailScreen extends StatefulWidget {
   final BookingEntity booking;
   final VoidCallback? onBack;
+  final VoidCallback? onOpenChat;
 
   /// Called when the handyman confirms the customer's preferred date/time.
   /// Parent calls supabase.proposeSchedule().
@@ -80,6 +81,7 @@ class ProBookingDetailScreen extends StatefulWidget {
     super.key,
     required this.booking,
     this.onBack,
+    this.onOpenChat,
     this.onProposeSchedule,
     this.onProposeReschedule,
     this.onNotifyRunningLate,
@@ -398,6 +400,22 @@ class _ProBookingDetailScreenState extends State<ProBookingDetailScreen> {
                               fontSize: 13)),
                     ]),
               ),
+              if (widget.onOpenChat != null) ...[
+                GestureDetector(
+                  onTap: widget.onOpenChat,
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.chat_bubble_rounded,
+                        color: Colors.white, size: 18),
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
               _statusChip(),
             ]),
           ),

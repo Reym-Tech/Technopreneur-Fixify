@@ -80,6 +80,9 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:fixify/firebase_options.dart';
 
 import 'package:fixify/core/constants/app_config.dart';
 import 'package:fixify/core/theme/app_theme.dart';
@@ -100,6 +103,7 @@ import 'package:fixify/presentation/screens/customer/professional_profile_screen
     as customer;
 import 'package:fixify/presentation/screens/customer/all_professionals_screen.dart';
 import 'package:fixify/presentation/screens/customer/booking_status_screen.dart';
+import 'package:fixify/presentation/screens/shared/chat_screen.dart';
 import 'package:fixify/presentation/screens/customer/review_screen.dart';
 import 'package:fixify/presentation/screens/customer/backjob_screen.dart';
 import 'package:fixify/presentation/screens/customer/rebook_screen.dart';
@@ -130,6 +134,17 @@ import 'package:fixify/presentation/screens/professional/subscription_screen.dar
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: '.env');
+  // FCM setup:
+  // - Add Firebase config files (google-services.json / GoogleService-Info.plist).
+  // - Run `flutterfire configure` to generate firebase_options.dart (recommended),
+  //   OR initialize with default options if you prefer manual config.
+  // This app will still run without Firebase; push will just be disabled.
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (_) {}
   await Supabase.initialize(
       url: AppConfig.supabaseUrl, anonKey: AppConfig.supabaseAnonKey);
   await SystemChrome.setPreferredOrientations(
@@ -141,6 +156,16 @@ Future<void> main() async {
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
   runApp(const FixifyApp());
+}
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Best-effort init; required for background handlers.
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (_) {}
 }
 
 class FixifyApp extends StatelessWidget {
@@ -480,6 +505,9 @@ class _MainAppState extends State<MainApp> {
   final Set<String> _reviewedBookingIds = {};
   BookingModel? _selectedBooking;
   BookingEntity? _selectedProBooking;
+  String? _chatBookingId;
+  String? _chatTitle;
+  String _chatReturnScreen = 'home';
 
   bool _loading = true;
 
@@ -1092,6 +1120,7 @@ class _MainAppState extends State<MainApp> {
 
       _user = await _ds.getCurrentUser();
       if (_user != null) {
+        await _setupPushForUser();
         // Fetch only the first 20 for the dashboard teaser.
         // AllProfessionalsScreen fetches its own pages independently.
         _professionals = await _ds.getProfessionalsPaged(page: 0, pageSize: 20);
@@ -1354,6 +1383,31 @@ class _MainAppState extends State<MainApp> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _setupPushForUser() async {
+    // Best-effort: if Firebase isn't configured, do nothing.
+    try {
+      final messaging = FirebaseMessaging.instance;
+      await messaging.requestPermission();
+
+      final token = await messaging.getToken();
+      if (token == null || token.isEmpty) return;
+
+      final platform = Platform.isIOS
+          ? 'ios'
+          : Platform.isAndroid
+              ? 'android'
+              : 'web';
+
+      await _ds.upsertMyPushToken(platform: platform, token: token);
+
+      // Foreground messages: no OS notification shown by default on Android.
+      // We still keep this hook so you can add local notifications later.
+      FirebaseMessaging.onMessage.listen((msg) {
+        debugPrint('[FCM] Foreground message: ${msg.messageId}');
+      });
+    } catch (_) {}
   }
 
   Future<void> _loadSkippedRequests() async {
@@ -2312,10 +2366,44 @@ class _MainAppState extends State<MainApp> {
         .map((b) => b.toEntity())
         .toList();
 
+    if (_screen == 'chat') {
+      final bookingId = _chatBookingId;
+      final userId = _user?.id;
+      if (bookingId == null || userId == null) return _home();
+      return ChatScreen(
+        bookingId: bookingId,
+        currentUserId: userId,
+        title: _chatTitle ?? 'Chat',
+        onBack: () => setState(() => _screen = _chatReturnScreen),
+        loadInitialMessages: (id) async =>
+            (await _ds.getChatMessages(bookingId: id))
+                .map((m) => m.toEntity())
+                .toList(),
+        sendMessage: ({required bookingId, required body}) async =>
+            (await _ds.sendChatMessage(bookingId: bookingId, body: body))
+                .toEntity(),
+        subscribe: (onInsert) => _ds.subscribeToChatMessages(
+          bookingId: bookingId,
+          onInsert: (m) => onInsert(m.toEntity()),
+        ),
+        unsubscribe: (ch) => _ds.unsubscribeChannel(ch as RealtimeChannel),
+      );
+    }
+
     if (_screen == 'pro_booking_detail' && _selectedProBooking != null) {
       return ProBookingDetailScreen(
         booking: _selectedProBooking!,
         onBack: () => setState(() => _screen = 'booking_history'),
+        onOpenChat: () {
+          setState(() {
+            _chatBookingId = _selectedProBooking!.id;
+            final customerName = _selectedProBooking!.customer?.name;
+            _chatTitle =
+                customerName != null ? 'Chat • $customerName' : 'Chat';
+            _chatReturnScreen = 'pro_booking_detail';
+            _screen = 'chat';
+          });
+        },
         onSetAssessmentPrice: (price) async {
           try {
             await _ds.updateBookingAssessmentPrice(
@@ -3445,6 +3533,17 @@ class _MainAppState extends State<MainApp> {
         return BookingStatusScreen(
           booking: _selectedBooking!.toEntity(),
           onBack: () => setState(() => _screen = 'home'),
+          onOpenChat: (_selectedBooking!.professionalId.isNotEmpty &&
+                  _selectedBooking!.professional != null)
+              ? () {
+                  setState(() {
+                    _chatBookingId = _selectedBooking!.id;
+                    _chatTitle = 'Chat • ${_selectedBooking!.professional!.name}';
+                    _chatReturnScreen = 'booking_status';
+                    _screen = 'chat';
+                  });
+                }
+              : null,
           // onViewAssessment routes to AssessmentScreen where customer
           // reviews the price and confirms → inProgress.
           onViewAssessment: _selectedBooking!.status == BookingStatus.assessment
@@ -3523,6 +3622,29 @@ class _MainAppState extends State<MainApp> {
                   }
                 }
               : null,
+        );
+
+      case 'chat':
+        final bookingId = _chatBookingId;
+        final userId = _user?.id;
+        if (bookingId == null || userId == null) return _home();
+        return ChatScreen(
+          bookingId: bookingId,
+          currentUserId: userId,
+          title: _chatTitle ?? 'Chat',
+          onBack: () => setState(() => _screen = _chatReturnScreen),
+          loadInitialMessages: (id) async =>
+              (await _ds.getChatMessages(bookingId: id))
+                  .map((m) => m.toEntity())
+                  .toList(),
+          sendMessage: ({required bookingId, required body}) async =>
+              (await _ds.sendChatMessage(bookingId: bookingId, body: body))
+                  .toEntity(),
+          subscribe: (onInsert) => _ds.subscribeToChatMessages(
+            bookingId: bookingId,
+            onInsert: (m) => onInsert(m.toEntity()),
+          ),
+          unsubscribe: (ch) => _ds.unsubscribeChannel(ch as RealtimeChannel),
         );
 
       // ── Backjob / Warranty claim screen ────────────────────────────────

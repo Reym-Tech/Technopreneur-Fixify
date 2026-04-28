@@ -1632,6 +1632,113 @@ class SupabaseDataSource {
   void unsubscribeChannel(RealtimeChannel channel) =>
       _client.removeChannel(channel);
 
+  // ── CHAT ──────────────────────────────────────────────────
+
+  /// Returns the chat thread id for this booking, creating it if missing.
+  /// The DB enforces one thread per booking via a UNIQUE constraint.
+  Future<String> ensureChatThreadForBooking(String bookingId) async {
+    final existing = await _client
+        .from(AppConfig.chatThreadsTable)
+        .select('id')
+        .eq('booking_id', bookingId)
+        .maybeSingle();
+
+    if (existing != null) return existing['id'] as String;
+
+    final inserted = await _client
+        .from(AppConfig.chatThreadsTable)
+        .insert({'booking_id': bookingId})
+        .select('id')
+        .single();
+    return inserted['id'] as String;
+  }
+
+  Future<List<ChatMessageModel>> getChatMessages({
+    required String bookingId,
+    int limit = 200,
+  }) async {
+    final data = await _client
+        .from(AppConfig.chatMessagesTable)
+        .select()
+        .eq('booking_id', bookingId)
+        .order('created_at', ascending: true)
+        .limit(limit);
+
+    return (data as List)
+        .map((j) => ChatMessageModel.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<ChatMessageModel> sendChatMessage({
+    required String bookingId,
+    required String body,
+  }) async {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Message cannot be empty.');
+    }
+
+    final threadId = await ensureChatThreadForBooking(bookingId);
+    final senderId = _client.auth.currentUser?.id;
+    if (senderId == null) throw Exception('Not authenticated');
+
+    final row = await _client.from(AppConfig.chatMessagesTable).insert({
+      'thread_id': threadId,
+      'booking_id': bookingId,
+      'sender_id': senderId,
+      'body': trimmed,
+    }).select().single();
+
+    return ChatMessageModel.fromJson(row);
+  }
+
+  /// Realtime subscription for new messages in a booking chat.
+  /// Call [unsubscribeChannel] when done.
+  RealtimeChannel subscribeToChatMessages({
+    required String bookingId,
+    required void Function(ChatMessageModel message) onInsert,
+  }) {
+    return _client
+        .channel('chat_messages_$bookingId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: AppConfig.chatMessagesTable,
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'booking_id',
+            value: bookingId,
+          ),
+          callback: (payload) {
+            onInsert(ChatMessageModel.fromJson(payload.newRecord));
+          },
+        )
+        .subscribe();
+  }
+
+  // ── PUSH TOKENS ───────────────────────────────────────────
+
+  /// Upserts a push token for the current user.
+  /// Requires the `user_push_tokens` table + RLS policy (auth.uid() = user_id).
+  Future<void> upsertMyPushToken({
+    required String platform,
+    required String token,
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('Not authenticated');
+    final t = token.trim();
+    if (t.isEmpty) return;
+
+    await _client.from(AppConfig.userPushTokensTable).upsert(
+      {
+        'user_id': userId,
+        'platform': platform,
+        'token': t,
+      },
+      onConflict: 'user_id,token',
+    );
+  }
+
   /// Listens for ANY update to a specific booking the pro is working on.
   /// Use this on ProBookingDetailScreen so status changes (e.g. customer
   /// confirms schedule) reflect immediately without a hot restart.

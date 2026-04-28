@@ -56,6 +56,7 @@ class BookingStatusScreen extends StatefulWidget {
   final BookingEntity booking;
   final VoidCallback? onBack;
   final VoidCallback? onViewAssessment;
+  final VoidCallback? onOpenChat;
 
   /// Retained for API compatibility. No longer shown in UI — schedule
   /// confirmation is no longer part of the customer flow.
@@ -105,6 +106,7 @@ class BookingStatusScreen extends StatefulWidget {
     required this.booking,
     this.onBack,
     this.onViewAssessment,
+    this.onOpenChat,
     this.onReviewSchedule, // retained — not wired to UI
     this.onConfirmArrival,
     this.onConfirmCompletion,
@@ -126,6 +128,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
   BookingEntity get booking => widget.booking;
   VoidCallback? get onBack => widget.onBack;
   VoidCallback? get onViewAssessment => widget.onViewAssessment;
+  VoidCallback? get onOpenChat => widget.onOpenChat;
   // onReviewSchedule is surfaced for the scheduleProposed reschedule flow.
   VoidCallback? get onReviewSchedule => widget.onReviewSchedule;
   VoidCallback? get onConfirmArrival => widget.onConfirmArrival;
@@ -384,6 +387,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                     if (_showHandymanCard && booking.professional != null) ...[
                       _HandymanInfoCard(
                         professional: booking.professional!,
+                        onChat: onOpenChat,
                       )
                           .animate()
                           .fadeIn(delay: 210.ms)
@@ -1830,8 +1834,9 @@ class _ConfirmCompletionCTA extends StatelessWidget {
 
 class _HandymanInfoCard extends StatelessWidget {
   final ProfessionalEntity professional;
+  final VoidCallback? onChat;
 
-  const _HandymanInfoCard({required this.professional});
+  const _HandymanInfoCard({required this.professional, this.onChat});
 
   @override
   Widget build(BuildContext context) {
@@ -1947,6 +1952,48 @@ class _HandymanInfoCard extends StatelessWidget {
                   ]),
             ),
           ]),
+
+          if (onChat != null) ...[
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _HandymanDetailSheet.show(context, pro),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: BorderSide(color: AppColors.primary.withOpacity(0.25)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.info_outline_rounded, size: 18),
+                  label: const Text('Details',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: onChat,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.chat_bubble_rounded, size: 18),
+                  label: const Text('Chat',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                ),
+              ),
+            ]),
+          ],
 
           // ── Pills row ──────────────────────────────────────────────
           const SizedBox(height: 12),

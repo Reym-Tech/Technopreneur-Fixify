@@ -295,6 +295,50 @@ class BookingEntity extends Equatable {
 }
 
 // ─────────────────────────────────────────
+// CHAT
+// ─────────────────────────────────────────
+
+class ChatThreadEntity extends Equatable {
+  final String id;
+  final String bookingId;
+  final DateTime createdAt;
+  final DateTime? lastMessageAt;
+  final String? lastMessagePreview;
+
+  const ChatThreadEntity({
+    required this.id,
+    required this.bookingId,
+    required this.createdAt,
+    this.lastMessageAt,
+    this.lastMessagePreview,
+  });
+
+  @override
+  List<Object?> get props => [id, bookingId, createdAt, lastMessageAt];
+}
+
+class ChatMessageEntity extends Equatable {
+  final String id;
+  final String threadId;
+  final String bookingId;
+  final String senderId;
+  final String body;
+  final DateTime createdAt;
+
+  const ChatMessageEntity({
+    required this.id,
+    required this.threadId,
+    required this.bookingId,
+    required this.senderId,
+    required this.body,
+    required this.createdAt,
+  });
+
+  @override
+  List<Object?> get props => [id, threadId, bookingId, senderId, body, createdAt];
+}
+
+// ─────────────────────────────────────────
 // REVIEW
 // ─────────────────────────────────────────
 
