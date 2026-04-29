@@ -2382,11 +2382,27 @@ class _MainAppState extends State<MainApp> {
         sendMessage: ({required bookingId, required body}) async =>
             (await _ds.sendChatMessage(bookingId: bookingId, body: body))
                 .toEntity(),
-        subscribe: (onInsert) => _ds.subscribeToChatMessages(
+        subscribe: (onInsert, onDelete) => _ds.subscribeToChatMessages(
           bookingId: bookingId,
           onInsert: (m) => onInsert(m.toEntity()),
+          onDelete: onDelete,
         ),
         unsubscribe: (ch) => _ds.unsubscribeChannel(ch as RealtimeChannel),
+        deleteMessage: ({required messageId}) =>
+            _ds.deleteChatMessage(messageId: messageId),
+        subscribeTyping: (onTyping, onStopped) =>
+            _ds.subscribeToTypingPresence(
+              bookingId: bookingId,
+              onTyping: onTyping,
+              onStoppedTyping: onStopped,
+            ),
+        broadcastTyping: ({required isTyping}) =>
+            _ds.broadcastTyping(bookingId: bookingId, isTyping: isTyping),
+        markRead: () => _ds.markMessagesRead(bookingId: bookingId),
+        subscribeReadReceipts: (onRead) => _ds.subscribeToReadReceipts(
+          bookingId: bookingId,
+          onRead: onRead,
+        ),
       );
     }
 
@@ -3640,13 +3656,27 @@ class _MainAppState extends State<MainApp> {
           sendMessage: ({required bookingId, required body}) async =>
               (await _ds.sendChatMessage(bookingId: bookingId, body: body))
                   .toEntity(),
-          subscribe: (onInsert) => _ds.subscribeToChatMessages(
+          subscribe: (onInsert, onDelete) => _ds.subscribeToChatMessages(
             bookingId: bookingId,
             onInsert: (m) => onInsert(m.toEntity()),
+            onDelete: onDelete,
           ),
           unsubscribe: (ch) => _ds.unsubscribeChannel(ch as RealtimeChannel),
           deleteMessage: ({required messageId}) =>
               _ds.deleteChatMessage(messageId: messageId),
+          subscribeTyping: (onTyping, onStopped) =>
+              _ds.subscribeToTypingPresence(
+                bookingId: bookingId,
+                onTyping: onTyping,
+                onStoppedTyping: onStopped,
+              ),
+          broadcastTyping: ({required isTyping}) =>
+              _ds.broadcastTyping(bookingId: bookingId, isTyping: isTyping),
+          markRead: () => _ds.markMessagesRead(bookingId: bookingId),
+          subscribeReadReceipts: (onRead) => _ds.subscribeToReadReceipts(
+            bookingId: bookingId,
+            onRead: onRead,
+          ),
         );
 
       // ── Backjob / Warranty claim screen ────────────────────────────────

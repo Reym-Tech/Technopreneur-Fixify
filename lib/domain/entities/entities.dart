@@ -325,6 +325,11 @@ class ChatMessageEntity extends Equatable {
   final String body;
   final DateTime createdAt;
 
+  /// Non-null when the recipient has opened/read this message.
+  final DateTime? readAt;
+
+  bool get isRead => readAt != null;
+
   const ChatMessageEntity({
     required this.id,
     required this.threadId,
@@ -332,10 +337,11 @@ class ChatMessageEntity extends Equatable {
     required this.senderId,
     required this.body,
     required this.createdAt,
+    this.readAt,
   });
 
   @override
-  List<Object?> get props => [id, threadId, bookingId, senderId, body, createdAt];
+  List<Object?> get props => [id, threadId, bookingId, senderId, body, createdAt, readAt];
 }
 
 // ─────────────────────────────────────────

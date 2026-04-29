@@ -696,6 +696,7 @@ class ChatMessageModel extends Equatable {
   final String senderId;
   final String body;
   final DateTime createdAt;
+  final DateTime? readAt;
 
   const ChatMessageModel({
     required this.id,
@@ -704,6 +705,7 @@ class ChatMessageModel extends Equatable {
     required this.senderId,
     required this.body,
     required this.createdAt,
+    this.readAt,
   });
 
   factory ChatMessageModel.fromJson(Map<String, dynamic> json) {
@@ -716,6 +718,12 @@ class ChatMessageModel extends Equatable {
       createdAt = DateTime.now();
     }
 
+    DateTime? readAt;
+    try {
+      final ra = json['read_at']?.toString();
+      if (ra != null && ra.isNotEmpty) readAt = DateTime.parse(ra);
+    } catch (_) {}
+
     return ChatMessageModel(
       id: json['id']?.toString() ?? '',
       threadId: json['thread_id']?.toString() ?? '',
@@ -723,6 +731,7 @@ class ChatMessageModel extends Equatable {
       senderId: json['sender_id']?.toString() ?? '',
       body: json['body']?.toString() ?? '',
       createdAt: createdAt,
+      readAt: readAt,
     );
   }
 
@@ -733,10 +742,11 @@ class ChatMessageModel extends Equatable {
         senderId: senderId,
         body: body,
         createdAt: createdAt,
+        readAt: readAt,
       );
 
   @override
-  List<Object?> get props => [id, threadId, bookingId, senderId, body, createdAt];
+  List<Object?> get props => [id, threadId, bookingId, senderId, body, createdAt, readAt];
 }
 
 // ─────────────────────────────────────────

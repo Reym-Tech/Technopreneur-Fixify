@@ -1692,11 +1692,12 @@ class SupabaseDataSource {
     return ChatMessageModel.fromJson(row);
   }
 
-  /// Realtime subscription for new messages in a booking chat.
+  /// Realtime subscription for new and deleted messages in a booking chat.
   /// Call [unsubscribeChannel] when done.
   RealtimeChannel subscribeToChatMessages({
     required String bookingId,
     required void Function(ChatMessageModel message) onInsert,
+    required void Function(String messageId) onDelete,
   }) {
     return _client
         .channel('chat_messages_$bookingId')
@@ -1713,17 +1714,123 @@ class SupabaseDataSource {
             onInsert(ChatMessageModel.fromJson(payload.newRecord));
           },
         )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.delete,
+          schema: 'public',
+          table: AppConfig.chatMessagesTable,
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'booking_id',
+            value: bookingId,
+          ),
+          callback: (payload) {
+            final id = payload.oldRecord['id']?.toString();
+            if (id != null) onDelete(id);
+          },
+        )
         .subscribe();
   }
 
   /// Hard-deletes a chat message row.
-  /// Only the original sender should call this (enforce via RLS policy:
-  ///   auth.uid() = sender_id).
+  /// RLS policy enforces: auth.uid() = sender_id.
   Future<void> deleteChatMessage({required String messageId}) async {
     await _client
         .from(AppConfig.chatMessagesTable)
         .delete()
         .eq('id', messageId);
+  }
+
+  // Holds the single typing channel instance per booking so that
+  // broadcastTyping() can reuse it instead of creating a new one each call.
+  final Map<String, RealtimeChannel> _typingChannels = {};
+
+  /// Opens a Broadcast channel for typing presence AND stores the reference
+  /// so [broadcastTyping] can send over the same socket connection.
+  /// Returns the channel — pass it to [unsubscribeChannel] on dispose.
+  RealtimeChannel subscribeToTypingPresence({
+    required String bookingId,
+    required void Function(String userId) onTyping,
+    required void Function(String userId) onStoppedTyping,
+  }) {
+    final channel = _client
+        .channel('typing_$bookingId')
+        .onBroadcast(
+          event: 'typing',
+          callback: (payload) {
+            final userId = payload['user_id']?.toString();
+            final isTyping = payload['is_typing'] as bool? ?? false;
+            if (userId == null) return;
+            if (isTyping) {
+              onTyping(userId);
+            } else {
+              onStoppedTyping(userId);
+            }
+          },
+        )
+        .subscribe();
+    // Store so broadcastTyping() reuses the same channel instance.
+    _typingChannels[bookingId] = channel;
+    return channel;
+  }
+
+  /// Broadcasts the current user's typing state.
+  /// Reuses the channel opened by [subscribeToTypingPresence].
+  Future<void> broadcastTyping({
+    required String bookingId,
+    required bool isTyping,
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+    final channel = _typingChannels[bookingId];
+    if (channel == null) return;
+    await channel.sendBroadcastMessage(
+      event: 'typing',
+      payload: {'user_id': userId, 'is_typing': isTyping},
+    );
+  }
+
+  /// Marks all unread incoming messages in this booking as read.
+  /// Call when the chat screen opens and when a new incoming message arrives.
+  Future<void> markMessagesRead({required String bookingId}) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+    await _client
+        .from(AppConfig.chatMessagesTable)
+        .update({'read_at': DateTime.now().toUtc().toIso8601String()})
+        .eq('booking_id', bookingId)
+        .neq('sender_id', userId)
+        .isFilter('read_at', null);
+  }
+
+  /// Listens for UPDATE events on chat_messages so the sender's bubbles
+  /// flip to "seen" in realtime when the recipient reads them.
+  /// Returns the channel — pass it to [unsubscribeChannel] on dispose.
+  RealtimeChannel subscribeToReadReceipts({
+    required String bookingId,
+    required void Function(String messageId, DateTime readAt) onRead,
+  }) {
+    return _client
+        .channel('read_receipts_$bookingId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: AppConfig.chatMessagesTable,
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'booking_id',
+            value: bookingId,
+          ),
+          callback: (payload) {
+            final record = payload.newRecord;
+            final id = record['id']?.toString();
+            final ra = record['read_at']?.toString();
+            if (id == null || ra == null || ra.isEmpty) return;
+            try {
+              onRead(id, DateTime.parse(ra));
+            } catch (_) {}
+          },
+        )
+        .subscribe();
   }
 
   // ── PUSH TOKENS ───────────────────────────────────────────
