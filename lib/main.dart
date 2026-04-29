@@ -3645,6 +3645,8 @@ class _MainAppState extends State<MainApp> {
             onInsert: (m) => onInsert(m.toEntity()),
           ),
           unsubscribe: (ch) => _ds.unsubscribeChannel(ch as RealtimeChannel),
+          deleteMessage: ({required messageId}) =>
+              _ds.deleteChatMessage(messageId: messageId),
         );
 
       // ── Backjob / Warranty claim screen ────────────────────────────────

@@ -31,6 +31,10 @@ class ChatScreen extends StatefulWidget {
   final ChatSubscribeFn subscribe;
   final ChatUnsubscribeFn unsubscribe;
 
+  /// Optional — only own messages can be deleted.
+  /// If null, delete functionality is disabled.
+  final Future<void> Function({required String messageId})? deleteMessage;
+
   const ChatScreen({
     super.key,
     required this.bookingId,
@@ -41,6 +45,7 @@ class ChatScreen extends StatefulWidget {
     required this.sendMessage,
     required this.subscribe,
     required this.unsubscribe,
+    this.deleteMessage,
   });
 
   @override
@@ -111,6 +116,40 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _onDelete(ChatMessageEntity msg) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Delete message?',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+        ),
+        content: const Text(
+          'This will remove it for everyone.',
+          style: TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    await widget.deleteMessage!(messageId: msg.id);
+    if (!mounted) return;
+    setState(() => _messages.removeWhere((m) => m.id == msg.id));
+  }
+
   Future<void> _onSend() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
@@ -152,6 +191,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         scroll: _scroll,
                         messages: _messages,
                         currentUserId: widget.currentUserId,
+                        onDelete: widget.deleteMessage != null
+                            ? _onDelete
+                            : null,
                       ),
               ),
               _Composer(
@@ -238,11 +280,13 @@ class _MessageList extends StatelessWidget {
   final ScrollController scroll;
   final List<ChatMessageEntity> messages;
   final String currentUserId;
+  final void Function(ChatMessageEntity)? onDelete;
 
   const _MessageList({
     required this.scroll,
     required this.messages,
     required this.currentUserId,
+    this.onDelete,
   });
 
   @override
@@ -264,7 +308,12 @@ class _MessageList extends StatelessWidget {
       itemBuilder: (_, i) {
         final m = messages[i];
         final mine = m.senderId == currentUserId;
-        return _Bubble(message: m, mine: mine);
+        return _Bubble(
+          message: m,
+          mine: mine,
+          // Only allow deleting own messages
+          onDelete: mine ? onDelete : null,
+        );
       },
     );
   }
@@ -273,8 +322,21 @@ class _MessageList extends StatelessWidget {
 class _Bubble extends StatelessWidget {
   final ChatMessageEntity message;
   final bool mine;
+  final void Function(ChatMessageEntity)? onDelete;
 
-  const _Bubble({required this.message, required this.mine});
+  const _Bubble({
+    required this.message,
+    required this.mine,
+    this.onDelete,
+  });
+
+  String _formatTime(DateTime dt) {
+    final local = dt.toLocal();
+    final h = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final m = local.minute.toString().padLeft(2, '0');
+    final period = local.hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m $period';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -285,41 +347,62 @@ class _Bubble extends StatelessWidget {
     return Column(
       crossAxisAlignment: align,
       children: [
-        Container(
-          constraints: const BoxConstraints(maxWidth: 320),
-          margin: const EdgeInsets.symmetric(vertical: 6),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(mine ? 16 : 6),
-              bottomRight: Radius.circular(mine ? 6 : 16),
+        GestureDetector(
+          onLongPress: onDelete != null ? () => onDelete!(message) : null,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 320),
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(16),
+                topRight: const Radius.circular(16),
+                bottomLeft: Radius.circular(mine ? 16 : 6),
+                bottomRight: Radius.circular(mine ? 6 : 16),
+              ),
+              boxShadow: mine
+                  ? [
+                      BoxShadow(
+                        color: AppColors.primary.withOpacity(0.22),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      )
+                    ]
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.06),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
+                      )
+                    ],
+              border: mine
+                  ? null
+                  : Border.all(color: const Color(0xFFEFEFEF), width: 1),
             ),
-            boxShadow: mine
-                ? [
-                    BoxShadow(
-                      color: AppColors.primary.withOpacity(0.22),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                    )
-                  ]
-                : [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.06),
-                      blurRadius: 14,
-                      offset: const Offset(0, 6),
-                    )
-                  ],
-            border: mine
-                ? null
-                : Border.all(color: const Color(0xFFEFEFEF), width: 1),
-          ),
-          child: Text(
-            message.body,
-            style: TextStyle(
-                color: fg, fontSize: 13.5, height: 1.35, fontWeight: FontWeight.w600),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  message.body,
+                  style: TextStyle(
+                      color: fg,
+                      fontSize: 13.5,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _formatTime(message.createdAt),
+                  style: TextStyle(
+                    color: fg.withOpacity(0.55),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ],

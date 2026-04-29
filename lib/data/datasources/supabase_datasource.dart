@@ -1716,6 +1716,16 @@ class SupabaseDataSource {
         .subscribe();
   }
 
+  /// Hard-deletes a chat message row.
+  /// Only the original sender should call this (enforce via RLS policy:
+  ///   auth.uid() = sender_id).
+  Future<void> deleteChatMessage({required String messageId}) async {
+    await _client
+        .from(AppConfig.chatMessagesTable)
+        .delete()
+        .eq('id', messageId);
+  }
+
   // ── PUSH TOKENS ───────────────────────────────────────────
 
   /// Upserts a push token for the current user.
