@@ -14,8 +14,9 @@ class NotificationRouter {
   /// Requirements: 1.3, 5.4, 5.6
   static void handleNotificationNavigation(
     BuildContext context,
-    Map<String, dynamic> data,
-  ) {
+    Map<String, dynamic> data, {
+    required void Function(String bookingId) onNavigateToChat,
+  }) {
     try {
       // Extract booking_id from notification data
       final bookingId = data['booking_id'] as String?;
@@ -43,27 +44,10 @@ class NotificationRouter {
       }
 
       // Navigate to chat screen with booking_id parameter
-      // This app uses a custom state-based navigation system, not named routes
-      // We need to find the MainApp state and trigger navigation through it
       debugPrint('[NotificationRouter] Navigating to chat screen with booking_id: $bookingId');
       
-      // For now, just show a success message
-      // The actual navigation needs to be implemented in MainApp
-      // by exposing a method to navigate to chat from external triggers
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Opening chat for booking: ${bookingId.substring(0, 8)}...'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
-      
-      // TODO: Implement proper navigation to chat screen
-      // This requires MainApp to expose a navigation method that can be called
-      // from notification taps. For now, the notification works but navigation
-      // needs to be wired up to the app's state management system.
+      // Call the navigation callback to trigger state change in MainApp
+      onNavigateToChat(bookingId);
       
     } catch (e) {
       debugPrint('[NotificationRouter] Error handling notification navigation: $e');

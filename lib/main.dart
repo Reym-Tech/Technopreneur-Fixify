@@ -1087,7 +1087,11 @@ class _MainAppState extends State<MainApp> {
     _notificationService = NotificationService(
       onNotificationTap: (data) {
         if (mounted && context != null) {
-          NotificationRouter.handleNotificationNavigation(context, data);
+          NotificationRouter.handleNotificationNavigation(
+            context, 
+            data,
+            onNavigateToChat: _navigateToChat,
+          );
         }
       },
     );
@@ -1137,6 +1141,27 @@ class _MainAppState extends State<MainApp> {
     
     // Proceed with normal logout
     await Supabase.instance.client.auth.signOut();
+  }
+
+  /// Navigate to chat screen from notification tap
+  /// Called by NotificationRouter when user taps a chat notification
+  /// Requirements: 1.3, 5.4
+  void _navigateToChat(String bookingId) {
+    if (!mounted) return;
+    
+    try {
+      debugPrint('[MainApp] Navigating to chat for booking: $bookingId');
+      
+      setState(() {
+        _chatBookingId = bookingId;
+        _chatTitle = 'Chat';
+        _chatReturnScreen = _screen; // Remember where we came from
+        _screen = 'chat';
+      });
+    } catch (e) {
+      debugPrint('[MainApp] Error navigating to chat: $e');
+      _notify('Unable to open chat');
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1467,7 +1492,11 @@ class _MainAppState extends State<MainApp> {
           debugPrint('[FCM] Background message opened: ${message.messageId}');
           final data = message.data;
           if (mounted && context != null) {
-            NotificationRouter.handleNotificationNavigation(context, data);
+            NotificationRouter.handleNotificationNavigation(
+              context, 
+              data,
+              onNavigateToChat: _navigateToChat,
+            );
           }
         } catch (e) {
           debugPrint('[FCM] Error handling background message: $e');
@@ -1484,7 +1513,11 @@ class _MainAppState extends State<MainApp> {
           // Delay navigation to ensure app is fully initialized
           Future.delayed(const Duration(milliseconds: 500), () {
             if (mounted && context != null) {
-              NotificationRouter.handleNotificationNavigation(context, data);
+              NotificationRouter.handleNotificationNavigation(
+                context, 
+                data,
+                onNavigateToChat: _navigateToChat,
+              );
             }
           });
         } catch (e) {
