@@ -86,6 +86,8 @@ import 'package:fixify/firebase_options.dart';
 
 import 'package:fixify/core/constants/app_config.dart';
 import 'package:fixify/core/theme/app_theme.dart';
+import 'package:fixify/core/services/notification_router.dart';
+import 'package:fixify/core/services/notification_service.dart';
 import 'package:fixify/data/datasources/supabase_datasource.dart';
 import 'package:fixify/data/datasources/application_datasource.dart';
 import 'package:fixify/data/datasources/notification_datasource.dart';
@@ -429,6 +431,9 @@ class _MainAppState extends State<MainApp> {
   late final NotificationDataSource _notifDs;
   late final ServiceProposalDatasource _proposalDs;
   late final ServiceSelectionRequestDatasource _selectionDs;
+  
+  // Notification service for handling FCM and local notifications
+  late final NotificationService _notificationService;
 
   // ── Controller state ──────────────────────────────────────────────────────
   DateTime? _lastBackPress;
@@ -1077,6 +1082,16 @@ class _MainAppState extends State<MainApp> {
     _notifDs = NotificationDataSource(Supabase.instance.client);
     _proposalDs = ServiceProposalDatasource(Supabase.instance.client);
     _selectionDs = ServiceSelectionRequestDatasource(Supabase.instance.client);
+    
+    // Initialize NotificationService with navigation handler
+    _notificationService = NotificationService(
+      onNotificationTap: (data) {
+        if (mounted && context != null) {
+          NotificationRouter.handleNotificationNavigation(context, data);
+        }
+      },
+    );
+    
     _init();
   }
 
@@ -1092,6 +1107,36 @@ class _MainAppState extends State<MainApp> {
       _ds.unsubscribeChannel(_selectedProBookingChannel!);
     }
     super.dispose();
+  }
+
+  /// Logout with token cleanup
+  /// Deletes the current device's FCM token before signing out
+  /// Requirements: 8.3
+  Future<void> _logout() async {
+    try {
+      // Get current FCM token
+      final token = await FirebaseMessaging.instance.getToken();
+      
+      if (token != null && token.isNotEmpty) {
+        debugPrint('[AppNavigator] Deleting FCM token on logout');
+        
+        // Delete token from database
+        await Supabase.instance.client
+            .from('user_push_tokens')
+            .delete()
+            .eq('token', token);
+        
+        debugPrint('[AppNavigator] FCM token deleted successfully');
+      } else {
+        debugPrint('[AppNavigator] No FCM token to delete');
+      }
+    } catch (e) {
+      debugPrint('[AppNavigator] Error deleting FCM token on logout: $e');
+      // Continue with logout even if token deletion fails
+    }
+    
+    // Proceed with normal logout
+    await Supabase.instance.client.auth.signOut();
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1391,6 +1436,19 @@ class _MainAppState extends State<MainApp> {
       final messaging = FirebaseMessaging.instance;
       await messaging.requestPermission();
 
+      // Initialize NotificationService (creates Android channel, sets up local notifications)
+      await _notificationService.initialize();
+      
+      // Set up FCM foreground listener (displays local notifications)
+      _notificationService.setupFcmListeners();
+      
+      // Set up token refresh listener
+      _notificationService.setupTokenRefreshListener(
+        ({required String platform, required String token}) async {
+          await _ds.upsertMyPushToken(platform: platform, token: token);
+        },
+      );
+
       final token = await messaging.getToken();
       if (token == null || token.isEmpty) return;
 
@@ -1402,12 +1460,40 @@ class _MainAppState extends State<MainApp> {
 
       await _ds.upsertMyPushToken(platform: platform, token: token);
 
-      // Foreground messages: no OS notification shown by default on Android.
-      // We still keep this hook so you can add local notifications later.
-      FirebaseMessaging.onMessage.listen((msg) {
-        debugPrint('[FCM] Foreground message: ${msg.messageId}');
+      // Background state handler: app is running but not visible
+      // Requirements: 5.1, 5.2, 2.7
+      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+        try {
+          debugPrint('[FCM] Background message opened: ${message.messageId}');
+          final data = message.data;
+          if (mounted && context != null) {
+            NotificationRouter.handleNotificationNavigation(context, data);
+          }
+        } catch (e) {
+          debugPrint('[FCM] Error handling background message: $e');
+        }
       });
-    } catch (_) {}
+
+      // Terminated state handler: app was completely closed
+      // Requirements: 5.1, 5.2, 2.7
+      final initialMessage = await messaging.getInitialMessage();
+      if (initialMessage != null) {
+        try {
+          debugPrint('[FCM] App launched from terminated state: ${initialMessage.messageId}');
+          final data = initialMessage.data;
+          // Delay navigation to ensure app is fully initialized
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted && context != null) {
+              NotificationRouter.handleNotificationNavigation(context, data);
+            }
+          });
+        } catch (e) {
+          debugPrint('[FCM] Error handling terminated message: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('[FCM] Setup error: $e');
+    }
   }
 
   Future<void> _loadSkippedRequests() async {
@@ -2089,7 +2175,7 @@ class _MainAppState extends State<MainApp> {
         accessLevel: 'SUPERADMIN',
         lastLogin: DateTime.now(),
         onBack: () => setState(() => _navIndex = 0),
-        onLogout: () async => Supabase.instance.client.auth.signOut(),
+        onLogout: _logout,
       );
     }
 
@@ -2565,7 +2651,7 @@ class _MainAppState extends State<MainApp> {
                   style: TextStyle(fontSize: 15, color: Color(0xFF666666))),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () => Supabase.instance.client.auth.signOut(),
+                onPressed: _logout,
                 style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
                     foregroundColor: Colors.white,
@@ -2976,7 +3062,7 @@ class _MainAppState extends State<MainApp> {
             ),
           ),
         ),
-        onLogout: () async => Supabase.instance.client.auth.signOut(),
+        onLogout: _logout,
         onReplayTour: () => setState(() {
           _navIndex = 0;
           _screen = 'home';
@@ -3125,7 +3211,7 @@ class _MainAppState extends State<MainApp> {
                 Navigator.of(context).pop();
                 // Tell AppNavigator to open RegisterScreen after sign-out
                 widget.onSignUpFromGuest?.call();
-                await Supabase.instance.client.auth.signOut();
+                await _logout();
                 if (mounted) setState(() => _isGuest = false);
               },
               style: ElevatedButton.styleFrom(
@@ -3149,7 +3235,7 @@ class _MainAppState extends State<MainApp> {
                 Navigator.of(context).pop();
                 // Explicitly tell AppNavigator to open LoginScreen.
                 widget.onLoginFromGuest?.call();
-                await Supabase.instance.client.auth.signOut();
+                await _logout();
                 if (mounted) setState(() => _isGuest = false);
               },
               style: OutlinedButton.styleFrom(
@@ -3801,7 +3887,7 @@ class _MainAppState extends State<MainApp> {
               ),
             ),
           ),
-          onLogout: () async => Supabase.instance.client.auth.signOut(),
+          onLogout: _logout,
           onReplayTour: () => setState(() {
             _navIndex = 0;
             _screen = 'home';
