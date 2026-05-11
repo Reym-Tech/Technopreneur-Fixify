@@ -2415,11 +2415,11 @@ class _MainAppState extends State<MainApp> {
       adminName: _user!.name,
       pendingApprovals: pending,
       totalUsers: _professionals.length,
-      totalEarnings: statsSource
-          .where((b) => b.status == BookingStatus.completed)
-          .fold(0.0, (s, b) {
-        final ap = b.assessmentPrice;
-        return s + (ap != null && ap > 0 ? ap : (b.priceEstimate ?? 0));
+      totalEarnings: _professionals.fold(0.0, (sum, pro) {
+        final tier = pro.subscriptionTier;
+        if (tier == 1) return sum + 199.0;
+        if (tier == 2) return sum + 399.0;
+        return sum;
       }),
       completedBookings:
           statsSource.where((b) => b.status == BookingStatus.completed).length,
